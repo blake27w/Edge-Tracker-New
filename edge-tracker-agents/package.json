@@ -1,0 +1,21 @@
+{
+  "name": "edge-tracker-agents",
+  "version": "1.0.0",
+  "description": "Edge Tracker backend agent system — odds ingestion, injury/weather intelligence, sharp money detection, power ratings, signal engine, CLV tracking, grading, public betting splits, schedule spots, MLB context, and prop engine. Runs on cron schedules, writes to Supabase, exposes a health/plays/feed API.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node scripts/migrate.js",
+    "test-agent": "node scripts/test-agent.js",
+    "test-alerts": "node scripts/test-alerts.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "twilio": "^5.3.0"
+  }
+}
