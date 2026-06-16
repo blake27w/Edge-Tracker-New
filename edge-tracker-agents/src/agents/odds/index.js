@@ -177,6 +177,8 @@ async function run() {
   let skippedBudget = 0;
 
   for (const [sport, meta] of Object.entries(SPORTS)) {
+    // The Odds API has no bare golf/tennis key (event-specific only) — skip to avoid 404s.
+    if (meta.oddsSkip) continue;
     const keys = meta.leagues || [meta.key];
     // Per-sport monthly cap.
     if ((budget.bySport[sport] || 0) >= sportCap(sport)) { skippedBudget++; continue; }

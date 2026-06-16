@@ -51,8 +51,8 @@ const SPORTS = {
       'soccer_uefa_champs_league', 'soccer_usa_mls',
     ],
   },
-  TENNIS: { key: 'tennis', emoji: '🎾', hasTotals: false },
-  GOLF: { key: 'golf', emoji: '⛳', hasTotals: false },
+  TENNIS: { key: 'tennis', emoji: '🎾', hasTotals: false, oddsSkip: true },
+  GOLF: { key: 'golf', emoji: '⛳', hasTotals: false, oddsSkip: true },
 };
 
 const BOOKS = ['fanduel', 'draftkings', 'williamhill_us', 'betmgm', 'pointsbetus', 'betrivers', 'fanatics'];
