@@ -5640,19 +5640,19 @@ function renderEditDeleteBtns(betId){
 // ══════════════════════════════════════
 var AGENTS_META=[
   {name:'odds',icon:'📡',label:'Odds Ingestion',cadence:'every 5 min'},
-  {name:'injury',icon:'🏥',label:'Injury Intelligence',cadence:'every 5 min'},
-  {name:'weather',icon:'🌦️',label:'Weather Intelligence',cadence:'every 15 min'},
+  {name:'injury',icon:'🏥',label:'Injury Intelligence',cadence:'every 30 min'},
+  {name:'weather',icon:'🌦️',label:'Weather Intelligence',cadence:'every 45 min'},
   {name:'sharp',icon:'💰',label:'Sharp Money Detection',cadence:'every 2 min'},
-  {name:'power',icon:'📊',label:'Power Ratings',cadence:'every 10 min'},
-  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 10 min'},
+  {name:'power',icon:'📊',label:'Power Ratings',cadence:'every 60 min'},
+  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 30 min'},
   {name:'schedule-spot',icon:'🗓️',label:'Schedule Spot',cadence:'every 30 min'},
-  {name:'mlb-context',icon:'⚾',label:'MLB Context',cadence:'every 30 min'},
+  {name:'mlb-context',icon:'⚾',label:'MLB Context',cadence:'every 60 min'},
   {name:'signal',icon:'🧠',label:'Signal Engine',cadence:'every 5 min'},
-  {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 10 min'},
-  {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 10 min'},
+  {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 15 min'},
+  {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 15 min'},
   {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:600000,weather:1800000,sharp:300000,power:1200000,'public-splits':1200000,'schedule-spot':3600000,'mlb-context':3600000,signal:600000,'prop-engine':1200000,clv:1200000,grading:3600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:3600000,'public-splits':1800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':900000,clv:900000,grading:1800000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5796,7 +5796,8 @@ function renderAgentsContent(){
     h+='<div style="display:flex;align-items:center;justify-content:space-between">';
     h+='<div style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--saddle);letter-spacing:.3px">'+a.icon+' '+a.label+'</div>';
     h+='<div style="font-size:11px">'+st.dot+'</div></div>';
-    h+='<div style="font-size:8px;color:var(--muted);margin-top:2px">'+a.cadence+' · '+st.label+'</div>';
+    var cad=(run&&run.intervalMs)?('every '+Math.round(run.intervalMs/60000)+' min'):a.cadence;
+    h+='<div style="font-size:8px;color:var(--muted);margin-top:2px">'+cad+' · '+st.label+'</div>';
     if(run){
       var ts=run.finished_at||run.started_at;
       h+='<div style="font-size:8px;color:var(--dim);margin-top:5px">'+agentAgo(ts)+(run.duration_ms!=null?(' · '+run.duration_ms+'ms'):'')+'</div>';

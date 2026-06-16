@@ -69,23 +69,33 @@ const BOOK_LABELS = {
   betmgm: 'BetMGM', pointsbetus: 'PointsBet', betrivers: 'BetRivers', fanatics: 'Fanatics',
 };
 
-// ── Agent schedules (cron) ──────────────────────────────────────
-// Each agent has a base interval. The orchestrator may back these off on
-// repeated failure (error recovery).
-const AGENTS = {
-  odds: { label: 'Odds Ingestion', emoji: '📡', cron: '*/5 * * * *', everyMs: 5 * 60_000 },
-  injury: { label: 'Injury Intelligence', emoji: '🏥', cron: '*/5 * * * *', everyMs: 5 * 60_000 },
-  weather: { label: 'Weather Intelligence', emoji: '🌦️', cron: '*/15 * * * *', everyMs: 15 * 60_000 },
-  sharp: { label: 'Sharp Money Detection', emoji: '💰', cron: '*/2 * * * *', everyMs: 2 * 60_000 },
-  power: { label: 'Power Ratings', emoji: '📊', cron: '*/10 * * * *', everyMs: 10 * 60_000 },
-  'public-splits': { label: 'Public Betting Splits', emoji: '📈', cron: '*/10 * * * *', everyMs: 10 * 60_000 },
-  'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', cron: '*/30 * * * *', everyMs: 30 * 60_000 },
-  'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', cron: '*/30 * * * *', everyMs: 30 * 60_000 },
-  signal: { label: 'Signal Engine', emoji: '🧠', cron: '*/5 * * * *', everyMs: 5 * 60_000 },
-  'prop-engine': { label: 'Prop Engine', emoji: '🎯', cron: '*/10 * * * *', everyMs: 10 * 60_000 },
-  clv: { label: 'CLV Tracker', emoji: '📉', cron: '*/10 * * * *', everyMs: 10 * 60_000 },
-  grading: { label: 'Grading Agent', emoji: '✅', cron: '*/30 * * * *', everyMs: 30 * 60_000 },
+// ── Agent schedules ─────────────────────────────────────────────
+// Default interval (minutes) per agent. Claude-backed agents run on the
+// slower side to control cost. Override any of them with an env var named
+// INTERVAL_<NAME> (dashes → underscores), e.g. INTERVAL_INJURY=45,
+// INTERVAL_PUBLIC_SPLITS=60. The orchestrator backs these off further on
+// repeated failure (error recovery). Non-Claude agents (odds, sharp,
+// schedule-spot, signal) stay fast since they cost nothing per run.
+const AGENT_DEFS = {
+  odds: { label: 'Odds Ingestion', emoji: '📡', min: 5 },
+  injury: { label: 'Injury Intelligence', emoji: '🏥', min: 30 },
+  weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
+  sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
+  power: { label: 'Power Ratings', emoji: '📊', min: 60 },
+  'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 30 },
+  'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
+  'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
+  signal: { label: 'Signal Engine', emoji: '🧠', min: 5 },
+  'prop-engine': { label: 'Prop Engine', emoji: '🎯', min: 15 },
+  clv: { label: 'CLV Tracker', emoji: '📉', min: 15 },
+  grading: { label: 'Grading Agent', emoji: '✅', min: 30 },
 };
+const AGENTS = {};
+for (const [name, d] of Object.entries(AGENT_DEFS)) {
+  const m = Math.max(1, num(env['INTERVAL_' + name.toUpperCase().replace(/-/g, '_')], d.min));
+  const cron = m >= 60 ? `0 */${Math.round(m / 60)} * * *` : `*/${m} * * * *`;
+  AGENTS[name] = { label: d.label, emoji: d.emoji, intervalMin: m, everyMs: m * 60_000, cron };
+}
 
 const config = {
   dryRun: bool(env.DRY_RUN, false),
@@ -99,11 +109,11 @@ const config = {
     apiKey: clean(env.ANTHROPIC_API_KEY),
     // Probe order: modern models first (best results if the key supports them),
     // then the legacy fallback chain specified in the build brief.
+    // Cheapest-capable first to control cost (Haiku ≈ 5× cheaper than Opus).
+    // Override with ANTHROPIC_MODELS to prefer a stronger model.
     models: list(env.ANTHROPIC_MODELS, [
-      'claude-opus-4-8',
-      'claude-sonnet-4-6',
       'claude-haiku-4-5',
-      'claude-sonnet-4-20250514',
+      'claude-sonnet-4-6',
       'claude-3-5-sonnet-20241022',
       'claude-3-haiku-20240307',
     ]),
