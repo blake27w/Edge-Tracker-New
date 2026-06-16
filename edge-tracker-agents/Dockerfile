@@ -1,4 +1,6 @@
-FROM node:20-slim
+# Node 22 — has native WebSocket, which @supabase/supabase-js requires
+# (Node 20 throws "without native WebSocket support" on createClient).
+FROM node:22-slim
 
 WORKDIR /app
 
