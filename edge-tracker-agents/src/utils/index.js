@@ -102,7 +102,9 @@ export async function claude(prompt, opts = {}) {
     messages: [{ role: 'user', content: prompt }],
   };
   if (opts.system) req.system = opts.system;
-  if (useWeb) req.tools = [{ type: 'web_search_20260209', name: 'web_search' }];
+  // allowed_callers:['direct'] disables the programmatic-tool-calling (dynamic
+  // filtering) path, which Haiku doesn't support — lets web search run on every model.
+  if (useWeb) req.tools = [{ type: 'web_search_20260209', name: 'web_search', allowed_callers: ['direct'] }];
 
   rollDay();
   metrics.anthropicCalls++;
