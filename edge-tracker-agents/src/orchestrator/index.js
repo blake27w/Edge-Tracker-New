@@ -157,10 +157,16 @@ async function runAgent(agent) {
 }
 
 // Kick off every agent on a small stagger so they don't all fire at once.
-export function start() {
+export async function start() {
   initRegistry();
   logger.info('orchestrator', `Starting ${AGENTS.length} agents`);
-  AGENTS.forEach((agent, i) => {
+  // Run odds FIRST and wait for it to finish, so the slate is published to the
+  // store before the intel agents (injury/weather/power/etc.) read it. Avoids the
+  // cold-start race where an intel agent fires before any games are loaded.
+  const odds = AGENTS.find((a) => a.name === 'odds');
+  if (odds) await runAgent(odds); // runAgent never throws; it self-reschedules at the end
+  const rest = AGENTS.filter((a) => a.name !== 'odds');
+  rest.forEach((agent, i) => {
     const r = registry[agent.name];
     r.timer = setTimeout(() => runAgent(agent), i * 1500); // staggered cold start
   });
