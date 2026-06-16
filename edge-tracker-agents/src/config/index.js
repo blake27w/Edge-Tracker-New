@@ -76,8 +76,13 @@ const BOOK_LABELS = {
 // INTERVAL_PUBLIC_SPLITS=60. The orchestrator backs these off further on
 // repeated failure (error recovery). Non-Claude agents (odds, sharp,
 // schedule-spot, signal) stay fast since they cost nothing per run.
+// Odds cadence scales with tier so the monthly request budget lasts:
+// free (500/mo) polls slowly; paid tiers poll near real-time. Override with
+// INTERVAL_ODDS. Frequent polling is what powers line-movement / steam / RLM
+// detection — the free tier is really for testing; use Starter+ for live edges.
+const ODDS_MIN_BY_TIER = { free: 180, starter: 5, pro: 2 };
 const AGENT_DEFS = {
-  odds: { label: 'Odds Ingestion', emoji: '📡', min: 5 },
+  odds: { label: 'Odds Ingestion', emoji: '📡', min: ODDS_MIN_BY_TIER[ODDS_API_TIER] ?? 30 },
   injury: { label: 'Injury Intelligence', emoji: '🏥', min: 30 },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
