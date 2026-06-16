@@ -7,9 +7,16 @@ import config from '../config/index.js';
 
 let client = null;
 if (config.supabase.url && config.supabase.key) {
-  client = createClient(config.supabase.url, config.supabase.key, {
-    auth: { persistSession: false },
-  });
+  try {
+    client = createClient(config.supabase.url, config.supabase.key, {
+      auth: { persistSession: false },
+    });
+  } catch (e) {
+    // A malformed SUPABASE_URL throws here — log it loudly but DO NOT crash the
+    // process, or the whole service fails to boot (and the deploy is marked failed).
+    console.error(`[db] Supabase client init failed — check SUPABASE_URL format (got "${config.supabase.url}"): ${e.message}`);
+    client = null;
+  }
 }
 
 export const isConnected = () => !!client;

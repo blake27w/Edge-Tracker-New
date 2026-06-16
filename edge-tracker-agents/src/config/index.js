@@ -4,6 +4,13 @@
 
 const env = process.env;
 
+// Strip surrounding quotes and whitespace that often sneak into env values
+// pasted in dashboards (a stray quote or newline in SUPABASE_URL would
+// otherwise crash the Supabase client on startup).
+function clean(v) {
+  if (v == null) return '';
+  return String(v).trim().replace(/^['"]+|['"]+$/g, '').trim();
+}
 function bool(v, dflt = false) {
   if (v == null) return dflt;
   return /^(1|true|yes|on)$/i.test(String(v).trim());
@@ -84,12 +91,12 @@ const config = {
   dryRun: bool(env.DRY_RUN, false),
 
   supabase: {
-    url: env.SUPABASE_URL || '',
-    key: env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_KEY || '',
+    url: clean(env.SUPABASE_URL),
+    key: clean(env.SUPABASE_SERVICE_ROLE_KEY) || clean(env.SUPABASE_KEY),
   },
 
   anthropic: {
-    apiKey: env.ANTHROPIC_API_KEY || '',
+    apiKey: clean(env.ANTHROPIC_API_KEY),
     // Probe order: modern models first (best results if the key supports them),
     // then the legacy fallback chain specified in the build brief.
     models: list(env.ANTHROPIC_MODELS, [
@@ -105,7 +112,7 @@ const config = {
   },
 
   oddsApi: {
-    key: env.ODDS_API_KEY || '',
+    key: clean(env.ODDS_API_KEY),
     tier: ODDS_API_TIER,
     monthlyBudget: ODDS_MONTHLY_BUDGET,
     allocation: BUDGET_ALLOCATION,
