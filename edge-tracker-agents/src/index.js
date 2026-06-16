@@ -75,12 +75,15 @@ async function main() {
   logger.info('startup', `Edge Tracker Agents booting (tier=${config.oddsApi.tier}, dryRun=${config.dryRun})`);
   if (!db.isConnected()) logger.warn('startup', 'Supabase not configured — running with in-memory store only.');
 
-  await detectModel();
-  orchestrator.start();
-
+  // Start the HTTP server FIRST so the /health healthcheck passes immediately,
+  // before the (potentially slow) Anthropic model detection runs. Otherwise a
+  // slow probe can blow the platform healthcheck timeout and fail the deploy.
   server.listen(config.server.port, () => {
     logger.info('startup', `API listening on :${config.server.port} (CORS: ${config.server.corsOrigins.join(', ')})`);
   });
+
+  await detectModel();
+  orchestrator.start();
 }
 
 function shutdown(sig) {
