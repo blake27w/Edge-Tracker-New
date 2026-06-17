@@ -34,10 +34,14 @@ export async function insert(table, rows) {
   return { data, count: data?.length ?? 0 };
 }
 
-// Upsert rows on a conflict target (comma-separated column list).
-export async function upsert(table, rows, onConflict) {
+// Upsert rows on a conflict target. options.ignoreDuplicates keeps the first
+// row (used for opening-line capture — never overwrite the recorded opener).
+export async function upsert(table, rows, onConflict, options = {}) {
   if (config.dryRun || !client) return { skipped: true, count: Array.isArray(rows) ? rows.length : 1 };
-  const q = ensure().from(table).upsert(rows, onConflict ? { onConflict } : undefined).select();
+  const opts = {};
+  if (onConflict) opts.onConflict = onConflict;
+  if (options.ignoreDuplicates) opts.ignoreDuplicates = true;
+  const q = ensure().from(table).upsert(rows, Object.keys(opts).length ? opts : undefined).select();
   const { data, error } = await q;
   if (error) throw new Error(`upsert ${table}: ${error.message}`);
   return { data, count: data?.length ?? 0 };

@@ -12,6 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setGames, setIntel } from '../../store/index.js';
+import { computeMarkets } from '../../games/lines.js';
 
 const { oddsApi, SPORTS, BOOKS, BOOK_LABELS } = config;
 
@@ -82,6 +83,10 @@ function recordSpend(sport, remainingHeader) {
 
 // ── In-memory last-line map for movement detection ──────────────
 const lastLines = new Map(); // key -> { line, price }
+
+// ── Opening lines: the first line we record per game/market sticks ──
+const openings = new Map(); // `${game_id}|${market}` -> { game_id, market, line, side, captured_at }
+export function getOpenings() { return openings; }
 
 // ── Fetch one sport key's odds ──────────────────────────────────
 async function fetchOdds(sportKey) {
@@ -208,6 +213,30 @@ async function run() {
   if (movements.length) {
     try { await db.insert('line_movements', movements); } catch (e) { logger.warn('odds', `movement write: ${e.message}`); }
   }
+  // Capture opening lines the first time we see each game/market (accurate
+  // "open" from first sight; ignoreDuplicates means the opener never changes).
+  const nowIso = new Date().toISOString();
+  const newOpens = [];
+  for (const g of allGames) {
+    const m = computeMarkets(g);
+    const cap = (market, line, side) => {
+      if (line == null) return;
+      const key = `${g.game_id}|${market}`;
+      if (!openings.has(key)) {
+        const row = { game_id: g.game_id, market, line, side, captured_at: nowIso };
+        openings.set(key, row);
+        newOpens.push(row);
+      }
+    };
+    cap('total', m.total.consensus, 'Over');
+    cap('spread', m.spread.consensusHome, g.home);
+    cap('ml', m.ml.consensusHome, g.home);
+  }
+  if (newOpens.length) {
+    try { await db.upsert('opening_lines', newOpens, 'game_id,market', { ignoreDuplicates: true }); }
+    catch (e) { logger.warn('odds', `opening capture: ${e.message}`); }
+  }
+
   await persistBudget();
   setGames(allGames);
   setIntel('movements', movements);

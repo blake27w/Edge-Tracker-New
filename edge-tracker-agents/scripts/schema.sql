@@ -51,6 +51,18 @@ create table if not exists line_snapshots (
 create index if not exists line_snapshots_game_idx on line_snapshots (game_id, market, fetched_at desc);
 create index if not exists line_snapshots_sport_idx on line_snapshots (sport, fetched_at desc);
 
+-- Opening lines: the first consensus line we record per game/market. Captured
+-- with ignore-on-conflict so the opener never changes once set.
+create table if not exists opening_lines (
+  id          uuid primary key default gen_random_uuid(),
+  game_id     text not null,
+  market      text not null,                        -- total | spread | ml
+  line        numeric,
+  side        text,
+  captured_at timestamptz not null default now(),
+  unique (game_id, market)
+);
+
 create table if not exists line_movements (
   id            uuid primary key default gen_random_uuid(),
   sport         text not null,

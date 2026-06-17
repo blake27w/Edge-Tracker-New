@@ -6,20 +6,23 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Edge Tracker">
-<meta name="theme-color" content="#c2b08a">
+<meta name="theme-color" content="#0b1422">
 <title>Edge Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --canvas:#d6c8a4;--sand:#c2b08a;--khaki:#b5a078;--tan:#a89068;--leather:#7c6240;
-  --dk-leather:#5a4228;--saddle:#3e2c16;--cream:#ede4d0;--bone:#f5eedf;
-  --forest:#1b3a2d;--sage:#5a7050;--pine:#4a8c6a;
-  --rust:#c46a3c;--wine:#b83830;--brass:#b08d3e;
-  --ink:#4a3c28;--dim:#7a6f5e;--muted:#a89068;
+  /* Dark command-center theme. Variable NAMES kept; values remapped to dark.
+     --saddle = dark panel/surface (header, tabs, buttons); --txt = primary
+     light text (replaces the old saddle-as-text usages). */
+  --canvas:#070f1c;--sand:#16263d;--khaki:#26415f;--tan:#2a3f5c;--leather:#8aa0bb;
+  --dk-leather:#c9d6e8;--saddle:#13233b;--panel2:#0c1829;--cream:#eaf2ff;--bone:#0f1e33;--txt:#e6eefb;
+  --forest:#0e3a2a;--sage:#46cf90;--pine:#3ddc97;
+  --rust:#e0824c;--wine:#ff6b6b;--brass:#e6bb46;
+  --ink:#dce6f5;--dim:#90a3ba;--muted:#6f8197;
   --H:'Oswald',sans-serif;--B:'Lora',Georgia,serif;--M:'Courier Prime',monospace;
-  --shadow-sm:0 1px 3px rgba(62,44,22,.06);
-  --shadow-md:0 4px 12px rgba(62,44,22,.08);
-  --shadow-lg:0 8px 24px rgba(62,44,22,.12);
+  --shadow-sm:0 1px 3px rgba(0,0,0,.4);
+  --shadow-md:0 4px 14px rgba(0,0,0,.45);
+  --shadow-lg:0 10px 30px rgba(0,0,0,.55);
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{height:-webkit-fill-available}
@@ -44,10 +47,10 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 
 .sp-row{display:flex;gap:6px;margin-bottom:16px}
 .sp-btn{flex:1;padding:10px 4px;border-radius:10px;border:1px solid transparent;background:var(--bone);cursor:pointer;text-align:center;transition:.2s;min-width:0;box-shadow:var(--shadow-sm)}
-.sp-btn.on{border:2px solid var(--saddle);box-shadow:var(--shadow-md)}
+.sp-btn.on{border:2px solid var(--brass);box-shadow:var(--shadow-md)}
 .sp-btn.dis{opacity:.3;cursor:default;box-shadow:none}
 .sp-btn .sp-ic{font-size:20px}.sp-btn .sp-nm{font-family:var(--H);font-size:9px;font-weight:500;color:var(--dim);letter-spacing:1px;margin-top:2px}
-.sp-btn.on .sp-nm{color:var(--saddle);font-weight:600}
+.sp-btn.on .sp-nm{color:var(--txt);font-weight:600}
 
 .home-wrap{display:flex;flex-direction:column;height:calc(100vh - 84px - 50px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:-16px -16px -28px;padding:12px 16px 16px}
 .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0}
@@ -56,10 +59,10 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .home-btn:active{transform:scale(.96);box-shadow:var(--shadow-sm)}
 .home-btn.dis{opacity:.25;cursor:default;box-shadow:none}
 .home-btn .h-ic{font-size:44px;margin-bottom:4px}
-.home-btn .h-nm{font-size:15px;font-weight:600;color:var(--saddle);letter-spacing:3px}
+.home-btn .h-nm{font-size:15px;font-weight:600;color:var(--txt);letter-spacing:3px}
 .home-btn .h-rec{font-family:var(--M);font-size:10px;color:var(--sage);margin-top:4px;font-weight:700}
 .home-hdr{text-align:center;padding:8px 0;flex-shrink:0}
-.home-title{font-family:var(--H);font-size:20px;font-weight:400;color:var(--saddle);letter-spacing:10px}
+.home-title{font-family:var(--H);font-size:20px;font-weight:400;color:var(--txt);letter-spacing:10px}
 .home-sub{font-family:var(--B);font-size:11px;color:var(--muted);margin-top:2px;font-style:italic}
 .home-footer{flex-shrink:0;padding:10px 0 0}
 .home-run{width:100%;padding:18px;border-radius:14px;border:none;background:var(--saddle);color:var(--cream);font-family:var(--H);font-size:14px;font-weight:500;letter-spacing:4px;cursor:pointer;transition:.2s;box-shadow:var(--shadow-lg)}
@@ -75,7 +78,7 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .card{background:var(--bone);border:none;border-radius:14px;padding:18px;margin-bottom:12px;box-shadow:var(--shadow-sm);transition:.15s}
 .card.green{border-left:4px solid var(--sage);box-shadow:var(--shadow-md)}
 .card.skip{opacity:.55}
-.card-t{font-family:var(--H);font-size:17px;font-weight:600;color:var(--saddle);letter-spacing:.5px}
+.card-t{font-family:var(--H);font-size:17px;font-weight:600;color:var(--txt);letter-spacing:.5px}
 .card-m{font-family:var(--B);font-size:12px;color:var(--muted);margin-top:3px;font-style:italic}
 
 .tg{display:inline-block;padding:5px 12px;border-radius:6px;font-family:var(--H);font-size:11px;font-weight:500;letter-spacing:1px;margin-right:6px;margin-bottom:6px}
@@ -98,14 +101,14 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .btn-primary:disabled{background:var(--khaki);color:var(--muted);cursor:default;box-shadow:none;transform:none}
 .btn-sm{padding:10px 16px;border-radius:8px;border:1px solid var(--khaki);background:transparent;font-family:var(--H);font-size:12px;font-weight:500;color:var(--dim);cursor:pointer;transition:.15s;letter-spacing:.5px}
 .btn-sm:active{background:var(--bone)}
-.btn-sm.on{border-color:var(--saddle);background:var(--bone);color:var(--saddle);box-shadow:var(--shadow-sm)}
+.btn-sm.on{border-color:var(--txt);background:var(--bone);color:var(--txt);box-shadow:var(--shadow-sm)}
 
 .btn-log{width:100%;padding:14px;border-radius:10px;border:none;background:rgba(90,112,80,.1);color:var(--forest);font-family:var(--H);font-size:13px;font-weight:500;letter-spacing:2px;cursor:pointer;margin-top:10px;transition:.15s}
 .btn-log:active{background:rgba(90,112,80,.18)}
 
-.inp{font-family:var(--M);font-size:14px;padding:14px 16px;background:var(--cream);border:1px solid var(--khaki);border-radius:10px;color:var(--saddle);outline:none;width:100%;-webkit-appearance:none;transition:.15s;box-shadow:inset 0 1px 2px rgba(62,44,22,.04)}
+.inp{font-family:var(--M);font-size:14px;padding:14px 16px;background:var(--panel2);border:1px solid var(--khaki);border-radius:10px;color:var(--txt);outline:none;width:100%;-webkit-appearance:none;transition:.15s;box-shadow:inset 0 1px 2px rgba(62,44,22,.04)}
 .inp:focus{border-color:var(--leather);box-shadow:inset 0 1px 2px rgba(62,44,22,.04),0 0 0 3px rgba(124,98,64,.1)}
-select.inp{background:var(--cream)}
+select.inp{background:var(--panel2)}
 textarea.inp{resize:none;font-family:var(--B);font-size:13px}
 
 .sig-btn{padding:10px 14px;border-radius:10px;border:1px solid var(--khaki);background:var(--bone);font-family:var(--M);font-size:12px;color:var(--dim);cursor:pointer;transition:.15s;text-align:left;box-shadow:var(--shadow-sm)}
@@ -134,7 +137,7 @@ textarea.inp{resize:none;font-family:var(--B);font-size:13px}
 .sec-l{font-family:var(--H);font-size:11px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin:20px 0 10px;font-weight:400}
 
 /* Loading */
-.spin{width:28px;height:28px;border-radius:50%;border:3px solid var(--khaki);border-top-color:var(--saddle);animation:sp .8s linear infinite;display:inline-block}
+.spin{width:28px;height:28px;border-radius:50%;border:3px solid var(--khaki);border-top-color:var(--txt);animation:sp .8s linear infinite;display:inline-block}
 @keyframes sp{to{transform:rotate(360deg)}}
 .loading{text-align:center;padding:40px}
 .loading p{color:var(--muted);font-size:13px;margin-top:12px;font-style:italic}
@@ -199,7 +202,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 <div class="overlay" id="share-overlay">
   <div class="overlay-box" style="max-width:420px;max-height:90vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--saddle);letter-spacing:1px">Share Plays</div>
+      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt);letter-spacing:1px">Share Plays</div>
       <button onclick="closeShare()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--dim)">✕</button>
     </div>
     <div id="share-card"></div>
@@ -219,7 +222,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 <div class="overlay" id="settings-overlay">
   <div class="overlay-box">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--saddle);letter-spacing:1px">Settings</div>
+      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt);letter-spacing:1px">Settings</div>
       <button onclick="toggleSettings()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--dim)">✕</button>
     </div>
     <div style="margin-bottom:12px">
@@ -268,7 +271,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 
     <!-- DATA PROTECTION -->
     <div style="margin-top:18px;padding-top:14px;border-top:2px solid var(--khaki)">
-      <div style="font-family:var(--H);font-size:9px;color:var(--saddle);letter-spacing:2px;margin-bottom:10px">📦 DATA PROTECTION</div>
+      <div style="font-family:var(--H);font-size:9px;color:var(--txt);letter-spacing:2px;margin-bottom:10px">📦 DATA PROTECTION</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <button class="btn-sm" onclick="exportAllJSON()" style="flex:1;font-size:10px">💾 Export JSON</button>
         <button class="btn-sm" onclick="exportAllCSV()" style="flex:1;font-size:10px">📊 Export CSV</button>
@@ -286,7 +289,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 <div class="overlay" id="edit-overlay">
   <div class="overlay-box" style="max-height:90vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--saddle);letter-spacing:1px">Edit Bet</div>
+      <div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt);letter-spacing:1px">Edit Bet</div>
       <button onclick="closeEditBet()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--dim)">✕</button>
     </div>
     <div id="edit-form"></div>
@@ -324,16 +327,16 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 
 var SPORTS = [
   {id:'mlb',label:'MLB',icon:'⚾',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'nba',label:'NBA',icon:'🏀',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'nhl',label:'NHL',icon:'🏒',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'nfl',label:'NFL',icon:'🏈',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'ufc',label:'UFC',icon:'🥊',active:true,tabs:[
     {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
@@ -342,7 +345,7 @@ var SPORTS = [
     {id:'week',icon:'🏌️',label:'Week'},{id:'score',icon:'🧮',label:'Score'},{id:'slip',icon:'🎯',label:'Slip'},{id:'gstats',icon:'📈',label:'Stats'}
   ]},
   {id:'soccer',label:'Soccer',icon:'⚽',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'tennis',label:'Tennis',icon:'🎾',active:true,tabs:[
     {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
@@ -1708,7 +1711,7 @@ function renderCorrHealth(sport){
   if(!ch.length)return'';
   var settled=ch.filter(function(c){return c.bs>0});
   if(!settled.length)return'';
-  var html='<div class="card" style="border-left:4px solid var(--leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🔗 CORRELATION HEALTH</div>';
+  var html='<div class="card" style="border-left:4px solid var(--leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🔗 CORRELATION HEALTH</div>';
   settled.forEach(function(c){
     var hrCol=c.bs<8?'var(--dim)':c.hr>=60?'var(--sage)':c.hr<=45?'var(--wine)':'var(--brass)';
     var arrow=c.pm>1.01?'▲':c.pm<0.99?'▼':'─';
@@ -1726,7 +1729,7 @@ function renderSitHealth(sport){
   if(!sh.length)return'';
   var settled=sh.filter(function(s){return s.bs>0});
   if(!settled.length)return'';
-  var html='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">📍 SITUATION HEALTH</div>';
+  var html='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">📍 SITUATION HEALTH</div>';
   settled.forEach(function(s){
     var hrCol=s.bs<10?'var(--dim)':s.hr>=60?'var(--sage)':s.hr<=45?'var(--wine)':'var(--brass)';
     html+='<div style="font-size:9px;color:var(--dim);margin-bottom:3px;display:flex;justify-content:space-between">';
@@ -1743,7 +1746,7 @@ function renderScoreBands(){
   var bands=['6-8','9-11','12+'];
   var any=bands.some(function(b){return sb[b]&&sb[b].bs>0});
   if(!any)return'';
-  var html='<div class="card"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">📊 SCORE BAND ANALYSIS</div>';
+  var html='<div class="card"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">📊 SCORE BAND ANALYSIS</div>';
   bands.forEach(function(b){
     var d=sb[b]||{};
     if(!d.bs)return;
@@ -1769,7 +1772,7 @@ function renderTimingHealth(){
   var tw=SLE.getTimingHealth();
   var any=PTIMINGS.some(function(t){return tw[t]&&tw[t].bs>0});
   if(!any)return'';
-  var html='<div class="card"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">⏰ TIMING WINDOW PERFORMANCE</div>';
+  var html='<div class="card"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">⏰ TIMING WINDOW PERFORMANCE</div>';
   PTIMINGS.forEach(function(t){
     var d=tw[t]||{};
     if(!d.bs)return;
@@ -2364,12 +2367,12 @@ function renderSlate(){
     h+='<div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center">';
     h+='<div style="flex:1">';
     if(g.fighter1){
-      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--saddle)">'+esc(g.fighter1)+' vs '+esc(g.fighter2)+'</div>';
+      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--txt)">'+esc(g.fighter1)+' vs '+esc(g.fighter2)+'</div>';
     } else if(g.player1){
-      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--saddle)">'+esc(g.player1)+' vs '+esc(g.player2)+'</div>';
+      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--txt)">'+esc(g.player1)+' vs '+esc(g.player2)+'</div>';
       if(g.tournament)h+='<div style="font-size:11px;color:var(--muted)">'+esc(g.tournament)+'</div>';
     } else {
-      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--saddle)">'+esc(g.away||'')+' @ '+esc(g.home||'')+'</div>';
+      h+='<div style="font-family:var(--H);font-size:14px;font-weight:700;color:var(--txt)">'+esc(g.away||'')+' @ '+esc(g.home||'')+'</div>';
     }
     if(g.detail)h+='<div style="font-size:11px;color:var(--dim);margin-top:2px;font-style:italic">'+esc(g.detail)+'</div>';
     h+='</div>';
@@ -2447,7 +2450,7 @@ function runAllSports(){
 
 function renderAllResults(){
   var h='<button class="back-btn" onclick="goHome()">← All Sports</button>';
-  h+='<div style="font-family:var(--H);font-size:20px;font-weight:700;color:var(--saddle);letter-spacing:3px;margin-bottom:4px">TODAY\'S PLAYS</div>';
+  h+='<div style="font-family:var(--H);font-size:20px;font-weight:700;color:var(--txt);letter-spacing:3px;margin-bottom:4px">TODAY\'S PLAYS</div>';
   var shortDate=new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   h+='<div style="font-family:var(--M);font-size:11px;color:var(--muted);margin-bottom:16px">'+shortDate+'</div>';
 
@@ -3031,7 +3034,7 @@ function renderRecord(el){
   var loggedBets=state[bk]||[];
 
   var h='';
-  h+='<div style="font-family:var(--H);font-size:11px;color:var(--saddle);letter-spacing:1px;margin-bottom:4px">ALL MODEL PICKS</div>';
+  h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:1px;margin-bottom:4px">ALL MODEL PICKS</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:12px;font-style:italic">Every qualifying play the model surfaced — tracks whether the model finds real edges, regardless of what you bet.</div>';
 
   // Summary stats
@@ -3295,7 +3298,7 @@ function renderHomeDash(){
 function renderHomeLog(){
   var sportIcons={mlb:'⚾',nba:'🏀',nhl:'🏒',nfl:'🏈',ufc:'🥊',soccer:'⚽',tennis:'🎾',golf:'⛳'};
   var h='';
-  h+='<div style="font-family:var(--H);font-size:11px;color:var(--saddle);letter-spacing:2px;margin-bottom:12px">LOG A BET</div>';
+  h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:2px;margin-bottom:12px">LOG A BET</div>';
   h+='<div style="font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">Select a sport to open its log form.</div>';
   SPORTS.forEach(function(s){
     if(!s.active)return;
@@ -3304,7 +3307,7 @@ function renderHomeLog(){
     var openLabel=open?' · '+open+' open':'';
     h+='<button class="card" onclick="setSport(\''+s.id+'\');state.tab=\'log\';save(\'et_tab\',\'log\');render()" style="width:100%;text-align:left;cursor:pointer;display:flex;align-items:center;gap:12px;padding:14px 16px;border:none">';
     h+='<span style="font-size:28px">'+s.icon+'</span>';
-    h+='<div><div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--saddle);letter-spacing:1px">'+s.label+'</div>';
+    h+='<div><div style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt);letter-spacing:1px">'+s.label+'</div>';
     h+='<div style="font-size:9px;color:var(--muted)">'+bets.length+' bets'+openLabel+'</div></div>';
     h+='</button>';
   });
@@ -3459,7 +3462,7 @@ function renderHomeRecord(){
   });
   h+='</div>';
 
-  h+='<div style="font-family:var(--H);font-size:11px;color:var(--saddle);letter-spacing:1px;margin-bottom:4px">ALL MODEL PICKS</div>';
+  h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:1px;margin-bottom:4px">ALL MODEL PICKS</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:12px;font-style:italic">Every qualifying play the model surfaced — tracks whether the model finds real edges.</div>';
 
   if(settled.length){
@@ -3477,7 +3480,7 @@ function renderHomeRecord(){
     var bySport={};
     picks.forEach(function(p){var sp=p.sport||'Other';if(!bySport[sp])bySport[sp]=[];bySport[sp].push(p)});
     h+='<div class="card" style="border-left:4px solid var(--dk-leather);padding:12px">';
-    h+='<div style="font-family:var(--H);font-size:9px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">BY SPORT</div>';
+    h+='<div style="font-family:var(--H);font-size:9px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">BY SPORT</div>';
     Object.keys(bySport).forEach(function(sp){
       var arr=bySport[sp],se=arr.filter(function(p){return p.res!==null}),w=se.filter(function(p){return p.res==='win'}).length;
       var swr=se.length?Math.round(w/se.length*100):null;
@@ -3543,7 +3546,7 @@ function renderHomeStats(){
   h+='<div style="display:flex;gap:4px;margin-bottom:14px">';
   [['overview','Overview'],['signals','🧠 Signals'],['sports','By Sport']].forEach(function(v){
     var on=state.statsView===v[0];
-    h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.statsView=\''+v[0]+'\';render()" style="flex:1;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--saddle)':'')+'">'+v[1]+'</button>';
+    h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.statsView=\''+v[0]+'\';render()" style="flex:1;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';
   });
   h+='</div>';
 
@@ -3553,7 +3556,7 @@ function renderHomeStats(){
   // ══════ OVERVIEW TAB ══════
   var st=tStats(allBets);
   var totalPl=st.pl;
-  h+='<div style="font-family:var(--H);font-size:11px;color:var(--saddle);letter-spacing:2px;margin-bottom:10px">ALL MODELS</div>';
+  h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:2px;margin-bottom:10px">ALL MODELS</div>';
   h+='<div class="stats-row">';
   h+='<div class="stat"><div class="sv" style="color:'+(totalPl>=0?'var(--sage)':'var(--wine)')+'">'+( totalPl>=0?'+$':'-$')+Math.abs(totalPl).toFixed(0)+'</div><div class="sl">P&L</div></div>';
   h+='<div class="stat"><div class="sv" style="color:'+(st.wr&&st.wr>=52?'var(--sage)':'var(--dim)')+'">'+( st.wr!==null?st.wr+'%':'—')+'</div><div class="sl">Win %</div></div>';
@@ -3569,7 +3572,7 @@ function renderHomeStats(){
     var avgClv=Math.round(clvSum/clvBets.length*100)/100;
     var beatRate=Math.round(clvBeats/clvBets.length*100);
     h+='<div class="card" style="border-left:4px solid var(--pine);padding:12px">';
-    h+='<div style="font-family:var(--H);font-size:9px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">📊 CLV OVERVIEW</div>';
+    h+='<div style="font-family:var(--H);font-size:9px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">📊 CLV OVERVIEW</div>';
     h+='<div style="display:flex;gap:16px;font-size:11px">';
     h+='<div><span style="font-family:var(--H);font-size:7px;color:var(--muted);letter-spacing:1px">AVG CLV</span><br><span style="font-weight:700;color:'+(avgClv>0?'var(--sage)':'var(--wine)')+'">'+( avgClv>0?'+':'')+avgClv+'</span></div>';
     h+='<div><span style="font-family:var(--H);font-size:7px;color:var(--muted);letter-spacing:1px">BEAT RATE</span><br><span style="font-weight:700;color:'+(beatRate>=55?'var(--sage)':'var(--dim)')+'">'+beatRate+'%</span></div>';
@@ -3580,7 +3583,7 @@ function renderHomeStats(){
   // Score band performance
   var sb=SLE.getScoreBands();
   if(sb&&Object.keys(sb).length){
-    h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin:16px 0 8px">SCORE BAND PERFORMANCE</div>';
+    h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin:16px 0 8px">SCORE BAND PERFORMANCE</div>';
     ['6-8','9-11','12+'].forEach(function(band){
       var d=sb[band];if(!d||!d.bs)return;
       h+='<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-bottom:4px;padding:6px 10px;background:var(--bone);border-radius:6px">';
@@ -3595,7 +3598,7 @@ function renderHomeStats(){
   var matureSigs=snapshot.filter(function(s){return s.bs>=10});
   if(matureSigs.length>=3){
     matureSigs.sort(function(a,b){return b.roi-a.roi});
-    h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin:16px 0 8px">⚡ TOP SIGNALS</div>';
+    h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin:16px 0 8px">⚡ TOP SIGNALS</div>';
     matureSigs.slice(0,3).forEach(function(s){
       h+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:6px 10px;background:var(--bone);border-radius:6px;margin-bottom:4px">';
       h+='<span style="font-weight:600;color:var(--ink)">'+esc(s.name)+' <span style="color:var(--muted);font-weight:400">'+s.sport+'</span></span>';
@@ -3683,7 +3686,7 @@ function renderSignalDashboard(allBets,sportIcons){
   h+='<div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">';
   [['all','All Sports'],['MLB','⚾'],['NBA','🏀'],['NHL','🏒'],['NFL','🏈'],['UFC','🥊'],['Soccer','⚽'],['Tennis','🎾']].forEach(function(f){
     var on=state.sigDashFilter===f[0];
-    h+='<button class="btn-sm" onclick="state.sigDashFilter=\''+f[0]+'\';render()" style="font-size:8px;padding:4px 8px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--saddle)':'')+'">'+f[1]+'</button>';
+    h+='<button class="btn-sm" onclick="state.sigDashFilter=\''+f[0]+'\';render()" style="font-size:8px;padding:4px 8px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+f[1]+'</button>';
   });
   h+='</div>';
   h+='<div style="display:flex;gap:4px;margin-bottom:12px">';
@@ -3736,7 +3739,7 @@ function renderSignalDashboard(allBets,sportIcons){
   var chartSigs=filtered.slice(0,15);
 
   h+='<div class="card" style="padding:14px">';
-  h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:10px">P&L BY SIGNAL</div>';
+  h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:10px">P&L BY SIGNAL</div>';
   chartSigs.forEach(function(s){
     var barW=Math.max(2,Math.round(Math.abs(s.pnl)/maxPnl*100));
     var isPos=s.pnl>=0;
@@ -3755,7 +3758,7 @@ function renderSignalDashboard(allBets,sportIcons){
 
   // ── Leaderboard Table ──
   h+='<div class="card" style="padding:14px">';
-  h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:10px">SIGNAL LEADERBOARD</div>';
+  h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:10px">SIGNAL LEADERBOARD</div>';
   h+='<div style="overflow-x:auto">';
   h+='<table style="width:100%;border-collapse:collapse;font-size:9px">';
   h+='<tr style="border-bottom:2px solid var(--khaki)">';
@@ -3837,7 +3840,7 @@ function renderSignalDashboard(allBets,sportIcons){
 
   if(insights.length){
     h+='<div class="card" style="border-left:4px solid var(--brass);padding:14px">';
-    h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:8px">💡 INSIGHTS</div>';
+    h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:8px">💡 INSIGHTS</div>';
     insights.forEach(function(ins){
       var bgCol=ins.type==='good'?'rgba(90,112,80,.06)':ins.type==='bad'?'rgba(184,56,48,.06)':ins.type==='warn'?'rgba(176,141,62,.06)':'rgba(62,44,22,.04)';
       var borderCol=ins.type==='good'?'var(--sage)':ins.type==='bad'?'var(--wine)':ins.type==='warn'?'var(--brass)':'var(--dim)';
@@ -3854,7 +3857,7 @@ function renderSignalDashboard(allBets,sportIcons){
   var t3=mature.filter(function(s){return(s.tier===3||s.bw===1)&&s.tier!==1&&s.tier!==2&&!(s.bw>=2)});
   if(t1.length||t2.length||t3.length){
     h+='<div class="card" style="padding:14px">';
-    h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:10px">BY TIER</div>';
+    h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:10px">BY TIER</div>';
     [['T1 (3pts)',t1,'var(--sage)'],['T2 (2pts)',t2,'var(--brass)'],['T3 (1pt)',t3,'var(--dim)']].forEach(function(tier){
       var arr=tier[1];if(!arr.length)return;
       var tw=0,tl=0,tp=0;arr.forEach(function(s){tw+=s.w;tl+=s.l;tp+=s.pnl});
@@ -3874,7 +3877,7 @@ function renderSignalDashboard(allBets,sportIcons){
 function renderSportBreakdown(allBets,sportIcons){
   var h='';
 
-  h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:8px">BY SPORT</div>';
+  h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:8px">BY SPORT</div>';
   var bySport={};
   allBets.forEach(function(b){var sp=b.sp||'Other';if(!bySport[sp])bySport[sp]=[];bySport[sp].push(b)});
 
@@ -3888,7 +3891,7 @@ function renderSportBreakdown(allBets,sportIcons){
 
     h+='<div class="card" style="padding:12px;border-left:4px solid var(--leather)">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-    h+='<span style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--saddle)">'+icon+' '+sp+'</span>';
+    h+='<span style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+icon+' '+sp+'</span>';
     h+='<span style="font-family:var(--H);font-size:16px;font-weight:700;color:'+(s.pl>=0?'var(--sage)':'var(--wine)')+'">'+( s.pl>=0?'+$':'-$')+Math.abs(s.pl).toFixed(0)+'</span>';
     h+='</div>';
     h+='<div style="display:flex;gap:12px;font-size:10px;color:var(--dim)">';
@@ -3905,7 +3908,7 @@ function renderSportBreakdown(allBets,sportIcons){
     var ps=tStats(propBets);
     h+='<div class="card" style="padding:12px;border-left:4px solid var(--rust)">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-    h+='<span style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--saddle)">🎯 Props (All Sports)</span>';
+    h+='<span style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">🎯 Props (All Sports)</span>';
     h+='<span style="font-family:var(--H);font-size:16px;font-weight:700;color:'+(ps.pl>=0?'var(--sage)':'var(--wine)')+'">'+( ps.pl>=0?'+$':'-$')+Math.abs(ps.pl).toFixed(0)+'</span>';
     h+='</div>';
     h+='<div style="display:flex;gap:12px;font-size:10px;color:var(--dim)">';
@@ -3915,7 +3918,7 @@ function renderSportBreakdown(allBets,sportIcons){
     h+='</div></div>';
   }
 
-  h+='<div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin:20px 0 8px">🧠 SIGNAL HEALTH BY SPORT</div>';
+  h+='<div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin:20px 0 8px">🧠 SIGNAL HEALTH BY SPORT</div>';
   var healthSports=[{key:'MLB',label:'MLB',icon:'⚾'},{key:'NBA',label:'NBA',icon:'🏀'},{key:'NHL',label:'NHL',icon:'🏒'},{key:'NFL',label:'NFL',icon:'🏈'},{key:'UFC',label:'UFC',icon:'🥊'},{key:'Soccer',label:'Soccer',icon:'⚽'},{key:'Tennis',label:'Tennis',icon:'🎾'}];
   healthSports.forEach(function(hs){
     var gh=SLE.getHealth(hs.key.toLowerCase(),'game');
@@ -3979,6 +3982,9 @@ function renderModule(){
   var el=$('mod-'+state.sport);
   if(!el)return;
   el.classList.remove('hid');
+
+  // Daily games board (live slate from the backend) — the new sport landing.
+  if(state.tab==='games'){renderGamesBoard(el);return;}
 
   if(state.sport==='mlb'||state.sport==='nba'||state.sport==='nhl')renderTotals();
   else if(state.sport==='golf')renderGolf();
@@ -4235,7 +4241,7 @@ function renderTotalsStats(el){
   var h='';
 
   // Model Record
-  h+='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:8px">🏆 '+sp+' Model Record</div>';
+  h+='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:8px">🏆 '+sp+' Model Record</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:8px;font-style:italic">All qualifying plays the model surfaced — whether you bet them or not</div>';
   if(mSettled.length){
     h+='<div class="stats-row">';
@@ -4250,7 +4256,7 @@ function renderTotalsStats(el){
   h+='</div>';
 
   // Your Record
-  h+='<div class="card" style="border-left:4px solid var(--sage)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:8px">💰 Your '+sp+' Record</div>';
+  h+='<div class="card" style="border-left:4px solid var(--sage)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:8px">💰 Your '+sp+' Record</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:8px;font-style:italic">Only the plays you chose to bet — your actual P&L</div>';
   if(state[bk].length){
     h+='<div class="stats-row">';
@@ -4289,7 +4295,7 @@ function renderTotalsStats(el){
   var propBets=state.propBets.filter(function(b){return b.sp===sp});
   if(propBets.length){
     var pst=tStats(propBets);
-    h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">🎯 '+sp+' Props Record</div>';
+    h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">🎯 '+sp+' Props Record</div>';
     h+='<div class="stats-row"><div class="stat"><div class="sv" style="color:'+(pst.pl>=0?'var(--sage)':'var(--wine)')+'">'+(pst.pl>=0?'+$':'-$')+Math.abs(pst.pl).toFixed(0)+'</div><div class="sl">P&L</div></div>';
     h+='<div class="stat"><div class="sv" style="color:'+(pst.wr&&pst.wr>=52?'var(--sage)':'var(--dim)')+'">'+(pst.wr!==null?pst.wr+'%':'—')+'</div><div class="sl">Win %</div></div>';
     h+='<div class="stat"><div class="sv">'+pst.w+'-'+pst.l+'</div><div class="sl">Record</div></div>';
@@ -4305,7 +4311,7 @@ function renderTotalsStats(el){
   }
 
   // ── SELF-LEARNING: Signal Health Tables ──
-  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — '+sp+' GAME</div>';
+  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — '+sp+' GAME</div>';
   h+=renderSignalHealth(sp,'game');
   h+='<div style="display:flex;gap:6px;margin-top:6px">';
   h+='<button class="btn-sm" onclick="SLE.seasonalReset(\''+sp.toLowerCase()+'\')" style="font-size:8px;color:var(--wine);border-color:var(--wine)">🔄 Seasonal Reset</button>';
@@ -4313,7 +4319,7 @@ function renderTotalsStats(el){
   h+='</div></div>';
   // Prop signal health
   if((PSIGS[sp]||[]).length){
-    h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — '+sp+' PROPS</div>';
+    h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — '+sp+' PROPS</div>';
     h+=renderSignalHealth(sp,'prop');
     h+='</div>';
   }
@@ -4613,7 +4619,7 @@ function renderNFLHist(el){
 function renderNFLStats(el){
   triggerRecalc('nfl');
   var st=tStats(state.nflBets);var h='';
-  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">🏈 NFL Overall</div>';
+  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">🏈 NFL Overall</div>';
   h+='<div style="font-size:10px;color:var(--dim)">Record: '+st.w+'W '+st.l+'L'+(st.wr!==null?' ('+st.wr+'%)':'')+'</div>';
   h+='<div style="font-size:10px;color:'+(st.pl>=0?'var(--sage)':'var(--wine)')+'">P&L: '+(st.pl>=0?'+':'')+' $'+st.pl.toFixed(0)+'</div></div>';
   ['total','spread'].forEach(function(bt){
@@ -4629,13 +4635,13 @@ function renderNFLStats(el){
     h+='<div style="font-size:10px;color:var(--dim)">'+pst.w+'W '+pst.l+'L'+(pst.wr!==null?' ('+pst.wr+'%)':'')+' · '+(pst.pl>=0?'+':'')+' $'+pst.pl.toFixed(0)+'</div></div>';
   }
   // Signal health
-  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — NFL GAME</div>';
+  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — NFL GAME</div>';
   h+=renderSignalHealth('NFL','game');
   h+='<div style="display:flex;gap:6px;margin-top:6px">';
   h+='<button class="btn-sm" onclick="SLE.seasonalReset(\'nfl\')" style="font-size:8px;color:var(--wine);border-color:var(--wine)">🔄 Seasonal Reset</button>';
   h+='<button class="btn-sm" onclick="SLE.exportHealth(\'nfl\')" style="font-size:8px">📥 Export JSON</button>';
   h+='</div></div>';
-  h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — NFL PROPS</div>';
+  h+='<div class="card" style="border-left:4px solid var(--rust)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — NFL PROPS</div>';
   h+=renderSignalHealth('NFL','prop');h+='</div>';
   h+=renderCorrHealth('NFL');h+=renderSitHealth('NFL');h+=renderScoreBands();h+=renderTimingHealth();
   el.innerHTML=h;
@@ -4778,11 +4784,11 @@ function renderUFCHist(el){
 function renderUFCStats(el){
   triggerRecalc('ufc');
   var st=tStats(state.ufcBets);var h='';
-  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">🥊 UFC Overall</div>';
+  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">🥊 UFC Overall</div>';
   h+='<div style="font-size:10px;color:var(--dim)">Record: '+st.w+'W '+st.l+'L'+(st.wr!==null?' ('+st.wr+'%)':'')+'</div>';
   h+='<div style="font-size:10px;color:'+(st.pl>=0?'var(--sage)':'var(--wine)')+'">P&L: '+(st.pl>=0?'+':'')+' $'+st.pl.toFixed(0)+'</div></div>';
   if(!state.ufcBets.length)h+='<div class="empty">Log UFC bets to see stats.</div>';
-  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — UFC</div>';
+  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — UFC</div>';
   h+=renderSignalHealth('UFC','game');
   h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="btn-sm" onclick="SLE.seasonalReset(\'ufc\')" style="font-size:8px;color:var(--wine);border-color:var(--wine)">🔄 Reset</button><button class="btn-sm" onclick="SLE.exportHealth(\'ufc\')" style="font-size:8px">📥 Export</button></div></div>';
   h+=renderCorrHealth('UFC');h+=renderSitHealth('UFC');h+=renderScoreBands();
@@ -4823,7 +4829,7 @@ function renderPropsLogInline(sp){
   var sigs=PSIGS[sp]||[],markets=PROP_MARKETS[sp]||[];
   var c=pCalcScore();
   var h='';
-  h+='<div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);letter-spacing:1px;margin-bottom:10px">🎯 '+sp+' Player Props</div>';
+  h+='<div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);letter-spacing:1px;margin-bottom:10px">🎯 '+sp+' Player Props</div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">';
   h+='<input class="inp" placeholder="Player Name" value="'+esc(state.pPlayer)+'" onchange="state.pPlayer=this.value">';
   h+='<select class="inp" onchange="state.pMarket=this.value"><option value="">Market...</option>';
@@ -4858,7 +4864,7 @@ function renderPropsLog(el){
   var sp=pGetSport(),sigs=PSIGS[sp]||[],markets=PROP_MARKETS[sp]||[];
   var c=pCalcScore();
   var h='';
-  h+='<div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);letter-spacing:1px;margin-bottom:10px">🎯 '+sp+' Player Props</div>';
+  h+='<div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);letter-spacing:1px;margin-bottom:10px">🎯 '+sp+' Player Props</div>';
   // Player + Market + Line
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">';
   h+='<input class="inp" placeholder="Player Name" value="'+esc(state.pPlayer)+'" onchange="state.pPlayer=this.value">';
@@ -5100,7 +5106,7 @@ function renderSoccerStats(el){
   var mSettled=mPicks.filter(function(p){return p.res!==null});
   var mWins=mSettled.filter(function(p){return p.res==='win'});
   var mWr=mSettled.length?Math.round(mWins.length/mSettled.length*100):null;
-  h+='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">🏆 Soccer Model Record</div>';
+  h+='<div class="card" style="border-left:4px solid var(--brass)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">🏆 Soccer Model Record</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:8px;font-style:italic">All qualifying plays the model surfaced</div>';
   if(mSettled.length){
     h+='<div class="stats-row"><div class="stat"><div class="sv" style="color:'+(mWr>=52?'var(--sage)':'var(--dim)')+'">'+mWr+'%</div><div class="sl">Hit Rate</div></div>';
@@ -5109,7 +5115,7 @@ function renderSoccerStats(el){
   } else h+='<div style="font-size:10px;color:var(--dim)">Run the model to start building the record.</div>';
   h+='</div>';
   // Your Record
-  h+='<div class="card" style="border-left:4px solid var(--sage)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">💰 Your Soccer Record</div>';
+  h+='<div class="card" style="border-left:4px solid var(--sage)"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">💰 Your Soccer Record</div>';
   if(state.soccerBets.length){
     h+='<div class="stats-row"><div class="stat"><div class="sv" style="color:'+(st.pl>=0?'var(--sage)':'var(--wine)')+'">'+(st.pl>=0?'+$':'-$')+Math.abs(st.pl).toFixed(0)+'</div><div class="sl">P&L</div></div>';
     h+='<div class="stat"><div class="sv" style="color:'+(st.wr&&st.wr>=52?'var(--sage)':'var(--dim)')+'">'+( st.wr!==null?st.wr+'%':'—')+'</div><div class="sl">Win %</div></div>';
@@ -5134,7 +5140,7 @@ function renderSoccerStats(el){
   } else h+='<div style="font-size:10px;color:var(--dim)">No bets logged yet.</div>';
   h+='</div>';
   // Signal health
-  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — SOCCER</div>';
+  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — SOCCER</div>';
   h+=renderSignalHealth('Soccer','game');
   h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="btn-sm" onclick="SLE.seasonalReset(\'soccer\')" style="font-size:8px;color:var(--wine);border-color:var(--wine)">🔄 Reset</button><button class="btn-sm" onclick="SLE.exportHealth(\'soccer\')" style="font-size:8px">📥 Export</button></div></div>';
   h+=renderCorrHealth('Soccer');h+=renderSitHealth('Soccer');h+=renderScoreBands();
@@ -5269,11 +5275,11 @@ function renderTennisHist(el){
 function renderTennisStats(el){
   triggerRecalc('tennis');
   var st=tStats(state.tennisBets);var h='';
-  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--saddle);margin-bottom:6px">🎾 Tennis Overall</div>';
+  h+='<div class="card"><div style="font-family:var(--H);font-size:12px;font-weight:700;color:var(--txt);margin-bottom:6px">🎾 Tennis Overall</div>';
   h+='<div style="font-size:10px;color:var(--dim)">Record: '+st.w+'W '+st.l+'L'+(st.wr!==null?' ('+st.wr+'%)':'')+'</div>';
   h+='<div style="font-size:10px;color:'+(st.pl>=0?'var(--sage)':'var(--wine)')+'">P&L: '+(st.pl>=0?'+':'')+' $'+st.pl.toFixed(0)+'</div></div>';
   if(!state.tennisBets.length)h+='<div class="empty">Log tennis bets to see stats.</div>';
-  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--saddle);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — TENNIS</div>';
+  h+='<div class="card" style="border-left:4px solid var(--dk-leather)"><div style="font-family:var(--H);font-size:10px;color:var(--txt);letter-spacing:1px;margin-bottom:6px">🧠 SIGNAL HEALTH — TENNIS</div>';
   h+=renderSignalHealth('Tennis','game');
   h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="btn-sm" onclick="SLE.seasonalReset(\'tennis\')" style="font-size:8px;color:var(--wine);border-color:var(--wine)">🔄 Reset</button><button class="btn-sm" onclick="SLE.exportHealth(\'tennis\')" style="font-size:8px">📥 Export</button></div></div>';
   h+=renderCorrHealth('Tennis');h+=renderSitHealth('Tennis');h+=renderScoreBands();
@@ -5284,7 +5290,7 @@ function renderComingSoon(el){
   var sp=SPORTS.find(function(s){return s.id===state.sport});
   el.innerHTML='<div style="text-align:center;padding:48px 20px">'
     +'<div style="font-size:48px;margin-bottom:10px">'+(sp?sp.icon:'🏟️')+'</div>'
-    +'<div style="font-family:var(--H);font-size:18px;font-weight:700;color:var(--saddle);letter-spacing:2px">'+(sp?sp.label:'Sport')+' Module</div>'
+    +'<div style="font-family:var(--H);font-size:18px;font-weight:700;color:var(--txt);letter-spacing:2px">'+(sp?sp.label:'Sport')+' Module</div>'
     +'<div style="font-size:13px;color:var(--muted);margin-top:8px;font-style:italic">Coming soon. Architecture ready — just needs the model.</div>'
     +'</div>';
 }
@@ -5498,7 +5504,7 @@ function openEditBet(betId){
   else if(b.p1)game=esc(b.p1)+' vs '+esc(b.p2);
   else if(b.player)game=esc(b.player)+' — '+esc(b.market||'');
   else game=esc(b.aw||b.away||'')+' @ '+esc(b.hm||b.home||'');
-  h+='<div style="font-family:var(--H);font-size:15px;font-weight:600;color:var(--saddle);margin-bottom:12px">'+game+'</div>';
+  h+='<div style="font-family:var(--H);font-size:15px;font-weight:600;color:var(--txt);margin-bottom:12px">'+game+'</div>';
   h+='<div style="font-size:9px;color:var(--muted);margin-bottom:14px">'+esc(b.sp||'')+' · '+esc(b.dt||'')+'</div>';
 
   // Date
@@ -5765,7 +5771,7 @@ function renderAgentsView(){
 function renderAgentsContent(){
   var h='';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
-  h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--saddle);font-weight:600">🤖 AGENT CONTROL</div>';
+  h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">🤖 AGENT CONTROL</div>';
   h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
 
@@ -5804,7 +5810,7 @@ function renderAgentsContent(){
     var st=agentStatus(run,a.name);
     h+='<div class="card" style="padding:11px 12px;margin:0;border-left:3px solid '+st.color+'">';
     h+='<div style="display:flex;align-items:center;justify-content:space-between">';
-    h+='<div style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--saddle);letter-spacing:.3px">'+a.icon+' '+a.label+'</div>';
+    h+='<div style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--txt);letter-spacing:.3px">'+a.icon+' '+a.label+'</div>';
     h+='<div style="font-size:11px">'+st.dot+'</div></div>';
     var cad=(run&&run.schedule)?run.schedule:(run&&run.intervalMs)?('every '+Math.round(run.intervalMs/60000)+' min'):a.cadence;
     h+='<div style="font-size:8px;color:var(--muted);margin-top:2px">'+cad+' · '+st.label+'</div>';
@@ -5831,7 +5837,7 @@ function renderAgentsContent(){
       var tier=p.tier||'';var ud=p.unit_dollars!=null?p.unit_dollars:'';
       h+='<div class="card green" style="padding:12px;margin:0 0 8px">';
       h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
-      h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--saddle)">'+esc(p.matchup||p.game_id||'')+'</div>';
+      h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+esc(p.matchup||p.game_id||'')+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+' · '+esc(p.market||'')+' · <b>'+esc(p.side||'')+'</b>'+(p.line!=null?(' '+p.line):'')+'</div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:16px;font-weight:700;color:var(--pine)">'+conf+'</div><div style="font-size:7px;color:var(--muted)">CONF</div></div>';
       h+='</div>';
@@ -5917,6 +5923,65 @@ function agentLogPlay(i){
   toast('✓ Logged: '+sport+' '+(p.side||'')+' — '+conf.label+' ($'+wg+')');
   state.agentsDismissed.push(agentPlayKey(p));save('et_agents_dismissed',state.agentsDismissed);
   renderAgentsContent();
+}
+
+// ══════════════════════════════════════
+// 📅 DAILY GAMES BOARD (per sport)
+// Live slate from the backend /games endpoint: opening→current line,
+// best-book price, qualifying-play badge, sharp/RLM, injuries, weather.
+// ══════════════════════════════════════
+function gbChip(txt){return '<span style="font-size:9px;background:var(--panel2);color:var(--dim);padding:2px 7px;border-radius:10px;white-space:nowrap">'+esc(txt)+'</span>';}
+function gbOdds(p){if(p==null)return '';return p>0?'+'+p:''+p;}
+
+function renderGamesBoard(el){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+  if(!api){el.innerHTML='<div class="card" style="text-align:center;color:var(--dim)">Set the backend URL first — open the <b>🤖 Agents</b> tab and tap <span onclick="agentSetApiUrl()" style="color:var(--brass);cursor:pointer;text-decoration:underline">backend</span> — to load the live games board.</div>';return;}
+  el.innerHTML='<div style="padding:40px 0;text-align:center;color:var(--dim);font-family:var(--H);letter-spacing:2px">LOADING '+state.sport.toUpperCase()+' SLATE…</div>';
+  fetch(api+'/games?sport='+state.sport.toUpperCase()).then(function(r){return r.json()}).then(function(d){
+    if(state.tab!=='games')return;
+    var e2=$('mod-'+state.sport);if(e2)e2.innerHTML=renderGamesHTML(d);
+  }).catch(function(e){el.innerHTML='<div class="card" style="color:var(--wine);text-align:center">Could not load games: '+esc(e.message)+'</div>';});
+}
+
+function renderGamesHTML(d){
+  var sp=state.sport.toUpperCase();
+  var games=(d&&d.games)||[];
+  var h='';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+  h+='<div style="font-family:var(--H);font-size:16px;letter-spacing:1px;color:var(--txt);font-weight:600">'+sp+' <span style="color:var(--dim);font-size:12px">· '+games.length+' game'+(games.length!==1?'s':'')+'</span></div>';
+  h+='<button class="flt" onclick="render()">↻ Refresh</button></div>';
+  if(!games.length){h+='<div class="card" style="text-align:center;color:var(--dim);font-style:italic">'+esc((d&&d.note)||'No games right now.')+'</div>';return h;}
+  games.forEach(function(g){
+    var t=g.total||{};var play=g.play;
+    var moveStr='';
+    if(t.open!=null&&t.current!=null&&t.move!=null&&t.move!==0){
+      var dn=t.move<0;
+      moveStr=' <span style="color:'+(dn?'var(--sage)':'var(--wine)')+';font-weight:700">'+(dn?'▼':'▲')+Math.abs(t.move)+'</span>';
+    }
+    h+='<div class="card" style="padding:13px 14px;margin-bottom:10px;'+(play?'border-left:3px solid var(--sage);':'')+'">';
+    var time=g.commence_time?new Date(g.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'}):'';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">';
+    h+='<span style="font-family:var(--M);font-size:10px;color:var(--dim)">'+esc(time)+'</span><span>';
+    if(g.rlm)h+='<span style="font-size:9px;background:rgba(230,187,70,.16);color:var(--brass);padding:2px 6px;border-radius:5px;margin-left:4px">🔁 RLM</span>';
+    if(g.sharp)h+='<span style="font-size:9px;background:rgba(61,220,151,.14);color:var(--pine);padding:2px 6px;border-radius:5px;margin-left:4px">⚡ STEAM</span>';
+    h+='</span></div>';
+    h+='<div style="font-family:var(--H);font-size:15px;font-weight:600;color:var(--txt);letter-spacing:.3px">'+esc(g.away)+' <span style="color:var(--dim)">@</span> '+esc(g.home)+'</div>';
+    if(t.current!=null)h+='<div style="font-family:var(--M);font-size:12px;color:var(--cream);margin-top:5px">O/U '+(t.open!=null?t.open+' → ':'')+'<b>'+t.current+'</b>'+moveStr+'</div>';
+    if(t.bestUnder||t.bestOver){
+      h+='<div style="font-size:9px;color:var(--dim);margin-top:3px">';
+      if(t.bestUnder)h+='best U '+t.bestUnder.line+' '+gbOdds(t.bestUnder.price)+' · '+esc(t.bestUnder.book);
+      if(t.bestOver)h+=(t.bestUnder?' &nbsp;|&nbsp; ':'')+'best O '+t.bestOver.line+' '+gbOdds(t.bestOver.price)+' · '+esc(t.bestOver.book);
+      h+='</div>';
+    }
+    if(play)h+='<div style="margin-top:7px;display:inline-block;background:rgba(70,207,144,.16);border:1px solid var(--sage);border-radius:7px;padding:4px 9px;font-family:var(--H);font-size:11px;color:var(--sage);font-weight:600">✅ '+esc(play.side)+(play.line!=null?' '+play.line:'')+' · '+play.score+' conf · '+esc(play.tier)+'/$'+play.unit_dollars+(play.t1?' · '+play.t1+'T1':'')+'</div>';
+    var chips='';
+    var w=g.weather;
+    if(w){if(w.dome)chips+=gbChip('🏟 dome');else if(w.wind_mph!=null)chips+=gbChip('💨 '+Math.round(w.wind_mph)+'mph'+(w.total_impact==='under'?' ↓Und':''));}
+    (g.injuries||[]).slice(0,4).forEach(function(i){chips+=gbChip('🚑 '+i.player+' '+i.status);});
+    if(chips)h+='<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px">'+chips+'</div>';
+    h+='</div>';
+  });
+  return h;
 }
 
 window.setSport=setSport;

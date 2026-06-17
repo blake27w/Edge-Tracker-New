@@ -11,6 +11,7 @@ import orchestrator from './orchestrator/index.js';
 import { getGames, getPlays, getPropPlays } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook } from './export/index.js';
+import { buildGames } from './games/index.js';
 
 // ── CORS ────────────────────────────────────────────────────────
 function cors(req, res) {
@@ -81,6 +82,15 @@ const server = http.createServer(async (req, res) => {
       });
     case '/plays':
       return json(res, 200, { plays: getPlays(), props: getPropPlays() });
+    case '/games': {
+      try {
+        const board = await buildGames(url.searchParams.get('sport') || '');
+        return json(res, 200, board);
+      } catch (e) {
+        logger.error('games', e.message);
+        return json(res, 500, { error: 'games failed', detail: e.message });
+      }
+    }
     case '/feed':
       return json(res, 200, { feed: getFeed() });
     case '/budget':
