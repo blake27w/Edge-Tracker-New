@@ -5640,10 +5640,10 @@ function renderEditDeleteBtns(betId){
 // ══════════════════════════════════════
 var AGENTS_META=[
   {name:'odds',icon:'📡',label:'Odds Ingestion',cadence:'every 5 min'},
-  {name:'injury',icon:'🏥',label:'Injury Intelligence',cadence:'every 30 min'},
+  {name:'injury',icon:'🏥',label:'Injury Intelligence',cadence:'game-day: early + final'},
   {name:'weather',icon:'🌦️',label:'Weather Intelligence',cadence:'every 45 min'},
   {name:'sharp',icon:'💰',label:'Sharp Money Detection',cadence:'every 2 min'},
-  {name:'power',icon:'📊',label:'Power Ratings',cadence:'every 60 min'},
+  {name:'power',icon:'📊',label:'Power Ratings',cadence:'once daily (08:00)'},
   {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 30 min'},
   {name:'schedule-spot',icon:'🗓️',label:'Schedule Spot',cadence:'every 30 min'},
   {name:'mlb-context',icon:'⚾',label:'MLB Context',cadence:'every 60 min'},
@@ -5764,6 +5764,9 @@ function renderAgentsContent(){
   h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
 
+  // One-click export → opens the backend /export (downloads .xlsx for Excel/Sheets).
+  h+='<button class="btn-primary" style="width:100%;padding:9px;font-size:11px;margin-bottom:12px" onclick="agentExport()">📊 Export to Excel / Google Sheets</button>';
+
   if(state.agentsError){
     h+='<div class="card" style="text-align:center;font-size:11px;color:var(--muted);font-style:italic">'+state.agentsError+'</div>';
     $('sport-selector').innerHTML=h;return;
@@ -5796,7 +5799,7 @@ function renderAgentsContent(){
     h+='<div style="display:flex;align-items:center;justify-content:space-between">';
     h+='<div style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--saddle);letter-spacing:.3px">'+a.icon+' '+a.label+'</div>';
     h+='<div style="font-size:11px">'+st.dot+'</div></div>';
-    var cad=(run&&run.intervalMs)?('every '+Math.round(run.intervalMs/60000)+' min'):a.cadence;
+    var cad=(run&&run.schedule)?run.schedule:(run&&run.intervalMs)?('every '+Math.round(run.intervalMs/60000)+' min'):a.cadence;
     h+='<div style="font-size:8px;color:var(--muted);margin-top:2px">'+cad+' · '+st.label+'</div>';
     if(run){
       var ts=run.finished_at||run.started_at;
@@ -5857,6 +5860,13 @@ function renderAgentsContent(){
 }
 
 function agentPlayKey(p){return (p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'')}
+
+function agentExport(){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+  if(!api){toast('Set the backend URL first');agentSetApiUrl();return}
+  window.open(api+'/export','_blank');
+  toast('📊 Generating spreadsheet — check your downloads');
+}
 
 function agentSetApiUrl(){
   var v=prompt('Backend agent service URL (optional — for live feed/health). Leave blank to use Supabase only.',state.agentApiUrl||'');
@@ -5983,6 +5993,7 @@ window.loadAgentsData=loadAgentsData;
 window.agentSetApiUrl=agentSetApiUrl;
 window.agentLogPlay=agentLogPlay;
 window.agentDismissPlay=agentDismissPlay;
+window.agentExport=agentExport;
 
 render();
 

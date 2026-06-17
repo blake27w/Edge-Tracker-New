@@ -81,12 +81,19 @@ const BOOK_LABELS = {
 // INTERVAL_ODDS. Frequent polling is what powers line-movement / steam / RLM
 // detection — the free tier is really for testing; use Starter+ for live edges.
 const ODDS_MIN_BY_TIER = { free: 180, starter: 5, pro: 2 };
+// Timezone for clock-scheduled agents (injury). Game-day report windows are
+// local-time concepts, so default to US Eastern.
+const SCHEDULE_TZ = env.SCHEDULE_TZ || 'America/New_York';
 const AGENT_DEFS = {
   odds: { label: 'Odds Ingestion', emoji: '📡', min: ODDS_MIN_BY_TIER[ODDS_API_TIER] ?? 30 },
-  injury: { label: 'Injury Intelligence', emoji: '🏥', min: 30 },
+  // Injury runs at fixed clock times, not on an interval: an early read plus a
+  // final-reports read on game days. Override with INJURY_TIMES (HH:MM list).
+  injury: { label: 'Injury Intelligence', emoji: '🏥', times: ['10:00', '13:00', '18:30'] },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
-  power: { label: 'Power Ratings', emoji: '📊', min: 60 },
+  // Power ratings barely change intraday — refresh once each morning (plus on
+  // boot). Override with POWER_TIMES.
+  power: { label: 'Power Ratings', emoji: '📊', times: ['08:00'] },
   'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 30 },
   'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
   'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
@@ -97,9 +104,15 @@ const AGENT_DEFS = {
 };
 const AGENTS = {};
 for (const [name, d] of Object.entries(AGENT_DEFS)) {
-  const m = Math.max(1, num(env['INTERVAL_' + name.toUpperCase().replace(/-/g, '_')], d.min));
-  const cron = m >= 60 ? `0 */${Math.round(m / 60)} * * *` : `*/${m} * * * *`;
-  AGENTS[name] = { label: d.label, emoji: d.emoji, intervalMin: m, everyMs: m * 60_000, cron };
+  const envBase = name.toUpperCase().replace(/-/g, '_');
+  if (d.times) {
+    const times = list(env[`${envBase}_TIMES`], d.times);
+    AGENTS[name] = { label: d.label, emoji: d.emoji, times, tz: SCHEDULE_TZ, cron: `@ ${times.join(', ')} ${SCHEDULE_TZ}` };
+  } else {
+    const m = Math.max(1, num(env[`INTERVAL_${envBase}`], d.min));
+    const cron = m >= 60 ? `0 */${Math.round(m / 60)} * * *` : `*/${m} * * * *`;
+    AGENTS[name] = { label: d.label, emoji: d.emoji, intervalMin: m, everyMs: m * 60_000, cron };
+  }
 }
 
 const config = {
