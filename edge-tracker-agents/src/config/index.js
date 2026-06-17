@@ -91,7 +91,9 @@ const AGENT_DEFS = {
   injury: { label: 'Injury Intelligence', emoji: '🏥', times: ['10:00', '13:00', '18:30'] },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
-  power: { label: 'Power Ratings', emoji: '📊', min: 60 },
+  // Power ratings barely change intraday — refresh once each morning (plus on
+  // boot). Override with POWER_TIMES.
+  power: { label: 'Power Ratings', emoji: '📊', times: ['08:00'] },
   'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 30 },
   'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
   'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
