@@ -5764,6 +5764,9 @@ function renderAgentsContent(){
   h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
 
+  // One-click export → opens the backend /export (downloads .xlsx for Excel/Sheets).
+  h+='<button class="btn-primary" style="width:100%;padding:9px;font-size:11px;margin-bottom:12px" onclick="agentExport()">📊 Export to Excel / Google Sheets</button>';
+
   if(state.agentsError){
     h+='<div class="card" style="text-align:center;font-size:11px;color:var(--muted);font-style:italic">'+state.agentsError+'</div>';
     $('sport-selector').innerHTML=h;return;
@@ -5857,6 +5860,13 @@ function renderAgentsContent(){
 }
 
 function agentPlayKey(p){return (p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'')}
+
+function agentExport(){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+  if(!api){toast('Set the backend URL first');agentSetApiUrl();return}
+  window.open(api+'/export','_blank');
+  toast('📊 Generating spreadsheet — check your downloads');
+}
 
 function agentSetApiUrl(){
   var v=prompt('Backend agent service URL (optional — for live feed/health). Leave blank to use Supabase only.',state.agentApiUrl||'');
@@ -5983,6 +5993,7 @@ window.loadAgentsData=loadAgentsData;
 window.agentSetApiUrl=agentSetApiUrl;
 window.agentLogPlay=agentLogPlay;
 window.agentDismissPlay=agentDismissPlay;
+window.agentExport=agentExport;
 
 render();
 
