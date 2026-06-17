@@ -28,10 +28,10 @@ export const logger = {
 export function getFeed() { return feed.slice(0, FEED_MAX); }
 
 // ── Daily metrics (for the dashboard system-health bar) ─────────
-const metrics = { day: new Date().toISOString().slice(0, 10), anthropicCalls: 0, smsSent: 0 };
+const metrics = { day: new Date().toISOString().slice(0, 10), anthropicCalls: 0, smsSent: 0, emailsSent: 0 };
 function rollDay() {
   const today = new Date().toISOString().slice(0, 10);
-  if (today !== metrics.day) { metrics.day = today; metrics.anthropicCalls = 0; metrics.smsSent = 0; }
+  if (today !== metrics.day) { metrics.day = today; metrics.anthropicCalls = 0; metrics.smsSent = 0; metrics.emailsSent = 0; }
 }
 export function getMetrics() { rollDay(); return { ...metrics }; }
 
@@ -160,4 +160,47 @@ export async function sendSms(body, numbers) {
   return sent;
 }
 
-export default { logger, getFeed, detectModel, claude, claudeJson, parseJson, hasClaude, sendSms };
+// ── Email via SMTP (optional; free with Gmail app password or any SMTP) ──
+let mailer = null;
+async function getMailer() {
+  if (!config.email.enabled) return null;
+  if (mailer) return mailer;
+  const { default: nodemailer } = await import('nodemailer');
+  mailer = nodemailer.createTransport({
+    host: config.email.host,
+    port: config.email.port,
+    secure: config.email.port === 465,
+    auth: { user: config.email.user, pass: config.email.pass },
+  });
+  return mailer;
+}
+
+// Send an email alert to all configured recipients. No-ops cleanly when SMTP
+// isn't configured. Returns the recipient count.
+export async function sendEmail(subject, body, to) {
+  const recips = (to && to.length ? to : config.email.to).filter(Boolean);
+  if (!recips.length) return 0;
+  if (config.dryRun) { logger.info('email', `[dry-run] would email ${recips.length}: ${subject}`); return 0; }
+  const tx = await getMailer();
+  if (!tx) { return 0; }
+  try {
+    await tx.sendMail({ from: config.email.from, to: recips.join(','), subject, text: body });
+    rollDay();
+    metrics.emailsSent += recips.length;
+    return recips.length;
+  } catch (e) {
+    logger.error('email', e.message);
+    return 0;
+  }
+}
+
+// Unified alert: fire SMS and/or Email (whichever is configured). Returns counts.
+export async function notifyAll(subject, body) {
+  let sms = 0, email = 0;
+  try { sms = await sendSms(body); } catch (e) { logger.error('alert', `sms: ${e.message}`); }
+  try { email = await sendEmail(subject, body); } catch (e) { logger.error('alert', `email: ${e.message}`); }
+  if (!sms && !email) logger.warn('alert', 'No alert channel configured (SMS or email) — alert not delivered');
+  return { sms, email, total: sms + email };
+}
+
+export default { logger, getFeed, getMetrics, detectModel, claude, claudeJson, parseJson, hasClaude, sendSms, sendEmail, notifyAll };

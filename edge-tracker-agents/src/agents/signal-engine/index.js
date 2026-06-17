@@ -22,7 +22,7 @@
 // ══════════════════════════════════════════════════════════════
 import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
-import { logger, sendSms } from '../../utils/index.js';
+import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getPower, signalsForGame, setPlays } from '../../store/index.js';
 
 const { rules } = config;
@@ -176,8 +176,8 @@ async function run() {
   for (const p of newAlerts) {
     const body = `🟢 ${p.sport} ${p.matchup} — ${p.side} ${p.line ?? ''} (${Math.round(p.score)} conf, ${p.tier}/$${p.unit_dollars}, ${p.t1_count} T1)`;
     try {
-      const n = await sendSms(body);
-      await db.insert('alert_log', { type: 'sms', channel: 'signal', recipients: n, body, sport: p.sport, game_id: p.game_id, status: 'sent' });
+      const r = await notifyAll(`Edge Tracker play: ${p.sport} ${p.side}`, body);
+      await db.insert('alert_log', { type: r.email && !r.sms ? 'email' : 'sms', channel: 'signal', recipients: r.total, body, sport: p.sport, game_id: p.game_id, status: 'sent' });
     } catch (e) { logger.warn('signal', `alert: ${e.message}`); }
   }
 

@@ -5,7 +5,7 @@
 // ══════════════════════════════════════════════════════════════
 import config from '../config/index.js';
 import db from '../db/index.js';
-import { logger, sendSms } from '../utils/index.js';
+import { logger, notifyAll } from '../utils/index.js';
 
 // Agent modules (each default-exports { name, run }).
 import odds from '../agents/odds/index.js';
@@ -168,9 +168,10 @@ async function runAgent(agent) {
       r.alertedDown = true;
       const mins = Math.round(downMs / 60_000);
       try {
-        const n = await sendSms(`⚠️ Edge Tracker: agent "${r.label}" has been down ${mins} min. Last error: ${err.message}`);
+        const body = `⚠️ Edge Tracker: agent "${r.label}" has been down ${mins} min. Last error: ${err.message}`;
+        const res = await notifyAll('Edge Tracker: agent down', body);
         await db.insert('alert_log', {
-          type: 'system', channel: 'sms', recipients: n,
+          type: 'system', channel: 'alert', recipients: res.total,
           body: `Agent ${r.name} down ${mins}m: ${err.message}`, status: 'sent',
         });
       } catch (e) { /* best effort */ }

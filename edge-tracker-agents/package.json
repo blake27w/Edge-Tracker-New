@@ -17,6 +17,7 @@
     "@anthropic-ai/sdk": "^0.68.0",
     "@supabase/supabase-js": "^2.45.0",
     "exceljs": "^4.4.0",
+    "nodemailer": "^9.0.1",
     "twilio": "^5.3.0"
   }
 }

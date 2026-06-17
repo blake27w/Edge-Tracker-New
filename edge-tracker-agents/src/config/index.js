@@ -97,7 +97,7 @@ const AGENT_DEFS = {
   'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 30 },
   'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
   'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
-  signal: { label: 'Signal Engine', emoji: '🧠', min: 5 },
+  signal: { label: 'Signal Engine', emoji: '🧠', min: 2 },
   'prop-engine': { label: 'Prop Engine', emoji: '🎯', min: 15 },
   clv: { label: 'CLV Tracker', emoji: '📉', min: 15 },
   grading: { label: 'Grading Agent', emoji: '✅', min: 30 },
@@ -153,6 +153,17 @@ const config = {
     from: env.TWILIO_FROM || '',
     enabled: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM),
     fallbackNumbers: list(env.ALERT_NUMBERS, []),
+  },
+
+  // Email alerts (free via Gmail/any SMTP). Works alongside or instead of SMS.
+  email: {
+    host: clean(env.SMTP_HOST),
+    port: num(env.SMTP_PORT, 465),
+    user: clean(env.SMTP_USER),
+    pass: env.SMTP_PASS || '',           // app password — don't strip quotes/spaces blindly
+    from: clean(env.SMTP_FROM) || clean(env.SMTP_USER),
+    to: list(env.ALERT_EMAILS, []),
+    enabled: !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.ALERT_EMAILS),
   },
 
   server: {
