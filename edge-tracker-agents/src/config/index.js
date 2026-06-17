@@ -88,7 +88,7 @@ const AGENT_DEFS = {
   odds: { label: 'Odds Ingestion', emoji: '📡', min: ODDS_MIN_BY_TIER[ODDS_API_TIER] ?? 30 },
   // Injury runs at fixed clock times, not on an interval: an early read plus a
   // final-reports read on game days. Override with INJURY_TIMES (HH:MM list).
-  injury: { label: 'Injury Intelligence', emoji: '🏥', times: ['10:00', '18:30'] },
+  injury: { label: 'Injury Intelligence', emoji: '🏥', times: ['10:00', '13:00', '18:30'] },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
   power: { label: 'Power Ratings', emoji: '📊', min: 60 },
