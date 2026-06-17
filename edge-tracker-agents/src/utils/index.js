@@ -4,6 +4,7 @@
 // ══════════════════════════════════════════════════════════════
 import Anthropic from '@anthropic-ai/sdk';
 import config from '../config/index.js';
+import db from '../db/index.js';
 
 // ── Live feed ring buffer (last 100 entries, newest first) ──────
 const FEED_MAX = 100;
@@ -194,11 +195,27 @@ export async function sendEmail(subject, body, to) {
   }
 }
 
-// Unified alert: fire SMS and/or Email (whichever is configured). Returns counts.
+// Merge env recipients (ALERT_NUMBERS / ALERT_EMAILS) with active rows from the
+// `subscribers` table, honoring per-channel opt-in. De-duplicated.
+async function getRecipients() {
+  const numbers = [...config.twilio.fallbackNumbers];
+  const emails = [...config.email.to];
+  try {
+    const subs = await db.select('subscribers', 'phone,email,sms,email_opt,active', { match: { active: true } });
+    for (const s of subs) {
+      if (s.phone && s.sms !== false) numbers.push(s.phone);
+      if (s.email && s.email_opt !== false) emails.push(s.email);
+    }
+  } catch (_) { /* table optional */ }
+  return { numbers: [...new Set(numbers.filter(Boolean))], emails: [...new Set(emails.filter(Boolean))] };
+}
+
+// Unified alert: fire SMS and/or Email to env + subscriber recipients. Returns counts.
 export async function notifyAll(subject, body) {
+  const { numbers, emails } = await getRecipients();
   let sms = 0, email = 0;
-  try { sms = await sendSms(body); } catch (e) { logger.error('alert', `sms: ${e.message}`); }
-  try { email = await sendEmail(subject, body); } catch (e) { logger.error('alert', `email: ${e.message}`); }
+  try { sms = await sendSms(body, numbers); } catch (e) { logger.error('alert', `sms: ${e.message}`); }
+  try { email = await sendEmail(subject, body, emails); } catch (e) { logger.error('alert', `email: ${e.message}`); }
   if (!sms && !email) logger.warn('alert', 'No alert channel configured (SMS or email) — alert not delivered');
   return { sms, email, total: sms + email };
 }

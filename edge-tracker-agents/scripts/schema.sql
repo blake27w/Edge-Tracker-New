@@ -284,8 +284,16 @@ create index if not exists alert_log_sent_idx on alert_log (sent_at desc);
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,
-  phone      text not null,
+  phone      text,
+  email      text,
+  sms        boolean default true,    -- receive SMS alerts
+  email_opt  boolean default true,    -- receive email alerts
   active     boolean default true,
   created_at timestamptz not null default now(),
   unique (phone)
 );
+-- Add the columns to an existing subscribers table (safe to re-run).
+alter table subscribers add column if not exists email text;
+alter table subscribers add column if not exists sms boolean default true;
+alter table subscribers add column if not exists email_opt boolean default true;
+alter table subscribers alter column phone drop not null;
