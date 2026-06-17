@@ -1,14 +1,24 @@
 // ══════════════════════════════════════════════════════════════
-// Signal Engine — the master scorer. For every game it assembles the
-// tiered signals produced by the other agents, scores each candidate
-// play, applies the betting-philosophy rules, sizes units, and emits
-// qualifying plays (score 70+ with 1+ Tier-1 signal).
+// Signal Engine — the master scorer, built on the edge philosophy:
+// our edge is information asymmetry and market inefficiency, NOT
+// trends the books already price in. CLV (beating the close) is the
+// north-star metric the CLV Tracker measures; this engine decides what
+// to play and how big.
 //
-// BETTING PHILOSOPHY (critical):
-//   • DEFAULT TO UNDERS on game totals.
-//   • Over totals take a -10 confidence penalty (effective bar 80+),
-//     and require 2+ independent Tier-1 signals to ever qualify.
-//   • Spreads / moneylines / player props are exempt from the bias.
+// SIGNAL TIERS
+//   Tier 1 (+20, primary edge): reverse line movement vs heavy public,
+//     steam moves, sharp-book leads, a key starter ruled OUT before the
+//     line adjusts, significant (15+ mph) unpriced wind.
+//   Tier 2 (+10, supporting): handle≫bets divergence, power-vs-line gap,
+//     park/bullpen spot, schedule spot.
+//   Tier 3 (+3, CONFIRMATION ONLY): raw Under/Over trends, season stats,
+//     H2H. Never a reason to play on its own.
+//
+// QUALIFYING: score ≥ 70 AND (≥1 Tier 1 OR a Tier 2 sharp/public
+//   divergence). A play built only on Tier 3 never qualifies.
+//
+// UNDER BIAS: Over totals take a -10 penalty and need 2+ Tier 1 signals.
+//   Spreads / moneylines / props are exempt.
 // ══════════════════════════════════════════════════════════════
 import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
@@ -16,60 +26,72 @@ import { logger, sendSms } from '../../utils/index.js';
 import { getGames, getPower, signalsForGame, setPlays } from '../../store/index.js';
 
 const { rules } = config;
-const TIER_POINTS = { 1: 18, 2: 9, 3: 5 };
+const TIER_POINTS = { 1: 20, 2: 10, 3: 3 };
 
 // Plays we've already alerted on this process lifetime.
 const alerted = new Set();
 
-// Build the tiered signal list for a given market+side from intel.
-function collectSignals(game, market, side, intel) {
+const isPitcher = (pos) => /\b(P|SP|RP|LHP|RHP)\b/i.test(String(pos || ''));
+
+// Assemble the tiered signals for one market+side from the intel store.
+function collectSignals(game, market, side, intel, power) {
   const sigs = [];
   const add = (tier, id, label) => sigs.push({ tier, id, label });
   const isTotal = market === 'total';
   const under = side === 'Under';
 
-  // ── Tier 1: RLM vs heavy public, strong steam ──
+  // ── Tier 1: information-asymmetry edges ──
   for (const s of intel.splits) {
     if (s.rlm && s.market === market) {
-      // RLM benefits the side opposite heavy public.
-      const publicSide = String(s.side || '').toLowerCase();
-      const rlmFavorsUnder = publicSide.includes('over');
-      if (isTotal ? (under === rlmFavorsUnder) : true) {
-        add(1, 'rlm', `RLM vs ${s.bets_pct}% public (${s.side})`);
-      }
-    }
-    // Handle > bets divergence = sharp money on the handle side.
-    if (s.divergence != null && s.divergence >= 8 && s.market === market) {
-      const sharpUnder = String(s.side || '').toLowerCase().includes('under');
-      if (isTotal ? (under === sharpUnder) : true) {
-        add(2, 'divergence', `Handle ${s.handle_pct}% > bets ${s.bets_pct}% (sharp side)`);
-      }
+      const publicOver = String(s.side || '').toLowerCase().includes('over');
+      if (!isTotal || under === publicOver) add(1, 'rlm', `RLM vs ${s.bets_pct ?? '?'}% public (${s.side})`);
     }
   }
   for (const s of intel.sharp) {
-    if (s.market === (isTotal ? 'totals' : market) && (!isTotal || s.side === side)) {
-      add(s.strength >= 60 ? 1 : 2, 'steam', s.detail);
+    const mk = isTotal ? 'totals' : (market === 'spread' ? 'spreads' : 'h2h');
+    if (s.market === mk && (!isTotal || s.side === side)) add(1, 'steam', s.detail || 'steam move');
+  }
+  if (isTotal && under) {
+    for (const w of intel.weather) {
+      if (!w.dome && (w.wind_mph || 0) >= 15 && w.total_impact === 'under') add(1, 'wind', `Wind ${Math.round(w.wind_mph)}mph → Under`);
+    }
+    // A key position player ruled OUT suppresses scoring (→ Under). Pitcher
+    // scratches are ambiguous on direction, so we don't auto-signal them here.
+    for (const inj of intel.injuries) {
+      if (inj.status === 'OUT' && inj.impact === 'high' && !isPitcher(inj.pos)) add(1, 'injury_out', `${inj.player} OUT (${inj.team})`);
     }
   }
 
-  if (isTotal) {
-    // ── Weather (T2) ──
-    for (const w of intel.weather) {
-      if (w.total_impact === 'under' && under) add(2, 'weather', `Wind/cold → Under (${w.wind_mph ?? '?'}mph)`);
-      if (w.total_impact === 'over' && !under) add(3, 'weather_over', 'Weather favors Over');
+  // ── Tier 2: supporting ──
+  for (const s of intel.splits) {
+    if (s.divergence != null && s.divergence >= 8 && s.market === market) {
+      const sharpUnder = String(s.side || '').toLowerCase().includes('under');
+      if (!isTotal || under === sharpUnder) add(2, 'divergence', `Handle ${s.handle_pct}% > bets ${s.bets_pct}% (sharp side)`);
     }
-    // ── MLB context (T2/T3) ──
-    for (const m of intel.mlbContext) {
-      if (m.total_lean === 'under' && under) add(2, 'ump_bullpen', `Ump/bullpen lean Under (${m.ump_name || 'ump'})`);
-      if (m.total_lean === 'over' && !under) add(3, 'ump_bullpen_over', 'Ump/bullpen lean Over');
-    }
-    // ── Schedule fatigue suppresses scoring → Under (T2/T3) ──
-    if (under) {
-      for (const sp of intel.schedule) add(sp.tier || 3, 'schedule', sp.detail);
-    }
-    // ── Structural divisional/wind Unders edge baked in (T3) ──
-    if (under) add(3, 'under_bias', 'Structural Under edge (public over-bets Overs)');
   }
+  if (isTotal) {
+    if (under) for (const sp of intel.schedule) add(2, 'schedule', sp.detail);
+    for (const m of intel.mlbContext) {
+      if (m.total_lean === 'under' && under) add(2, 'bullpen', 'Bullpen/park lean Under');
+      if (m.total_lean === 'over' && !under) add(2, 'bullpen_over', 'Bullpen lean Over');
+    }
+    for (const w of intel.weather) {
+      const wind = w.wind_mph || 0;
+      if (under && !w.dome && wind >= 10 && wind < 15 && w.total_impact === 'under') add(2, 'weather_mild', `Wind ${Math.round(wind)}mph`);
+    }
+  } else if (power) {
+    // Power-rating vs market-line gap (spread/ml). Supporting only — never a
+    // standalone qualifier (consistent with "power is priced in already").
+    const h = power[game.home]?.rating, a = power[game.away]?.rating;
+    if (h != null && a != null && Math.abs(h - a) >= 6) {
+      const fav = h > a ? game.home : game.away;
+      if (String(side).includes(fav)) add(2, 'power', `Power edge ${fav} (+${Math.round(Math.abs(h - a))})`);
+    }
+  }
+
+  // ── Tier 3: confirmation only ──
+  if (isTotal && under) add(3, 'under_bias', 'Structural Under edge (public over-bets Overs)');
+
   return sigs;
 }
 
@@ -78,21 +100,21 @@ function score(sigs, side, market) {
   for (const s of sigs) raw += TIER_POINTS[s.tier] || 0;
   raw = Math.min(100, raw);
   const t1 = sigs.filter((s) => s.tier === 1).length;
+  const hasDivergence = sigs.some((s) => s.id === 'divergence');
 
   let finalScore = raw;
   let overPenalty = false;
-  if (market === 'total' && side === 'Over') {
-    finalScore -= rules.overTotalPenalty; // -10 to Over totals
-    overPenalty = true;
-  }
+  if (market === 'total' && side === 'Over') { finalScore -= rules.overTotalPenalty; overPenalty = true; }
   finalScore = Math.max(0, Math.min(100, finalScore));
-  return { raw, score: finalScore, t1, overPenalty };
+  return { raw, score: finalScore, t1, hasDivergence, overPenalty };
 }
 
 function qualifies(side, market, sc) {
   if (sc.score < rules.confidenceFloor) return false;
-  if (sc.t1 < 1) return false;
-  // Over totals must clear a higher bar: 2+ T1 signals.
+  // Primary edge required: a Tier 1, OR a Tier 2 sharp/public divergence.
+  // Never qualifies on Tier 3 (confirmation) signals alone.
+  if (!(sc.t1 >= 1 || sc.hasDivergence)) return false;
+  // Over totals must clear a higher bar: 2+ independent Tier 1 signals.
   if (market === 'total' && side === 'Over' && sc.t1 < 2) return false;
   return true;
 }
@@ -109,22 +131,20 @@ async function run() {
   for (const g of games) {
     const intel = signalsForGame(g.game_id);
     const meta = config.SPORTS[g.sport] || {};
+    const power = getPower(g.sport);
     const candidates = [];
 
-    // ── Totals: evaluate Under (preferred) and Over ──
+    // Totals: Under (preferred) and Over.
     if (meta.hasTotals && g.consensusTotal != null) {
       for (const side of ['Under', 'Over']) {
-        const sigs = collectSignals(g, 'total', side, intel);
-        candidates.push({ market: 'total', side, line: g.consensusTotal, sigs });
+        candidates.push({ market: 'total', side, line: g.consensusTotal, sigs: collectSignals(g, 'total', side, intel, power) });
       }
     }
-
-    // ── Spread / ML: side comes from sharp/handle; power as a soft tiebreak ──
-    const power = getPower(g.sport);
+    // Spread / ML: side from sharp/divergence, else power as a soft tiebreak.
     const sideSpread = pickTeamSide(intel, 'spread') || pickPowerSide(power, g);
-    if (sideSpread) candidates.push({ market: 'spread', side: sideSpread, line: null, sigs: collectSignals(g, 'spread', sideSpread, intel) });
-    const sideMl = pickTeamSide(intel, 'ml');
-    if (sideMl) candidates.push({ market: 'ml', side: sideMl, line: null, sigs: collectSignals(g, 'ml', sideMl, intel) });
+    if (sideSpread) candidates.push({ market: 'spread', side: sideSpread, line: null, sigs: collectSignals(g, 'spread', sideSpread, intel, power) });
+    const sideMl = pickTeamSide(intel, 'ml') || pickPowerSide(power, g);
+    if (sideMl) candidates.push({ market: 'ml', side: sideMl, line: null, sigs: collectSignals(g, 'ml', sideMl, intel, power) });
 
     for (const c of candidates) {
       const sc = score(c.sigs, c.side, c.market);
@@ -147,22 +167,17 @@ async function run() {
     }
   }
 
-  // Persist scores; only the qualifying ones really matter for the dashboard.
   const qualifyingRows = rows.filter((r) => r.qualified);
   if (qualifyingRows.length) {
     try { await db.insert('monitor_scores', qualifyingRows); } catch (e) { logger.warn('signal', e.message); }
   }
   setPlays(plays);
 
-  // Alert on brand-new qualifiers.
   for (const p of newAlerts) {
     const body = `🟢 ${p.sport} ${p.matchup} — ${p.side} ${p.line ?? ''} (${Math.round(p.score)} conf, ${p.tier}/$${p.unit_dollars}, ${p.t1_count} T1)`;
     try {
       const n = await sendSms(body);
-      await db.insert('alert_log', {
-        type: 'sms', channel: 'signal', recipients: n, body,
-        sport: p.sport, game_id: p.game_id, status: 'sent',
-      });
+      await db.insert('alert_log', { type: 'sms', channel: 'signal', recipients: n, body, sport: p.sport, game_id: p.game_id, status: 'sent' });
     } catch (e) { logger.warn('signal', `alert: ${e.message}`); }
   }
 
@@ -173,7 +188,7 @@ async function run() {
   };
 }
 
-// Pick the sharp/handle-favored team side for spread/ml from intel.
+// Side for spread/ml from a Tier-1 (steam) or Tier-2 (divergence) signal.
 function pickTeamSide(intel, market) {
   for (const s of intel.sharp) {
     if (s.market === (market === 'spread' ? 'spreads' : 'h2h')) return s.side;
@@ -184,11 +199,10 @@ function pickTeamSide(intel, market) {
   return null;
 }
 
-// Soft fallback: side the power ratings favor (T3-level confidence only).
+// Soft fallback only: the side power ratings favor (won't qualify on its own).
 function pickPowerSide(power, g) {
   const h = power[g.home]?.rating, a = power[g.away]?.rating;
-  if (h == null || a == null) return null;
-  if (Math.abs(h - a) < 6) return null; // not a meaningful edge
+  if (h == null || a == null || Math.abs(h - a) < 6) return null;
   return h > a ? `${g.home}` : `${g.away}`;
 }
 
