@@ -86,9 +86,9 @@ const ODDS_MIN_BY_TIER = { free: 180, starter: 5, pro: 2 };
 const SCHEDULE_TZ = env.SCHEDULE_TZ || 'America/New_York';
 const AGENT_DEFS = {
   odds: { label: 'Odds Ingestion', emoji: '📡', min: ODDS_MIN_BY_TIER[ODDS_API_TIER] ?? 30 },
-  // Injury runs at fixed clock times, not on an interval: an early read plus a
-  // final-reports read on game days. Override with INJURY_TIMES (HH:MM list).
-  injury: { label: 'Injury Intelligence', emoji: '🏥', times: ['10:00', '13:00', '18:30'] },
+  // Injury is free now (ESPN feed), so run it often to catch late scratches /
+  // inactives that drop close to game time. Override with INTERVAL_INJURY.
+  injury: { label: 'Injury Intelligence', emoji: '🏥', min: 30 },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
   // Power ratings barely change intraday — refresh once each morning (plus on

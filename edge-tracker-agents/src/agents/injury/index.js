@@ -45,9 +45,9 @@ async function fetchInjuries(sport) {
       const player = inj.athlete?.displayName;
       if (!player) continue;
       const status = mapStatus(inj.status);
-      const pos = inj.athlete?.position?.abbreviation;
+      const pos = inj.athlete?.position?.abbreviation || null;
       const detail = inj.shortComment || inj.longComment || inj.type?.description || inj.type?.name || null;
-      list.push({ player, status, impact: impactOf(status), detail: pos ? `${pos} — ${detail || status}` : detail });
+      list.push({ player, status, impact: impactOf(status), pos, detail: pos ? `${pos} — ${detail || status}` : detail });
     }
     if (list.length) byTeam.set(norm(teamName), list);
   }
@@ -90,7 +90,7 @@ async function run() {
         seen.add(k);
         rows.push({
           sport: g.sport, game_id: g.game_id, team, player: inj.player,
-          status: inj.status, detail: inj.detail, impact: inj.impact,
+          status: inj.status, detail: inj.detail, impact: inj.impact, pos: inj.pos,
           source: 'espn', fetched_at: now,
         });
       }
@@ -98,7 +98,9 @@ async function run() {
   }
 
   if (rows.length) {
-    try { await db.insert('injury_updates', rows); } catch (e) { logger.warn('injury', e.message); }
+    // `pos` is engine-only (no column in injury_updates) — strip before persisting.
+    const dbRows = rows.map(({ pos, ...r }) => r);
+    try { await db.insert('injury_updates', dbRows); } catch (e) { logger.warn('injury', e.message); }
   }
   setIntel('injuries', rows);
   const outs = rows.filter((r) => r.status === 'OUT').length;
