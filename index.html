@@ -3285,7 +3285,7 @@ function renderHomeDash(){
 
   // ── FOOTER ACTIONS ──
   h+='<div class="home-footer">';
-  h+='<button class="home-run" onclick="runAllSports()">RUN TODAY\'S GAMES</button>';
+  h+='<button class="home-run" onclick="state.homeTab=\'agents\';render()">🤖 VIEW TODAY\'S PLAYS</button>';
   h+='</div>';
   h+='</div>';
   $('sport-selector').innerHTML=h;
@@ -5690,6 +5690,8 @@ function loadAgentsData(){
     tasks.push(SB.api('/monitor_scores?select=*&qualified=eq.true&status=eq.pending&order=score.desc&limit=60','GET').then(function(r){return {plays:r}}).catch(function(){return {plays:null}}));
     tasks.push(SB.api('/alert_log?select=*&order=sent_at.desc&limit=60','GET').then(function(r){return {alerts:r}}).catch(function(){return {alerts:null}}));
     tasks.push(SB.api('/api_usage?select=*&order=updated_at.desc&limit=1','GET').then(function(r){return {usage:r}}).catch(function(){return {usage:null}}));
+    var _d0=new Date();_d0.setHours(0,0,0,0);
+    tasks.push(SB.api('/monitor_scores?select=status&qualified=eq.true&scored_at=gte.'+encodeURIComponent(_d0.toISOString()),'GET').then(function(r){return {today:r}}).catch(function(){return {today:null}}));
   }
   // Optional backend
   var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
@@ -5736,6 +5738,9 @@ function loadAgentsData(){
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
 
+    // Plays produced today (qualified, any status). Falls back to the live queue.
+    state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
+
     // Feed: prefer backend; else synthesize from scan_runs + alert_log
     if(bag.beFeed&&bag.beFeed.feed){state.agentsFeed=bag.beFeed.feed}
     else {
@@ -5775,16 +5780,18 @@ function renderAgentsContent(){
   // ── System Health Bar ──
   var sys=state.agentsSystem||{};
   var hb=[
+    {l:'Plays today',v:state.agentsTodayCount!=null?state.agentsTodayCount:'—',hi:true},
     {l:'Odds API left',v:sys.oddsRequestsRemaining!=null?sys.oddsRequestsRemaining:'—'},
-    {l:'Anthropic / today',v:sys.anthropicCallsToday!=null?sys.anthropicCallsToday:'—'},
+    {l:'Claude / today',v:sys.anthropicCallsToday!=null?sys.anthropicCallsToday:'—'},
     {l:'SMS / today',v:sys.smsSentToday!=null?sys.smsSentToday:'—'},
-    {l:'Games monitored',v:sys.gamesMonitored!=null?sys.gamesMonitored:'—'}
+    {l:'Games',v:sys.gamesMonitored!=null?sys.gamesMonitored:'—'}
   ];
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:14px">';
+  h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:14px">';
   hb.forEach(function(x){
-    h+='<div style="background:var(--saddle);border-radius:10px;padding:9px 6px;text-align:center;box-shadow:var(--shadow-sm)">';
-    h+='<div style="font-family:var(--M);font-size:16px;font-weight:700;color:var(--cream)">'+x.v+'</div>';
-    h+='<div style="font-size:7px;letter-spacing:.5px;color:var(--sand);margin-top:2px;text-transform:uppercase">'+x.l+'</div></div>';
+    var bg=x.hi?'var(--forest)':'var(--saddle)';var vc=x.hi?'#7fd1a3':'var(--cream)';
+    h+='<div style="background:'+bg+';border-radius:10px;padding:9px 3px;text-align:center;box-shadow:var(--shadow-sm)">';
+    h+='<div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+vc+'">'+x.v+'</div>';
+    h+='<div style="font-size:6.5px;letter-spacing:.2px;color:var(--sand);margin-top:2px;text-transform:uppercase">'+x.l+'</div></div>';
   });
   h+='</div>';
 
