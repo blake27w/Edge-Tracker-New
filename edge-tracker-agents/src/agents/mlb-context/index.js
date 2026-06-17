@@ -1,48 +1,94 @@
 // ══════════════════════════════════════════════════════════════
-// MLB Context (Agent 10) — home-plate umpire O/U + K tendencies and
-// bullpen fatigue (relievers on 2-3 straight days, recent bullpen
-// innings). Both feed totals scoring as T2/T3 signals.
+// MLB Context (Agent 10) — probable pitchers + bullpen fatigue from the
+// free MLB StatsAPI (statsapi.mlb.com, no key). One schedule call covers
+// the whole slate plus the prior 3 days of games (for fatigue), so this
+// is essentially free and fast.
+//
+// Bullpen fatigue is a games-in-last-3-days heuristic (3-in-3 = high →
+// tired pen → slight Over lean). Feeds totals scoring as a T2/T3 signal.
+//
+// Note: home-plate umpire O/U tendencies are NOT available free or in
+// advance, so they're omitted here (they were a minor signal). To add
+// them later, reintroduce a small Claude call keyed on the assigned ump.
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
-import { claudeJson, hasClaude, logger } from '../../utils/index.js';
+import { logger } from '../../utils/index.js';
 import { getGames, setIntel } from '../../store/index.js';
 
+const DAY = 86400_000;
+function ymd(d) { return d.toISOString().slice(0, 10); }
+
+async function fetchSchedule(startStr, endStr) {
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${startStr}&endDate=${endStr}&hydrate=probablePitcher,team`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`MLB StatsAPI ${res.status}`);
+  return res.json();
+}
+
+function fatigueLabel(count) {
+  if (count >= 3) return 'high';
+  if (count === 2) return 'medium';
+  return 'low';
+}
+
 async function run() {
-  if (!hasClaude()) return { summary: 'skipped — no Claude' };
   const games = getGames().filter((g) => g.sport === 'MLB');
   if (!games.length) return { summary: 'no MLB games on the slate' };
 
-  const slate = games.map((g) => `${g.away} @ ${g.home} [${g.game_id}]`).join('\n');
-  const prompt = `You are an MLB totals analyst. For each game, search for the assigned home-plate umpire and recent bullpen usage, then return ONLY JSON: an array of objects with keys:
-  game_id, home, away, ump_name, ump_ou_tendency (over|under|neutral), ump_k_tendency (high|low|neutral),
-  home_bullpen_fatigue (high|medium|low), away_bullpen_fatigue (high|medium|low),
-  total_lean (under|over|neutral), notes (short).
-Tight-zone umps inflate scoring (over); wide-zone umps suppress it (under). Heavy recent bullpen use => fatigue high => over lean. Copy game_id exactly.
+  const today = new Date();
+  const todayStr = ymd(today);
+  let data;
+  try {
+    data = await fetchSchedule(ymd(new Date(today.getTime() - 3 * DAY)), todayStr);
+  } catch (e) {
+    return { summary: `MLB StatsAPI unavailable: ${e.message}` };
+  }
 
-GAMES:
-${slate}`;
+  // Tally prior-3-day game counts per team (fatigue) and capture today's probables.
+  const priorCounts = {};
+  const probables = {}; // "Away@Home" -> { home, away }
+  for (const day of data.dates || []) {
+    for (const gm of day.games || []) {
+      const home = gm.teams?.home?.team?.name;
+      const away = gm.teams?.away?.team?.name;
+      if (!home || !away) continue;
+      if (gm.officialDate && gm.officialDate < todayStr) {
+        priorCounts[home] = (priorCounts[home] || 0) + 1;
+        priorCounts[away] = (priorCounts[away] || 0) + 1;
+      } else {
+        probables[`${away}@${home}`] = {
+          home: gm.teams?.home?.probablePitcher?.fullName || null,
+          away: gm.teams?.away?.probablePitcher?.fullName || null,
+        };
+      }
+    }
+  }
 
-  const json = await claudeJson(prompt, { maxTokens: 3000 });
-  const list = Array.isArray(json) ? json : [];
   const now = new Date().toISOString();
-  const rows = list
-    .filter((r) => r && r.game_id)
-    .map((r) => ({
-      game_id: r.game_id, home: r.home || null, away: r.away || null,
-      ump_name: r.ump_name || null, ump_ou_tendency: low(r.ump_ou_tendency),
-      ump_k_tendency: low(r.ump_k_tendency),
-      home_bullpen_fatigue: low(r.home_bullpen_fatigue), away_bullpen_fatigue: low(r.away_bullpen_fatigue),
-      total_lean: low(r.total_lean) || 'neutral', notes: r.notes || null, fetched_at: now,
-    }));
+  const rows = games.map((g) => {
+    const homeFat = fatigueLabel(priorCounts[g.home] || 0);
+    const awayFat = fatigueLabel(priorCounts[g.away] || 0);
+    const p = probables[`${g.away}@${g.home}`] || {};
+    const lean = (homeFat === 'high' || awayFat === 'high') ? 'over' : 'neutral';
+    return {
+      game_id: g.game_id, home: g.home, away: g.away,
+      ump_name: null, ump_ou_tendency: null, ump_k_tendency: null,
+      home_bullpen_fatigue: homeFat, away_bullpen_fatigue: awayFat,
+      total_lean: lean,
+      notes: `Probables: ${p.away || '?'} (away) vs ${p.home || '?'} (home); bullpen fatigue H:${homeFat} A:${awayFat}`,
+      fetched_at: now,
+    };
+  });
 
   if (rows.length) {
     try { await db.insert('mlb_context', rows); } catch (e) { logger.warn('mlb-context', e.message); }
   }
-  // Tag with sport for signalsForGame consumers.
   setIntel('mlbContext', rows.map((r) => ({ ...r, sport: 'MLB' })));
-  return { summary: `${rows.length} MLB context rows`, data: { count: rows.length } };
+  const tired = rows.filter((r) => r.total_lean === 'over').length;
+  return {
+    summary: `${rows.length} MLB context rows (${tired} bullpen-fatigue leans) · free StatsAPI`,
+    data: { count: rows.length, tired },
+  };
 }
-
-function low(v) { return v ? String(v).toLowerCase() : null; }
 
 export default { name: 'mlb-context', run };
