@@ -10,6 +10,7 @@ import { detectModel, getFeed, getMetrics, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
 import { getGames, getPlays, getPropPlays } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
+import { buildWorkbook } from './export/index.js';
 
 // ── CORS ────────────────────────────────────────────────────────
 function cors(req, res) {
@@ -45,11 +46,29 @@ function systemHealth() {
   };
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   cors(req, res);
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
   const url = new URL(req.url, 'http://localhost');
+
+  // Excel export — builds a multi-sheet .xlsx from Supabase and downloads it.
+  if (url.pathname === '/export' || url.pathname === '/export.xlsx') {
+    try {
+      const wb = await buildWorkbook();
+      const buf = await wb.xlsx.writeBuffer();
+      const fname = `edge-tracker-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${fname}"`,
+      });
+      return res.end(Buffer.from(buf));
+    } catch (e) {
+      logger.error('export', e.message);
+      return json(res, 500, { error: 'export failed', detail: e.message });
+    }
+  }
+
   switch (url.pathname) {
     case '/':
     case '/health':
