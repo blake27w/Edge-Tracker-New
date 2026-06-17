@@ -31,6 +31,27 @@ const AGENTS = [
 // name -> live status (the /health payload reads from here).
 const registry = {};
 
+// ms until the next HH:MM clock time (in tz) for clock-scheduled agents.
+function nextClockDelay(times, tz) {
+  let wall;
+  try {
+    wall = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date());
+  } catch (_) {
+    wall = new Intl.DateTimeFormat('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date());
+  }
+  const [h, m] = wall.split(':').map(Number);
+  const nowMin = h * 60 + m;
+  const mins = times
+    .map((t) => { const [a, b] = String(t).split(':').map(Number); return a * 60 + (b || 0); })
+    .filter((n) => Number.isFinite(n))
+    .sort((x, y) => x - y);
+  if (!mins.length) return 6 * 3600_000;
+  const next = mins.find((n) => n > nowMin);
+  let delayMin = next != null ? next - nowMin : (1440 - nowMin + mins[0]);
+  if (delayMin <= 0) delayMin += 1440;
+  return delayMin * 60_000;
+}
+
 function initRegistry() {
   for (const agent of AGENTS) {
     const meta = config.AGENTS[agent.name] || {};
@@ -44,8 +65,10 @@ function initRegistry() {
       lastResult: null,
       error: null,
       cron: meta.cron || null,
-      baseEveryMs: meta.everyMs || 5 * 60_000,
-      everyMs: meta.everyMs || 5 * 60_000,
+      baseEveryMs: meta.everyMs || 30 * 60_000,
+      everyMs: meta.everyMs || 30 * 60_000,
+      times: meta.times || null,        // clock-scheduled agents (e.g. injury)
+      tz: meta.tz || 'UTC',
       consecutiveFailures: 0,
       downSince: null,
       alertedDown: false,
@@ -59,7 +82,9 @@ export function getHealth() {
   return Object.values(registry).map((r) => ({
     name: r.name, label: r.label, emoji: r.emoji, status: r.status,
     lastRunAt: r.lastRunAt, lastDurationMs: r.lastDurationMs,
-    lastResult: r.lastResult, error: r.error, intervalMs: r.everyMs,
+    lastResult: r.lastResult, error: r.error,
+    intervalMs: r.times ? null : r.everyMs,
+    schedule: r.times ? `${r.times.join(', ')} ${r.tz}` : null,
     consecutiveFailures: r.consecutiveFailures, runs: r.runs,
   }));
 }
@@ -152,8 +177,10 @@ async function runAgent(agent) {
     }
   }
 
-  // Self-reschedule at the (possibly backed-off) interval.
-  r.timer = setTimeout(() => runAgent(agent), r.everyMs);
+  // Self-reschedule: clock-scheduled agents go to their next clock time;
+  // interval agents use their (possibly backed-off) interval.
+  const delay = r.times ? nextClockDelay(r.times, r.tz) : r.everyMs;
+  r.timer = setTimeout(() => runAgent(agent), delay);
 }
 
 // Kick off every agent on a small stagger so they don't all fire at once.
