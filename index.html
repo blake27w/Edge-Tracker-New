@@ -5882,9 +5882,11 @@ function agentExport(){
 }
 
 function agentSetApiUrl(){
-  var v=prompt('Backend agent service URL (optional — for live feed/health). Leave blank to use Supabase only.',state.agentApiUrl||'');
+  var v=prompt('Backend agent service URL (e.g. https://your-app.up.railway.app). Leave blank to use Supabase only.',state.agentApiUrl||'');
   if(v===null)return;
-  state.agentApiUrl=v.trim();save('et_agent_api',state.agentApiUrl);
+  // Normalize: strip any endpoint path (/health, /plays, …) and trailing slashes.
+  var u=v.trim().replace(/\/(health|plays|feed|games|export)\/?$/i,'').replace(/\/+$/,'');
+  state.agentApiUrl=u;save('et_agent_api',u);
   state.agentsLastLoad=null;loadAgentsData();
 }
 
