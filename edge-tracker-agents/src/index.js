@@ -42,6 +42,7 @@ function systemHealth() {
     anthropicModel: config.anthropic.model,
     anthropicCallsToday: m.anthropicCalls,
     smsSentToday: m.smsSent,
+    emailsSentToday: m.emailsSent,
     gamesMonitored: getGames().length,
     dbConnected: db.isConnected(),
   };

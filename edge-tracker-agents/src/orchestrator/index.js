@@ -5,7 +5,7 @@
 // ══════════════════════════════════════════════════════════════
 import config from '../config/index.js';
 import db from '../db/index.js';
-import { logger, sendSms } from '../utils/index.js';
+import { logger, notifyAll } from '../utils/index.js';
 
 // Agent modules (each default-exports { name, run }).
 import odds from '../agents/odds/index.js';
@@ -31,25 +31,42 @@ const AGENTS = [
 // name -> live status (the /health payload reads from here).
 const registry = {};
 
-// ms until the next HH:MM clock time (in tz) for clock-scheduled agents.
-function nextClockDelay(times, tz) {
-  let wall;
+const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+// Current weekday (0-6) and minutes-of-day in a timezone.
+function nowParts(tz) {
+  let wd = new Date().getUTCDay(), min = 0;
   try {
-    wall = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date());
-  } catch (_) {
-    wall = new Intl.DateTimeFormat('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date());
-  }
-  const [h, m] = wall.split(':').map(Number);
-  const nowMin = h * 60 + m;
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date());
+    let h = 0, m = 0;
+    for (const p of parts) {
+      if (p.type === 'weekday') wd = WD[p.value] ?? wd;
+      else if (p.type === 'hour') h = parseInt(p.value, 10) % 24;
+      else if (p.type === 'minute') m = parseInt(p.value, 10);
+    }
+    min = h * 60 + m;
+  } catch (_) { min = new Date().getUTCHours() * 60 + new Date().getUTCMinutes(); }
+  return { wd, min };
+}
+
+// ms until the next scheduled HH:MM (in tz), optionally restricted to days-of-week.
+function nextClockDelay(times, tz, days) {
+  const { wd, min: nowMin } = nowParts(tz);
   const mins = times
     .map((t) => { const [a, b] = String(t).split(':').map(Number); return a * 60 + (b || 0); })
     .filter((n) => Number.isFinite(n))
     .sort((x, y) => x - y);
   if (!mins.length) return 6 * 3600_000;
-  const next = mins.find((n) => n > nowMin);
-  let delayMin = next != null ? next - nowMin : (1440 - nowMin + mins[0]);
-  if (delayMin <= 0) delayMin += 1440;
-  return delayMin * 60_000;
+  let best = Infinity;
+  for (let off = 0; off <= 7; off++) {
+    const day = (wd + off) % 7;
+    if (days && days.length && !days.includes(day)) continue;
+    for (const t of mins) {
+      const total = off * 1440 + (t - nowMin);
+      if (total > 0 && total < best) best = total;
+    }
+  }
+  if (!Number.isFinite(best)) best = 24 * 60;
+  return best * 60_000;
 }
 
 function initRegistry() {
@@ -67,7 +84,8 @@ function initRegistry() {
       cron: meta.cron || null,
       baseEveryMs: meta.everyMs || 30 * 60_000,
       everyMs: meta.everyMs || 30 * 60_000,
-      times: meta.times || null,        // clock-scheduled agents (e.g. injury)
+      times: meta.times || null,        // clock-scheduled agents (e.g. power)
+      days: meta.days || null,          // optional day-of-week restriction (0-6)
       tz: meta.tz || 'UTC',
       consecutiveFailures: 0,
       downSince: null,
@@ -84,7 +102,7 @@ export function getHealth() {
     lastRunAt: r.lastRunAt, lastDurationMs: r.lastDurationMs,
     lastResult: r.lastResult, error: r.error,
     intervalMs: r.times ? null : r.everyMs,
-    schedule: r.times ? `${r.times.join(', ')} ${r.tz}` : null,
+    schedule: r.times ? `${r.times.join(', ')}${r.days ? ' · ' + r.days.map((d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join('/') : ''} ${r.tz}` : null,
     consecutiveFailures: r.consecutiveFailures, runs: r.runs,
   }));
 }
@@ -168,9 +186,10 @@ async function runAgent(agent) {
       r.alertedDown = true;
       const mins = Math.round(downMs / 60_000);
       try {
-        const n = await sendSms(`⚠️ Edge Tracker: agent "${r.label}" has been down ${mins} min. Last error: ${err.message}`);
+        const body = `⚠️ Edge Tracker: agent "${r.label}" has been down ${mins} min. Last error: ${err.message}`;
+        const res = await notifyAll('Edge Tracker: agent down', body);
         await db.insert('alert_log', {
-          type: 'system', channel: 'sms', recipients: n,
+          type: 'system', channel: 'alert', recipients: res.total,
           body: `Agent ${r.name} down ${mins}m: ${err.message}`, status: 'sent',
         });
       } catch (e) { /* best effort */ }
@@ -179,7 +198,7 @@ async function runAgent(agent) {
 
   // Self-reschedule: clock-scheduled agents go to their next clock time;
   // interval agents use their (possibly backed-off) interval.
-  const delay = r.times ? nextClockDelay(r.times, r.tz) : r.everyMs;
+  const delay = r.times ? nextClockDelay(r.times, r.tz, r.days) : r.everyMs;
   r.timer = setTimeout(() => runAgent(agent), delay);
 }
 
