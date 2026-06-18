@@ -96,7 +96,7 @@ const AGENT_DEFS = {
   'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
   'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
   signal: { label: 'Signal Engine', emoji: '🧠', min: 2 },
-  'prop-engine': { label: 'Prop Engine', emoji: '🎯', min: 480 },
+  'prop-engine': { label: 'Prop Engine', emoji: '🎯', min: 15 },
   clv: { label: 'CLV Tracker', emoji: '📉', min: 15 },
   grading: { label: 'Grading Agent', emoji: '✅', min: 30 },
 };
