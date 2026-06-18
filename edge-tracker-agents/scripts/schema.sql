@@ -139,6 +139,15 @@ create table if not exists power_ratings (
   unique (sport, team)
 );
 
+-- Tracks how far the Elo model has processed results per sport (avoids
+-- double-counting games across runs).
+create table if not exists elo_state (
+  sport        text primary key,
+  through_date text,                                 -- YYYY-MM-DD of last processed day
+  games        integer default 0,
+  updated_at   timestamptz not null default now()
+);
+
 -- ── Public betting splits (Agent 8) ─────────────────────────────
 create table if not exists public_splits (
   id           uuid primary key default gen_random_uuid(),

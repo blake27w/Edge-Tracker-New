@@ -1,88 +1,141 @@
 // ══════════════════════════════════════════════════════════════
-// Prop Engine (Agent 11) — Phase 1: the two highest-EV, automation-
-// advantage triggers.
-//   1. Injury-triggered alerts: when the Injury Agent flags a starter
-//      OUT, pull the backup/teammates' prop lines and flag stale numbers
-//      before books repost (the window is minutes-to-hours).
-//   2. Weather-triggered passing Unders: 15+ mph wind → QB passing-yard
-//      props that haven't dropped proportionally.
-// Props are exempt from the totals Under-bias (individual matchup driven).
-// Claude is only called when there's a trigger, so quiet slates cost $0.
+// Prop Engine (Agent 11) — code-based, no Claude. When a starter is
+// newly ruled OUT (or a game is windy), it pulls that game's player
+// props from The Odds API and flags cross-book edges: a book whose line
+// is meaningfully off consensus (line shopping) — which is exactly how a
+// stale post-injury backup line shows up. Uses Odds-API quota only.
+//
+// Bounded: only scans games with a NEW trigger, capped per run and per
+// day (PROP_MAX_GAMES_PER_RUN, PROP_MAX_SCANS_PER_DAY).
 // ══════════════════════════════════════════════════════════════
+import config from '../../config/index.js';
 import db from '../../db/index.js';
-import { claudeJson, hasClaude, logger } from '../../utils/index.js';
+import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setPropPlays } from '../../store/index.js';
 
+const { oddsApi, SPORTS, BOOKS } = config;
+
+const PROP_MARKETS = {
+  MLB: ['batter_hits', 'batter_total_bases', 'pitcher_strikeouts'],
+  NBA: ['player_points', 'player_rebounds', 'player_assists'],
+  NHL: ['player_points', 'player_shots_on_goal'],
+  NFL: ['player_pass_yds', 'player_rush_yds', 'player_reception_yds'],
+};
+// Line-shopping thresholds (a book this far off the consensus line = an edge).
+const LINE_EDGE = { MLB: 0.5, NBA: 1.5, NHL: 0.5, NFL: 10 };
+
+const MAX_PER_RUN = num(process.env.PROP_MAX_GAMES_PER_RUN, 6);
+const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 40);
+
+const seenOut = new Set();          // game_id|player already alerted on
+let day = today(), scansToday = 0;
+
+function today() { return new Date().toISOString().slice(0, 10); }
+function num(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
+function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+async function fetchProps(sportKey, eventId, markets) {
+  const params = new URLSearchParams({
+    apiKey: oddsApi.key, regions: 'us', oddsFormat: 'american',
+    markets: markets.join(','), bookmakers: BOOKS.join(','),
+  });
+  const res = await fetch(`${oddsApi.base}/sports/${sportKey}/events/${eventId}/odds?${params}`);
+  if (res.status === 404 || res.status === 422) return null; // no props for this event
+  if (!res.ok) throw new Error(`Odds props ${res.status}`);
+  return res.json();
+}
+
+// Find the most favorable book per player/market/side and flag if it's an
+// outlier vs consensus. Over wants the LOWEST line, Under the HIGHEST.
+function flagEdges(data, sport, game) {
+  const groups = new Map(); // player|market|side -> [{book,line,price}]
+  for (const bm of data.bookmakers || []) {
+    for (const mk of bm.markets || []) {
+      for (const oc of mk.outcomes || []) {
+        const player = oc.description; const side = oc.name; // Over/Under
+        if (!player || oc.point == null) continue;
+        const key = `${player}|${mk.key}|${side}`;
+        (groups.get(key) || groups.set(key, []).get(key)).push({ book: bm.title || bm.key, line: oc.point, price: oc.price });
+      }
+    }
+  }
+  const thr = LINE_EDGE[sport] || 0.5;
+  const edges = [];
+  for (const [key, rows] of groups) {
+    if (rows.length < 2) continue;
+    const [player, market, side] = key.split('|');
+    const med = median(rows.map((r) => r.line));
+    const best = side === 'Over'
+      ? rows.reduce((a, b) => (b.line < a.line ? b : a))   // lowest line for Over
+      : rows.reduce((a, b) => (b.line > a.line ? b : a));   // highest line for Under
+    if (med != null && Math.abs(best.line - med) >= thr) {
+      edges.push({ player, market, side, line: best.line, price: best.price, book: best.book, consensus: med });
+    }
+  }
+  return edges;
+}
+
 async function run() {
-  const injuries = getIntel('injuries').filter((i) => i.status === 'OUT' && i.impact !== 'low');
-  const weather = getIntel('weather').filter((w) => !w.dome && (w.wind_mph || 0) >= 15);
+  if (!oddsApi.key) { setPropPlays([]); return { summary: 'skipped — no ODDS_API_KEY' }; }
+  if (today() !== day) { day = today(); scansToday = 0; }
+
   const games = getGames();
+  const byId = new Map(games.map((g) => [g.game_id, g]));
 
-  if (!injuries.length && !weather.length) {
-    setPropPlays([]);
-    return { summary: 'no prop triggers (injury/weather) — idle' };
+  // Triggers: newly-OUT impactful players, + windy outdoor games.
+  const triggerGames = new Map(); // game_id -> trigger
+  for (const inj of getIntel('injuries')) {
+    if (inj.status !== 'OUT' || inj.impact === 'low') continue;
+    const k = `${inj.game_id}|${inj.player}`;
+    if (seenOut.has(k)) continue;
+    seenOut.add(k);
+    if (inj.game_id && byId.has(inj.game_id)) triggerGames.set(inj.game_id, 'injury');
   }
-  if (!hasClaude()) return { summary: `${injuries.length} injury + ${weather.length} weather triggers, but no Claude` };
+  for (const w of getIntel('weather')) {
+    if (!w.dome && (w.wind_mph || 0) >= 15 && byId.has(w.game_id)) {
+      if (!triggerGames.has(w.game_id)) triggerGames.set(w.game_id, 'weather');
+    }
+  }
 
-  const injuryLines = injuries
-    .map((i) => `OUT: ${i.player} (${i.team}, ${i.sport}) [game ${i.game_id || '?'}] — ${i.detail || ''}`)
-    .join('\n');
-  const weatherLines = weather
-    .map((w) => `WIND ${w.wind_mph}mph: ${w.away} @ ${w.home} [game ${w.game_id}]`)
-    .join('\n');
+  if (!triggerGames.size) { return { summary: 'no new prop triggers — idle' }; }
 
-  const prompt = `You are a player-prop analyst exploiting two fast-moving edges. Search current prop markets and return ONLY JSON: an array of objects with keys:
-  game_id, sport, player, stat_type (e.g. "passing_yards", "points", "hits"), line (number), side (OVER|UNDER),
-  price (american odds int, optional), book (best book), trigger (injury|weather), rationale (one sentence).
-
-1) INJURY trigger — a starter is OUT. Surface the backup's and teammates' props whose lines look STALE (haven't moved to reflect the increased role). Favor OVERs on the beneficiaries.
-${injuryLines || '(none)'}
-
-2) WEATHER trigger — 15+ mph wind. Surface QB passing-yard props that should drop ~15-20 yards but haven't; favor UNDER.
-${weatherLines || '(none)'}
-
-Only include genuinely actionable, stale-looking lines. Max 25 entries.`;
-
-  const json = await claudeJson(prompt, { maxTokens: 3000 });
-  const list = Array.isArray(json) ? json : [];
   const now = new Date().toISOString();
+  const snapshots = [], plays = [];
+  let scanned = 0;
 
-  const snapshots = list
-    .filter((r) => r && r.player && r.stat_type)
-    .map((r) => ({
-      sport: r.sport || null, game_id: r.game_id || null, player_id: null, player: r.player,
-      stat_type: r.stat_type, line: num(r.line), side: (r.side || 'OVER').toUpperCase(),
-      price: num(r.price), book: r.book || null, trigger: (r.trigger || 'injury').toLowerCase(),
-      fetched_at: now,
-    }));
+  for (const [gameId, trigger] of triggerGames) {
+    if (scanned >= MAX_PER_RUN || scansToday >= MAX_PER_DAY) break;
+    const g = byId.get(gameId);
+    const meta = SPORTS[g.sport];
+    const markets = PROP_MARKETS[g.sport];
+    if (!meta || !markets) continue;
+    let data;
+    try { data = await fetchProps(meta.key, gameId, markets); } catch (e) { logger.warn('prop-engine', `${g.away}@${g.home}: ${e.message}`); continue; }
+    scanned++; scansToday++;
+    if (!data) continue;
 
-  if (snapshots.length) {
-    try { await db.insert('prop_snapshots', snapshots); } catch (e) { logger.warn('prop-engine', e.message); }
+    for (const e of flagEdges(data, g.sport, g)) {
+      snapshots.push({
+        sport: g.sport, game_id: gameId, player_id: null, player: e.player, stat_type: e.market,
+        line: e.line, side: e.side.toUpperCase(), price: Math.round(e.price), book: e.book, trigger, fetched_at: now,
+      });
+      plays.push({
+        sport: g.sport, game_id: gameId, matchup: `${g.away} @ ${g.home}`, market: 'prop',
+        side: `${e.player} ${e.side} ${e.line} ${e.market.replace(/_/g, ' ')}`, line: e.line,
+        score: 75, confidence: 75, tier: '1u', unit_mult: 1, unit_dollars: config.rules.unitDollars, t1_count: 1,
+        signals: [{ tier: 1, id: trigger, label: `${trigger} edge — best ${e.book} ${e.line} vs ${e.consensus} consensus` }],
+        qualified: true, market_trigger: trigger, scored_at: now,
+      });
+    }
   }
 
-  // Publish as prop plays for the dashboard queue.
-  const plays = snapshots.map((s, i) => ({
-    sport: s.sport, game_id: s.game_id, matchup: matchupFor(games, s.game_id),
-    market: 'prop', side: `${s.player} ${s.side} ${s.line} ${s.stat_type}`,
-    line: s.line, score: s.trigger === 'injury' ? 78 : 74, confidence: s.trigger === 'injury' ? 78 : 74,
-    tier: '1u', unit_mult: 1, unit_dollars: 12, t1_count: 1,
-    signals: [{ tier: 1, id: s.trigger, label: list[i]?.rationale || `${s.trigger} trigger` }],
-    qualified: true, market_trigger: s.trigger, scored_at: now,
-  }));
+  if (snapshots.length) { try { await db.insert('prop_snapshots', snapshots); } catch (e) { logger.warn('prop-engine', e.message); } }
   setPropPlays(plays);
 
-  const injCount = snapshots.filter((s) => s.trigger === 'injury').length;
-  const wxCount = snapshots.filter((s) => s.trigger === 'weather').length;
   return {
-    summary: `${snapshots.length} prop alerts (${injCount} injury, ${wxCount} weather)`,
-    data: { count: snapshots.length, injury: injCount, weather: wxCount },
+    summary: `${scanned} games scanned, ${snapshots.length} prop edges flagged · Odds API (no Claude)`,
+    data: { scanned, edges: snapshots.length, scansToday },
   };
 }
-
-function matchupFor(games, gameId) {
-  const g = games.find((x) => x.game_id === gameId);
-  return g ? `${g.away} @ ${g.home}` : null;
-}
-function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
 
 export default { name: 'prop-engine', run };
