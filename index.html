@@ -5725,6 +5725,7 @@ function loadAgentsData(){
     tasks.push(fetch(api+'/health').then(function(r){return r.json()}).then(function(j){return {beHealth:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/plays').then(function(r){return r.json()}).then(function(j){return {bePlays:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
   }
   if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())renderAgentsContent();return}
 
@@ -5764,6 +5765,7 @@ function loadAgentsData(){
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
     if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;}
+    if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5844,6 +5846,9 @@ function renderAgentsContent(){
     h+='</div>';
   });
   h+='</div>';
+
+  // ── Cost & Credits ──
+  h+=renderCostWidget(state.agentsBudget);
 
   // ── Track Record / Backtest ──
   h+=renderBacktest(state.agentsBacktest);
@@ -6005,6 +6010,47 @@ function agentLogPlay(i){
 function gbChip(txt){return '<span style="font-size:9px;background:var(--panel2);color:var(--dim);padding:2px 7px;border-radius:10px;white-space:nowrap">'+esc(txt)+'</span>';}
 function gbOdds(p){if(p==null)return '';return p>0?'+'+p:''+p;}
 
+var TIER_COST={free:0,starter:30,pro:99};
+function renderCostWidget(b){
+  var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">💵 COST & CREDITS</div>';
+  if(!b||b.budget==null){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Connect the backend to see live API credit usage and projected cost.</div>';
+    return h;
+  }
+  var tier=(b.tier||'free').toLowerCase();
+  var oddsCost=TIER_COST[tier]!=null?TIER_COST[tier]:0;
+  var claudeEst=3; // ~$3/mo, Haiku-first across 5 agents
+  var totalMo=oddsCost+claudeEst;
+  var perDay=Math.round(totalMo/30*100)/100;
+  var pct=Math.max(0,Math.min(100,b.pctUsed||0));
+  var over=b.projectedMonthly>b.budget;
+  var barCol=over||pct>=90?'var(--wine)':pct>=70?'var(--brass)':'#34d399';
+
+  h+='<div class="card" style="padding:13px 14px;margin-bottom:6px">';
+  // Headline cost
+  h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+  h+='<div><div style="font-family:var(--M);font-size:22px;font-weight:700;color:var(--txt)">≈ $'+totalMo+'<span style="font-size:11px;color:var(--muted);font-weight:400">/mo</span></div><div style="font-size:8px;color:var(--muted)">~$'+perDay+'/day · estimated</div></div>';
+  h+='<div style="text-align:right;font-size:9px;color:var(--leather);line-height:1.6">Odds API: <b style="color:var(--cream)">'+(oddsCost?'$'+oddsCost+'/mo':'$0 (free)')+'</b><br>Claude: <b style="color:var(--cream)">~$'+claudeEst+'/mo</b><br>ESPN·Weather·Stats: <b style="color:var(--cream)">free</b></div>';
+  h+='</div>';
+
+  // Credits bar
+  h+='<div style="margin-top:12px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim)"><span>ODDS API CREDITS · '+esc((b.tier||'free').toUpperCase())+'</span><span>'+(b.used||0)+' / '+b.budget+' ('+pct+'%)</span></div>';
+  h+='<div style="height:7px;background:rgba(255,255,255,.06);border-radius:4px;margin-top:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+barCol+';border-radius:4px"></div></div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:5px"><span style="color:var(--muted)">'+(b.perDay||0)+'/day · day '+b.dayOfMonth+' of '+b.daysInMonth+'</span><span style="color:'+(over?'var(--wine)':'var(--muted)')+'">projected '+b.projectedMonthly+'/mo'+(over?' ⚠':'')+'</span></div>';
+  if(over)h+='<div style="font-size:8px;color:var(--wine);margin-top:3px;font-style:italic">On pace to exceed the free tier — sports auto-throttle as caps are hit (no overage charge).</div>';
+
+  // Top consumers
+  var bs=b.bySport||{};var keys=Object.keys(bs).sort(function(x,y){return bs[y]-bs[x]}).slice(0,6);
+  if(keys.length){
+    h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">CREDITS BY SPORT</div>';
+    keys.forEach(function(k){
+      h+='<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)"><span style="font-size:11px;color:var(--cream)">'+esc(k)+'</span><span style="font-family:var(--M);font-size:10px;color:var(--dim)">'+bs[k]+'</span></div>';
+    });
+  }
+  h+='</div>';
+  h+='<div style="font-size:8px;color:var(--muted);text-align:right;margin:0 2px 16px">resets monthly · '+esc(b.month||'')+'</div>';
+  return h;
+}
 function btColor(v){return v>=0?'#34d399':'var(--wine)'}
 function renderBtRows(title,arr){
   if(!arr||!arr.length)return '';
