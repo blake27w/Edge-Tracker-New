@@ -310,6 +310,19 @@ create table if not exists tennis_fatigue (
 );
 create index if not exists tennis_fatigue_game_idx on tennis_fatigue (game_id, fetched_at desc);
 
+create table if not exists tennis_matchups (
+  id         uuid primary key default gen_random_uuid(),
+  game_id    text not null,
+  p1         text,
+  p2         text,
+  surface    text,
+  favored    text,
+  edge       numeric,
+  detail     text,
+  fetched_at timestamptz not null default now()
+);
+create index if not exists tennis_matchups_game_idx on tennis_matchups (game_id, fetched_at desc);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

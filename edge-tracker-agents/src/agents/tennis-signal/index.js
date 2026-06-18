@@ -38,6 +38,9 @@ async function run() {
   // Fatigue edges (T3 agent): favored player per game.
   const fatigue = new Map();
   for (const f of getIntel('tennisFatigue')) fatigue.set(`${f.game_id}|${f.favored}`, f);
+  // Surface specialist edges (T2 agent): supporting only.
+  const surface = new Map();
+  for (const s of getIntel('tennisSurface')) surface.set(`${s.game_id}|${s.favored}`, s);
 
   const now = new Date().toISOString();
   const plays = [], newAlerts = [];
@@ -49,6 +52,8 @@ async function run() {
       if (books >= 2) { sigs.push({ tier: 1, id: 'steam', label: `Steam: ${books} books shortened ${player}` }); raw += 20 + (books - 2) * 5; }
       const fat = fatigue.get(`${g.game_id}|${player}`);
       if (fat) { sigs.push({ tier: 1, id: 'fatigue', label: `Rest edge — ${fat.detail}` }); raw += 20; }
+      const surf = surface.get(`${g.game_id}|${player}`);
+      if (surf) { sigs.push({ tier: 2, id: 'surface', label: surf.detail }); raw += 10; }
       const t1 = sigs.filter((s) => s.tier === 1).length;
       if (t1 < 1) continue;                         // need a Tier-1 (no Under bias; CLV-first)
       raw = Math.min(100, raw);
