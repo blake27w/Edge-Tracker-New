@@ -8,7 +8,7 @@ import config from './config/index.js';
 import db from './db/index.js';
 import { detectModel, getFeed, getMetrics, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
-import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays } from './store/index.js';
+import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook } from './export/index.js';
 import { buildGames } from './games/index.js';
@@ -82,7 +82,7 @@ const server = http.createServer(async (req, res) => {
         system: systemHealth(),
       });
     case '/plays':
-      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays() });
+      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest() });
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');

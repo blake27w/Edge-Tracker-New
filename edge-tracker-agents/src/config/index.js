@@ -31,15 +31,19 @@ const ODDS_TIER_BUDGETS = { free: 500, starter: 20000, pro: 5000000 };
 const ODDS_API_TIER = (env.ODDS_API_TIER || 'free').toLowerCase();
 const ODDS_MONTHLY_BUDGET = ODDS_TIER_BUDGETS[ODDS_API_TIER] ?? ODDS_TIER_BUDGETS.free;
 
-// Budget allocation: MLB 40%, NBA 20%, NHL 20%, everything else shares 20%.
+// Budget allocation across sports (relative caps; out-of-season sports are
+// skipped automatically, so in-season ones effectively get more). Sums to 1.0.
 const BUDGET_ALLOCATION = {
-  MLB: 0.40,
-  NBA: 0.20,
-  NHL: 0.20,
+  MLB: 0.26,
+  NBA: 0.14,
+  NCAAB: 0.12,
+  NHL: 0.10,
+  NCAAF: 0.08,
+  SOCCER: 0.08,
   NFL: 0.05,
-  UFC: 0.03,
-  SOCCER: 0.05,
-  TENNIS: 0.04,
+  WNBA: 0.05,
+  TENNIS: 0.05,
+  UFC: 0.04,
   GOLF: 0.03,
 };
 
@@ -49,6 +53,9 @@ const SPORTS = {
   NBA: { key: 'basketball_nba', emoji: '🏀', hasTotals: true },
   NHL: { key: 'icehockey_nhl', emoji: '🏒', hasTotals: true },
   NFL: { key: 'americanfootball_nfl', emoji: '🏈', hasTotals: true },
+  NCAAF: { key: 'americanfootball_ncaaf', emoji: '🏈', hasTotals: true },
+  NCAAB: { key: 'basketball_ncaab', emoji: '🏀', hasTotals: true },
+  WNBA: { key: 'basketball_wnba', emoji: '🏀', hasTotals: true },
   UFC: { key: 'mma_mixed_martial_arts', emoji: '🥊', hasTotals: false },
   SOCCER: {
     key: 'soccer', emoji: '⚽', hasTotals: true,
@@ -106,6 +113,7 @@ const AGENT_DEFS = {
   'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
   'ev-scanner': { label: '+EV / Boost Scanner', emoji: '💸', min: 5 },
   'arb-scanner': { label: 'Arbitrage & Middle Scanner', emoji: '🔒', min: 5 },
+  'backtest': { label: 'Backtest / Track Record', emoji: '📊', min: 30 },
 };
 const AGENTS = {};
 for (const [name, d] of Object.entries(AGENT_DEFS)) {

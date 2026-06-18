@@ -21,6 +21,7 @@ const store = {
   tennisPlays: [],    // qualifying tennis plays
   evPlays: [],        // +EV / boost opportunities (value vs no-vig fair price)
   arbPlays: [],       // arbitrage + middle opportunities across books
+  backtest: null,     // track-record / backtest report (which signals win)
 };
 
 export function setEvPlays(p) { store.evPlays = p || []; }
@@ -28,6 +29,9 @@ export function getEvPlays() { return store.evPlays; }
 
 export function setArbPlays(p) { store.arbPlays = p || []; }
 export function getArbPlays() { return store.arbPlays; }
+
+export function setBacktest(r) { store.backtest = r; }
+export function getBacktest() { return store.backtest; }
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }

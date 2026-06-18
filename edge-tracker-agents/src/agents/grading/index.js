@@ -12,6 +12,7 @@ import { logger } from '../../utils/index.js';
 // monitor_scores sport → ESPN scoreboard path.
 const ESPN_PATH = {
   MLB: 'baseball/mlb', NBA: 'basketball/nba', NHL: 'hockey/nhl', NFL: 'football/nfl',
+  NCAAF: 'football/college-football', NCAAB: 'basketball/mens-college-basketball', WNBA: 'basketball/wnba',
 };
 
 function profitPerUnit(odds = -110) {
