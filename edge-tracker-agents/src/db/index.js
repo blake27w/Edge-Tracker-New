@@ -57,6 +57,17 @@ export async function update(table, patch, match) {
   return { data, count: data?.length ?? 0 };
 }
 
+// Delete rows. opts: { match (equality), in ({col: [vals]}) }
+export async function del(table, opts = {}) {
+  if (config.dryRun || !client) return { skipped: true };
+  let q = ensure().from(table).delete();
+  if (opts.match) for (const [k, v] of Object.entries(opts.match)) q = q.eq(k, v);
+  if (opts.in) for (const [k, vals] of Object.entries(opts.in)) q = q.in(k, vals);
+  const { error } = await q;
+  if (error) throw new Error(`delete ${table}: ${error.message}`);
+  return { ok: true };
+}
+
 // Generic select. opts: { match, in, gte, lte, order, limit }
 export async function select(table, columns = '*', opts = {}) {
   if (!client) return [];
@@ -72,4 +83,4 @@ export async function select(table, columns = '*', opts = {}) {
   return data || [];
 }
 
-export default { isConnected, insert, upsert, update, select };
+export default { isConnected, insert, upsert, update, del, select };

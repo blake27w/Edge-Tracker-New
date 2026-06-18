@@ -65,8 +65,39 @@ function gradePlay(p, f) {
   return null; // spreads need the stored number; left pending
 }
 
+// Collapse duplicate qualifying plays (same game/market/side) left over from
+// restarts — keep a graded row if one exists, else the earliest. Returns count removed.
+async function dedupe() {
+  let rows = [];
+  try {
+    rows = await db.select('monitor_scores', 'id,game_id,market,side,scored_at,status', {
+      match: { qualified: true }, order: { column: 'scored_at', ascending: true }, limit: 5000,
+    });
+  } catch (_) { return 0; }
+  const groups = new Map();
+  for (const r of rows) {
+    const k = `${r.game_id}|${r.market}|${r.side}`;
+    (groups.get(k) || groups.set(k, []).get(k)).push(r);
+  }
+  const drop = [];
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const keeper = list.find((r) => r.status && r.status !== 'pending') || list[0];
+    for (const r of list) if (r.id !== keeper.id) drop.push(r.id);
+  }
+  let removed = 0;
+  for (let i = 0; i < drop.length; i += 100) {
+    try { await db.del('monitor_scores', { in: { id: drop.slice(i, i + 100) } }); removed += Math.min(100, drop.length - i); }
+    catch (e) { logger.warn('grading', `dedupe: ${e.message}`); break; }
+  }
+  if (removed) logger.info('grading', `deduped ${removed} duplicate plays`);
+  return removed;
+}
+
 async function run() {
   if (!db.isConnected()) return { summary: 'skipped — no DB' };
+
+  await dedupe();
 
   const cutoff = new Date(Date.now() - 3.5 * 3600_000).toISOString();
   let pending = [];
