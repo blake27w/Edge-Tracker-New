@@ -19,7 +19,11 @@ const store = {
   propPlays: [],      // qualifying prop alerts
   tennisGames: [],    // tennis matches (kept separate from team-sport games)
   tennisPlays: [],    // qualifying tennis plays
+  evPlays: [],        // +EV / boost opportunities (value vs no-vig fair price)
 };
+
+export function setEvPlays(p) { store.evPlays = p || []; }
+export function getEvPlays() { return store.evPlays; }
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }
