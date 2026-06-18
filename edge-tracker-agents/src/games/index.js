@@ -5,12 +5,44 @@
 // (qualifying play, sharp/RLM, injuries, weather). Powers GET /games.
 // ══════════════════════════════════════════════════════════════
 import db from '../db/index.js';
-import { getGames, signalsForGame, getPlays } from '../store/index.js';
+import { getGames, signalsForGame, getPlays, getTennisGames, getTennisPlays } from '../store/index.js';
 import { computeMarkets } from './lines.js';
 import { getOpenings } from '../agents/odds/index.js';
 
+// Best (most favorable) American price per side across books.
+function bestPrice(rows) {
+  if (!rows.length) return null;
+  return rows.reduce((a, b) => (b.price > a.price ? b : a));
+}
+
+// Tennis board: matches with best match-winner price per player + steam/play.
+function buildTennis() {
+  const games = getTennisGames();
+  if (!games.length) return { sport: 'TENNIS', games: [], note: 'No active tennis matches.' };
+  const plays = getTennisPlays();
+  const out = games.map((g) => {
+    const p1Rows = [], p2Rows = [];
+    for (const [bk, b] of Object.entries(g.books || {})) {
+      const label = b.label || bk; const mk = b.markets || {};
+      const m1 = mk[`h2h:${g.p1}`], m2 = mk[`h2h:${g.p2}`];
+      if (m1 && m1.price != null) p1Rows.push({ book: label, price: m1.price });
+      if (m2 && m2.price != null) p2Rows.push({ book: label, price: m2.price });
+    }
+    const play = plays.find((p) => p.game_id === g.game_id) || null;
+    return {
+      game_id: g.game_id, sport: 'TENNIS', tournament: g.tournament,
+      p1: g.p1, p2: g.p2, commence_time: g.commence_time,
+      ml: { p1: bestPrice(p1Rows), p2: bestPrice(p2Rows) },
+      play: play ? { side: play.side, score: Math.round(play.score), tier: play.tier, unit_dollars: play.unit_dollars } : null,
+    };
+  });
+  out.sort((a, b) => new Date(a.commence_time || 0) - new Date(b.commence_time || 0));
+  return { sport: 'TENNIS', kind: 'tennis', count: out.length, games: out };
+}
+
 export async function buildGames(sport) {
   const want = String(sport || '').toUpperCase();
+  if (want === 'TENNIS') return buildTennis();
   const games = getGames().filter((g) => !want || g.sport === want);
   if (!games.length) return { sport: want, games: [], note: 'No games in the next 36h.' };
 

@@ -348,7 +348,7 @@ var SPORTS = [
     {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]},
   {id:'tennis',label:'Tennis',icon:'🎾',active:true,tabs:[
-    {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+    {id:'games',icon:'📅',label:'Matches'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
   ]}
 ];
 
@@ -5656,9 +5656,11 @@ var AGENTS_META=[
   {name:'signal',icon:'🧠',label:'Signal Engine',cadence:'every 2 min'},
   {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 15 min'},
   {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 15 min'},
-  {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'}
+  {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'},
+  {name:'tennis-ingest',icon:'🎾',label:'Tennis Ingestion',cadence:'every 10 min'},
+  {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-signal':600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5948,9 +5950,29 @@ function renderGamesBoard(el){
   }).catch(function(e){el.innerHTML='<div class="card" style="color:var(--wine);text-align:center">Could not load games: '+esc(e.message)+'</div>';});
 }
 
+function prettyTourney(k){return String(k||'').replace(/^tennis_/,'').replace(/_/g,' ').toUpperCase();}
+function renderTennisHTML(d,games){
+  var h='';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+  h+='<div style="font-family:var(--H);font-size:16px;letter-spacing:1px;color:var(--txt);font-weight:600">🎾 TENNIS <span style="color:var(--dim);font-size:12px">· '+games.length+' match'+(games.length!==1?'es':'')+'</span></div>';
+  h+='<button class="flt" onclick="render()">↻ Refresh</button></div>';
+  if(!games.length){h+='<div class="card" style="text-align:center;color:var(--dim);font-style:italic">'+esc((d&&d.note)||'No active tennis matches.')+'</div>';return h;}
+  games.forEach(function(g){
+    var play=g.play;var ml=g.ml||{};
+    h+='<div class="card" style="padding:13px 14px;margin-bottom:10px;'+(play?'border-left:3px solid var(--sage);':'')+'">';
+    var time=g.commence_time?new Date(g.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'}):'';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-family:var(--M);font-size:9px;color:var(--brass)">'+esc(prettyTourney(g.tournament))+'</span><span style="font-family:var(--M);font-size:10px;color:var(--dim)">'+esc(time)+'</span></div>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt)">'+esc(g.p1)+'</span><span style="font-family:var(--M);font-size:12px;color:var(--cream)">'+(ml.p1?gbOdds(ml.p1.price)+' <span style="color:var(--dim);font-size:9px">'+esc(ml.p1.book)+'</span>':'—')+'</span></div>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px"><span style="font-family:var(--H);font-size:14px;font-weight:600;color:var(--txt)">'+esc(g.p2)+'</span><span style="font-family:var(--M);font-size:12px;color:var(--cream)">'+(ml.p2?gbOdds(ml.p2.price)+' <span style="color:var(--dim);font-size:9px">'+esc(ml.p2.book)+'</span>':'—')+'</span></div>';
+    if(play)h+='<div style="margin-top:8px;display:inline-block;background:rgba(70,207,144,.16);border:1px solid var(--sage);border-radius:7px;padding:4px 9px;font-family:var(--H);font-size:11px;color:var(--sage);font-weight:600">✅ '+esc(play.side)+' ML · '+play.score+' conf · '+esc(play.tier)+'/$'+play.unit_dollars+'</div>';
+    h+='</div>';
+  });
+  return h;
+}
 function renderGamesHTML(d){
   var sp=state.sport.toUpperCase();
   var games=(d&&d.games)||[];
+  if(d&&d.kind==='tennis')return renderTennisHTML(d,games);
   var h='';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
   h+='<div style="font-family:var(--H);font-size:16px;letter-spacing:1px;color:var(--txt);font-weight:600">'+sp+' <span style="color:var(--dim);font-size:12px">· '+games.length+' game'+(games.length!==1?'s':'')+'</span></div>';
