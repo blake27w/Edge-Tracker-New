@@ -28,13 +28,25 @@ const budget = {
 function monthKey() { return new Date().toISOString().slice(0, 7); }
 
 export function getOddsBudget() {
+  const now = new Date();
+  const dayOfMonth = now.getUTCDate();
+  const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getUTCDate();
+  const used = budget.used || 0;
+  const cap = oddsApi.monthlyBudget || 0;
+  // Straight-line pace projection for the full month.
+  const projectedMonthly = dayOfMonth > 0 ? Math.round((used / dayOfMonth) * daysInMonth) : used;
   return {
     tier: oddsApi.tier,
     month: budget.month,
-    budget: oddsApi.monthlyBudget,
-    used: budget.used,
+    budget: cap,
+    used,
     remaining: budget.remaining,
     bySport: budget.bySport,
+    dayOfMonth,
+    daysInMonth,
+    perDay: dayOfMonth > 0 ? Math.round((used / dayOfMonth) * 10) / 10 : 0,
+    projectedMonthly,
+    pctUsed: cap ? Math.round((used / cap) * 1000) / 10 : 0,
   };
 }
 
