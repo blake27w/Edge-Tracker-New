@@ -105,6 +105,7 @@ const AGENT_DEFS = {
   'tennis-surface': { label: 'Tennis Surface & Style', emoji: '🎾', min: 60 },
   'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
   'ev-scanner': { label: '+EV / Boost Scanner', emoji: '💸', min: 5 },
+  'arb-scanner': { label: 'Arbitrage & Middle Scanner', emoji: '🔒', min: 5 },
 };
 const AGENTS = {};
 for (const [name, d] of Object.entries(AGENT_DEFS)) {

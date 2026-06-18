@@ -76,7 +76,7 @@ export async function buildGames(sport) {
         bestUnder: m.total.bestUnder, bestOver: m.total.bestOver,
       },
       spread: { open: openOf(g.game_id, 'spread'), currentHome: m.spread.consensusHome },
-      ml: { currentHome: m.ml.consensusHome, currentAway: m.ml.consensusAway },
+      ml: { currentHome: m.ml.consensusHome, currentAway: m.ml.consensusAway, bestHome: m.ml.bestHome, bestAway: m.ml.bestAway },
       injuries: sig.injuries.filter((i) => i.impact !== 'low').slice(0, 6),
       weather: sig.weather[0] || null,
       sharp: sig.sharp.length > 0,

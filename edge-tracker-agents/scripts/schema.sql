@@ -339,6 +339,22 @@ create table if not exists ev_opportunities (
 );
 create index if not exists ev_opportunities_idx on ev_opportunities (fetched_at desc);
 
+-- Arbitrage + middle opportunities across books.
+create table if not exists arb_opportunities (
+  id          uuid primary key default gen_random_uuid(),
+  type        text,            -- 'arb' | 'middle'
+  sport       text,
+  game_id     text,
+  matchup     text,
+  market      text,
+  roi_pct     numeric,         -- arbs: guaranteed ROI
+  width       numeric,         -- middles: points of overlap
+  hold_pct    numeric,         -- middles: worst-case cost
+  legs        jsonb,
+  fetched_at  timestamptz not null default now()
+);
+create index if not exists arb_opportunities_idx on arb_opportunities (fetched_at desc);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

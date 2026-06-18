@@ -25,6 +25,7 @@ import tennisSignal from '../agents/tennis-signal/index.js';
 import tennisFatigue from '../agents/tennis-fatigue/index.js';
 import tennisSurface from '../agents/tennis-surface/index.js';
 import evScanner from '../agents/ev-scanner/index.js';
+import arbScanner from '../agents/arb-scanner/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
@@ -32,7 +33,7 @@ const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
-  evScanner,
+  evScanner, arbScanner,
 ];
 
 // name -> live status (the /health payload reads from here).

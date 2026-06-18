@@ -16,7 +16,7 @@ export function computeMarkets(game) {
   const books = game.books || {};
   const home = game.home, away = game.away;
   const totalLines = [], spreadHome = [], mlHome = [], mlAway = [];
-  let bestUnder = null, bestOver = null;
+  let bestUnder = null, bestOver = null, bestMlHome = null, bestMlAway = null;
 
   for (const [bk, b] of Object.entries(books)) {
     const label = b.label || bk;
@@ -26,14 +26,14 @@ export function computeMarkets(game) {
     if (un && un.price != null && (!bestUnder || un.price > bestUnder.price)) bestUnder = { book: label, line: un.line, price: un.price };
     if (ov && ov.price != null && (!bestOver || ov.price > bestOver.price)) bestOver = { book: label, line: ov.line, price: ov.price };
     const sh = mk[`spreads:${home}`]; if (sh && sh.line != null) spreadHome.push(sh.line);
-    const mh = mk[`h2h:${home}`]; if (mh && mh.price != null) mlHome.push(mh.price);
-    const ma = mk[`h2h:${away}`]; if (ma && ma.price != null) mlAway.push(ma.price);
+    const mh = mk[`h2h:${home}`]; if (mh && mh.price != null) { mlHome.push(mh.price); if (!bestMlHome || mh.price > bestMlHome.price) bestMlHome = { book: label, price: mh.price }; }
+    const ma = mk[`h2h:${away}`]; if (ma && ma.price != null) { mlAway.push(ma.price); if (!bestMlAway || ma.price > bestMlAway.price) bestMlAway = { book: label, price: ma.price }; }
   }
 
   return {
     total: { consensus: median(totalLines), bestUnder, bestOver },
     spread: { consensusHome: median(spreadHome) },
-    ml: { consensusHome: median(mlHome), consensusAway: median(mlAway) },
+    ml: { consensusHome: median(mlHome), consensusAway: median(mlAway), bestHome: bestMlHome, bestAway: bestMlAway },
   };
 }
 
