@@ -15,7 +15,7 @@ const TABLES = [
   'scan_runs', 'api_usage', 'opening_lines', 'line_snapshots', 'line_movements', 'injury_updates',
   'game_weather', 'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots',
   'mlb_context', 'player_usage', 'prop_snapshots', 'monitor_scores', 'clv_records',
-  'alert_log', 'subscribers', 'tennis_markets',
+  'alert_log', 'subscribers', 'tennis_markets', 'tennis_fatigue',
 ];
 
 async function main() {

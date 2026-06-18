@@ -22,13 +22,14 @@ import clv from '../agents/clv-tracker/index.js';
 import grading from '../agents/grading/index.js';
 import tennisIngest from '../agents/tennis-ingest/index.js';
 import tennisSignal from '../agents/tennis-signal/index.js';
+import tennisFatigue from '../agents/tennis-fatigue/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
 const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
   mlbContext, signal, propEngine, clv, grading,
-  tennisIngest, tennisSignal,
+  tennisIngest, tennisFatigue, tennisSignal,
 ];
 
 // name -> live status (the /health payload reads from here).
