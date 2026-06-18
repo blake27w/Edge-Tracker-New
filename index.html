@@ -5649,16 +5649,16 @@ var AGENTS_META=[
   {name:'injury',icon:'🏥',label:'Injury Intelligence',cadence:'every 30 min'},
   {name:'weather',icon:'🌦️',label:'Weather Intelligence',cadence:'every 45 min'},
   {name:'sharp',icon:'💰',label:'Sharp Money Detection',cadence:'every 2 min'},
-  {name:'power',icon:'📊',label:'Power Ratings',cadence:'once daily (08:00)'},
-  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 30 min'},
+  {name:'power',icon:'📊',label:'Power Ratings',cadence:'Mon & Thu 08:00'},
+  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 8 hrs'},
   {name:'schedule-spot',icon:'🗓️',label:'Schedule Spot',cadence:'every 30 min'},
   {name:'mlb-context',icon:'⚾',label:'MLB Context',cadence:'every 60 min'},
   {name:'signal',icon:'🧠',label:'Signal Engine',cadence:'every 2 min'},
-  {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 15 min'},
+  {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 8 hrs'},
   {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 15 min'},
   {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:3600000,'public-splits':1800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':900000,clv:900000,grading:1800000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
