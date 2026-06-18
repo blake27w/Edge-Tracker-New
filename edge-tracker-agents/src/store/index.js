@@ -20,10 +20,14 @@ const store = {
   tennisGames: [],    // tennis matches (kept separate from team-sport games)
   tennisPlays: [],    // qualifying tennis plays
   evPlays: [],        // +EV / boost opportunities (value vs no-vig fair price)
+  arbPlays: [],       // arbitrage + middle opportunities across books
 };
 
 export function setEvPlays(p) { store.evPlays = p || []; }
 export function getEvPlays() { return store.evPlays; }
+
+export function setArbPlays(p) { store.arbPlays = p || []; }
+export function getArbPlays() { return store.arbPlays; }
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }

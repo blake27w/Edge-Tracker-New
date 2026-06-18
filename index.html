@@ -5661,9 +5661,10 @@ var AGENTS_META=[
   {name:'tennis-fatigue',icon:'🎾',label:'Tennis Fatigue & Schedule',cadence:'every 30 min'},
   {name:'tennis-surface',icon:'🎾',label:'Tennis Surface & Style',cadence:'every 60 min'},
   {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
-  {name:'ev-scanner',icon:'💸',label:'+EV / Boost Scanner',cadence:'every 5 min'}
+  {name:'ev-scanner',icon:'💸',label:'+EV / Boost Scanner',cadence:'every 5 min'},
+  {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5748,7 +5749,7 @@ function loadAgentsData(){
     // Plays
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
-    if(bag.bePlays)state.agentsEv=bag.bePlays.ev||[];
+    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5880,6 +5881,30 @@ function renderAgentsContent(){
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(e.sport||'')+' · '+esc(e.market||'')+' · <b>'+esc(e.side||'')+'</b></div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--brass)">+'+e.ev_pct+'%</div><div style="font-size:7px;color:var(--muted)">EV</div></div></div>';
       h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span></div>';
+      h+='</div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+
+  // ── Arbitrage & Middles ──
+  var arb=state.agentsArb||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🔒 ARBITRAGE & MIDDLES <span style="color:var(--brass)">('+arb.length+')</span></div>';
+  if(!arb.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No arbs or middles right now. The scanner flags locked profit (arb) and double-win windows (middle) across your books.</div>';
+  } else {
+    arb.slice(0,30).forEach(function(a){
+      var isArb=a.type==='arb';var col=isArb?'#34d399':'var(--brass)';
+      h+='<div class="card" style="padding:11px 13px;margin:0 0 8px;border-left:3px solid '+col+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(a.matchup||'')+'</div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(a.sport||'')+' · '+esc(a.market||'')+'</div></div>';
+      if(isArb){h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+col+'">+'+a.roi+'%</div><div style="font-size:7px;color:var(--muted)">LOCKED ROI</div></div>';}
+      else{h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+col+'">'+a.width+'pt</div><div style="font-size:7px;color:var(--muted)">MIDDLE · '+a.hold+'% cost</div></div>';}
+      h+='</div>';
+      (a.legs||[]).forEach(function(l){
+        var pr=l.price>0?'+'+l.price:''+l.price;var ln=(l.line!=null)?' '+(l.line>0?'+'+l.line:l.line):'';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+esc(l.side||'')+ln+' &nbsp;'+pr+' @ <b>'+esc(l.book)+'</b>'+(l.stake!=null?' <span style="color:var(--dim)">· stake '+l.stake+'%</span>':'')+'</div>';
+      });
       h+='</div>';
     });
     h+='<div style="height:8px"></div>';
@@ -6021,6 +6046,12 @@ function renderGamesHTML(d){
       h+='<div style="font-size:9px;color:var(--dim);margin-top:3px">';
       if(t.bestUnder)h+='best U '+t.bestUnder.line+' '+gbOdds(t.bestUnder.price)+' · '+esc(t.bestUnder.book);
       if(t.bestOver)h+=(t.bestUnder?' &nbsp;|&nbsp; ':'')+'best O '+t.bestOver.line+' '+gbOdds(t.bestOver.price)+' · '+esc(t.bestOver.book);
+      h+='</div>';
+    }
+    if(ml.bestAway||ml.bestHome){
+      h+='<div style="font-size:9px;color:var(--dim);margin-top:3px">ML ';
+      if(ml.bestAway)h+=esc(g.away)+' '+gbOdds(ml.bestAway.price)+' · '+esc(ml.bestAway.book);
+      if(ml.bestHome)h+=(ml.bestAway?' &nbsp;|&nbsp; ':'')+esc(g.home)+' '+gbOdds(ml.bestHome.price)+' · '+esc(ml.bestHome.book);
       h+='</div>';
     }
     if(play)h+='<div style="margin-top:7px;display:inline-block;background:rgba(70,207,144,.16);border:1px solid var(--sage);border-radius:7px;padding:4px 9px;font-family:var(--H);font-size:11px;color:var(--sage);font-weight:600">✅ '+esc(play.side)+(play.line!=null?' '+play.line:'')+' · '+play.score+' conf · '+esc(play.tier)+'/$'+play.unit_dollars+(play.t1?' · '+play.t1+'T1':'')+'</div>';
