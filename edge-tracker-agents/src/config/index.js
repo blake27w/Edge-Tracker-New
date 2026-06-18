@@ -99,6 +99,9 @@ const AGENT_DEFS = {
   'prop-engine': { label: 'Prop Engine', emoji: '🎯', min: 15 },
   clv: { label: 'CLV Tracker', emoji: '📉', min: 15 },
   grading: { label: 'Grading Agent', emoji: '✅', min: 30 },
+  // Tennis module (Phase 3) — skip cleanly when no tournaments are active.
+  'tennis-ingest': { label: 'Tennis Ingestion', emoji: '🎾', min: 10 },
+  'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
 };
 const AGENTS = {};
 for (const [name, d] of Object.entries(AGENT_DEFS)) {

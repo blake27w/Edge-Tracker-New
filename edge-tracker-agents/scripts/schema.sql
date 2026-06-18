@@ -281,6 +281,22 @@ create table if not exists alert_log (
 create index if not exists alert_log_sent_idx on alert_log (sent_at desc);
 
 -- ── Subscribers ─────────────────────────────────────────────────
+-- ── Tennis (Phase 3 module) ─────────────────────────────────────
+create table if not exists tennis_markets (
+  id         uuid primary key default gen_random_uuid(),
+  game_id    text not null,
+  tournament text,
+  p1         text,
+  p2         text,
+  book       text,
+  market     text,                                  -- h2h | totals
+  side       text,
+  line       numeric,
+  price      integer,
+  fetched_at timestamptz not null default now()
+);
+create index if not exists tennis_markets_game_idx on tennis_markets (game_id, fetched_at desc);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

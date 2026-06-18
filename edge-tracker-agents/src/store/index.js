@@ -17,7 +17,14 @@ const store = {
   mlbContext: [],     // latest mlb_context
   plays: [],          // qualifying plays from the signal engine
   propPlays: [],      // qualifying prop alerts
+  tennisGames: [],    // tennis matches (kept separate from team-sport games)
+  tennisPlays: [],    // qualifying tennis plays
 };
+
+export function setTennisGames(g) { store.tennisGames = g || []; }
+export function getTennisGames() { return store.tennisGames; }
+export function setTennisPlays(p) { store.tennisPlays = p || []; }
+export function getTennisPlays() { return store.tennisPlays; }
 
 export function setGames(games) { store.games = games || []; }
 export function getGames() { return store.games; }
