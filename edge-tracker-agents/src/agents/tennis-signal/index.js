@@ -35,21 +35,29 @@ async function run() {
       steam.set(k, (steam.get(k) || 0) + 1);
     }
   }
+  // Fatigue edges (T3 agent): favored player per game.
+  const fatigue = new Map();
+  for (const f of getIntel('tennisFatigue')) fatigue.set(`${f.game_id}|${f.favored}`, f);
 
   const now = new Date().toISOString();
   const plays = [], newAlerts = [];
   for (const g of games) {
     for (const player of [g.p1, g.p2]) {
+      const sigs = [];
+      let raw = 50;
       const books = steam.get(`${g.game_id}|${player}`) || 0;
-      if (books < 2) continue; // need ≥2 books moving together = real steam
-      const sigs = [{ tier: 1, id: 'steam', label: `Steam: ${books} books shortened ${player}` }];
-      const raw = Math.min(100, 50 + 20 + (books - 2) * 5);
+      if (books >= 2) { sigs.push({ tier: 1, id: 'steam', label: `Steam: ${books} books shortened ${player}` }); raw += 20 + (books - 2) * 5; }
+      const fat = fatigue.get(`${g.game_id}|${player}`);
+      if (fat) { sigs.push({ tier: 1, id: 'fatigue', label: `Rest edge — ${fat.detail}` }); raw += 20; }
+      const t1 = sigs.filter((s) => s.tier === 1).length;
+      if (t1 < 1) continue;                         // need a Tier-1 (no Under bias; CLV-first)
+      raw = Math.min(100, raw);
       if (raw < rules.confidenceFloor) continue;
       const unit = halfUnit(raw);
       const row = {
         sport: 'TENNIS', game_id: g.game_id, matchup: `${g.p1} vs ${g.p2}`, commence_time: g.commence_time,
         market: 'ml', side: player, line: null, raw_score: raw, score: raw, confidence: raw,
-        tier: unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars, t1_count: 1,
+        tier: unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars, t1_count: t1,
         signals: sigs, qualified: true, over_penalty_applied: false, status: 'pending', scored_at: now,
       };
       plays.push(row);
