@@ -5837,7 +5837,9 @@ function renderAgentsContent(){
       var tier=p.tier||'';var ud=p.unit_dollars!=null?p.unit_dollars:'';
       h+='<div class="card green" style="padding:12px;margin:0 0 8px">';
       h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+      var gtime=p.commence_time?(function(){try{return new Date(p.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}catch(e){return ''}})():'';
       h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+esc(p.matchup||p.game_id||'')+'</div>';
+      if(gtime)h+='<div style="font-family:var(--M);font-size:9px;color:var(--brass);margin-top:2px">🕒 '+esc(gtime)+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+' · '+esc(p.market||'')+' · <b>'+esc(p.side||'')+'</b>'+(p.line!=null?(' '+p.line):'')+'</div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:16px;font-weight:700;color:var(--pine)">'+conf+'</div><div style="font-size:7px;color:var(--muted)">CONF</div></div>';
       h+='</div>';
