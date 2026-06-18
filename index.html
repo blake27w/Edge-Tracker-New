@@ -5886,6 +5886,7 @@ function agentSetApiUrl(){
   if(v===null)return;
   // Normalize: strip any endpoint path (/health, /plays, …) and trailing slashes.
   var u=v.trim().replace(/\/(health|plays|feed|games|export)\/?$/i,'').replace(/\/+$/,'');
+  if(u&&!/^https?:\/\//i.test(u))u='https://'+u;   // prepend scheme so it's not treated as a relative path
   state.agentApiUrl=u;save('et_agent_api',u);
   state.agentsLastLoad=null;loadAgentsData();
 }
