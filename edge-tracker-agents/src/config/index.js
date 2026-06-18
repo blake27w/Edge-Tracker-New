@@ -102,6 +102,7 @@ const AGENT_DEFS = {
   // Tennis module (Phase 3) — skip cleanly when no tournaments are active.
   'tennis-ingest': { label: 'Tennis Ingestion', emoji: '🎾', min: 10 },
   'tennis-fatigue': { label: 'Tennis Fatigue & Schedule', emoji: '🎾', min: 30 },
+  'tennis-surface': { label: 'Tennis Surface & Style', emoji: '🎾', min: 60 },
   'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
 };
 const AGENTS = {};
