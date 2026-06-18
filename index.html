@@ -5670,7 +5670,7 @@ var AGENTS_META=[
   {name:'prop-engine',icon:'🎯',label:'Prop Engine',cadence:'every 15 min'},
   {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 15 min'},
   {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'},
-  {name:'tennis-ingest',icon:'🎾',label:'Tennis Ingestion',cadence:'every 10 min'},
+  {name:'tennis-ingest',icon:'🎾',label:'Tennis Ingestion',cadence:'once a day'},
   {name:'tennis-fatigue',icon:'🎾',label:'Tennis Fatigue & Schedule',cadence:'every 30 min'},
   {name:'tennis-surface',icon:'🎾',label:'Tennis Surface & Style',cadence:'every 60 min'},
   {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
@@ -5678,7 +5678,7 @@ var AGENTS_META=[
   {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'},
   {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
