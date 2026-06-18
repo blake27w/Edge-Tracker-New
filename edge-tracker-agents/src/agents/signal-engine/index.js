@@ -55,11 +55,6 @@ function collectSignals(game, market, side, intel, power) {
     for (const w of intel.weather) {
       if (!w.dome && (w.wind_mph || 0) >= 15 && w.total_impact === 'under') add(1, 'wind', `Wind ${Math.round(w.wind_mph)}mph → Under`);
     }
-    // A key position player ruled OUT suppresses scoring (→ Under). Pitcher
-    // scratches are ambiguous on direction, so we don't auto-signal them here.
-    for (const inj of intel.injuries) {
-      if (inj.status === 'OUT' && inj.impact === 'high' && !isPitcher(inj.pos)) add(1, 'injury_out', `${inj.player} OUT (${inj.team})`);
-    }
   }
 
   // ── Tier 2: supporting ──
@@ -70,6 +65,12 @@ function collectSignals(game, market, side, intel, power) {
     }
   }
   if (isTotal) {
+    // Key OUT players support an Under, but don't qualify a play alone (info, not
+    // a confirmed market edge) — one supporting signal per game regardless of count.
+    if (under) {
+      const outs = intel.injuries.filter((i) => i.status === 'OUT' && i.impact === 'high' && !isPitcher(i.pos));
+      if (outs.length) add(2, 'injury_out', `${outs.length} key OUT (${outs[0].player}${outs.length > 1 ? ' +' + (outs.length - 1) : ''})`);
+    }
     if (under) for (const sp of intel.schedule) add(2, 'schedule', sp.detail);
     for (const m of intel.mlbContext) {
       if (m.total_lean === 'under' && under) add(2, 'bullpen', 'Bullpen/park lean Under');
@@ -152,6 +153,7 @@ async function run() {
       const unit = qualified ? unitFor(sc.score) : unitFor(0);
       const row = {
         sport: g.sport, game_id: g.game_id, matchup: `${g.away} @ ${g.home}`,
+        commence_time: g.commence_time,
         market: c.market, side: c.side, line: c.line,
         raw_score: sc.raw, score: sc.score, confidence: sc.score,
         tier: unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars,
@@ -167,9 +169,12 @@ async function run() {
     }
   }
 
-  const qualifyingRows = rows.filter((r) => r.qualified);
-  if (qualifyingRows.length) {
-    try { await db.insert('monitor_scores', qualifyingRows); } catch (e) { logger.warn('signal', e.message); }
+  // Persist ONLY newly-qualified plays (newAlerts), not every cycle's full set —
+  // otherwise monitor_scores accumulates the same play every 2 minutes.
+  if (newAlerts.length) {
+    // commence_time is for the dashboard (via /plays); not a monitor_scores column.
+    const dbRows = newAlerts.map(({ commence_time, ...r }) => r);
+    try { await db.insert('monitor_scores', dbRows); } catch (e) { logger.warn('signal', e.message); }
   }
   setPlays(plays);
 

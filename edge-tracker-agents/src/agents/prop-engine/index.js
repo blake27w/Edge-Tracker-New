@@ -120,7 +120,7 @@ async function run() {
         line: e.line, side: e.side.toUpperCase(), price: Math.round(e.price), book: e.book, trigger, fetched_at: now,
       });
       plays.push({
-        sport: g.sport, game_id: gameId, matchup: `${g.away} @ ${g.home}`, market: 'prop',
+        sport: g.sport, game_id: gameId, matchup: `${g.away} @ ${g.home}`, commence_time: g.commence_time, market: 'prop',
         side: `${e.player} ${e.side} ${e.line} ${e.market.replace(/_/g, ' ')}`, line: e.line,
         score: 75, confidence: 75, tier: '1u', unit_mult: 1, unit_dollars: config.rules.unitDollars, t1_count: 1,
         signals: [{ tier: 1, id: trigger, label: `${trigger} edge — best ${e.book} ${e.line} vs ${e.consensus} consensus` }],
