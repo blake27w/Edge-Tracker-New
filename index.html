@@ -5660,9 +5660,10 @@ var AGENTS_META=[
   {name:'tennis-ingest',icon:'🎾',label:'Tennis Ingestion',cadence:'every 10 min'},
   {name:'tennis-fatigue',icon:'🎾',label:'Tennis Fatigue & Schedule',cadence:'every 30 min'},
   {name:'tennis-surface',icon:'🎾',label:'Tennis Surface & Style',cadence:'every 60 min'},
-  {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'}
+  {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
+  {name:'ev-scanner',icon:'💸',label:'+EV / Boost Scanner',cadence:'every 5 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5747,6 +5748,7 @@ function loadAgentsData(){
     // Plays
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
+    if(bag.bePlays)state.agentsEv=bag.bePlays.ev||[];
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5863,6 +5865,25 @@ function renderAgentsContent(){
   }
   // stash the currently-rendered (filtered) play list so the buttons resolve by index
   state._agentsVisiblePlays=plays;
+
+  // ── Value & Boosts (+EV) ──
+  var ev=state.agentsEv||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">💸 VALUE & BOOSTS <span style="color:var(--brass)">('+ev.length+')</span></div>';
+  if(!ev.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No +EV prices right now. The scanner flags any book paying above the no-vig fair price (boosts, soft lines).</div>';
+  } else {
+    ev.slice(0,30).forEach(function(e){
+      var pr=e.price>0?'+'+e.price:''+e.price; var fp=e.fair_price>0?'+'+e.fair_price:''+e.fair_price;
+      h+='<div class="card" style="padding:11px 13px;margin:0 0 8px;border-left:3px solid var(--brass)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(e.matchup||'')+'</div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(e.sport||'')+' · '+esc(e.market||'')+' · <b>'+esc(e.side||'')+'</b></div></div>';
+      h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--brass)">+'+e.ev_pct+'%</div><div style="font-size:7px;color:var(--muted)">EV</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span></div>';
+      h+='</div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
 
   // ── Live Feed ──
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 8px">LIVE FEED</div>';

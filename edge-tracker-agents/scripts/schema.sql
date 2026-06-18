@@ -323,6 +323,22 @@ create table if not exists tennis_matchups (
 );
 create index if not exists tennis_matchups_game_idx on tennis_matchups (game_id, fetched_at desc);
 
+-- +EV / boost opportunities (a book price beating the no-vig fair price).
+create table if not exists ev_opportunities (
+  id          uuid primary key default gen_random_uuid(),
+  sport       text,
+  game_id     text,
+  matchup     text,
+  market      text,
+  side        text,
+  book        text,
+  price       integer,
+  fair_price  integer,
+  ev_pct      numeric,
+  fetched_at  timestamptz not null default now()
+);
+create index if not exists ev_opportunities_idx on ev_opportunities (fetched_at desc);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,
