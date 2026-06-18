@@ -6,7 +6,7 @@
 import http from 'node:http';
 import config from './config/index.js';
 import db from './db/index.js';
-import { detectModel, getFeed, getMetrics, logger } from './utils/index.js';
+import { detectModel, getFeed, getMetrics, getClaudeUsage, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
 import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
@@ -95,7 +95,7 @@ const server = http.createServer(async (req, res) => {
     case '/feed':
       return json(res, 200, { feed: getFeed() });
     case '/budget':
-      return json(res, 200, getOddsBudget());
+      return json(res, 200, { ...getOddsBudget(), claude: await getClaudeUsage() });
     default:
       return json(res, 404, { error: 'not found' });
   }

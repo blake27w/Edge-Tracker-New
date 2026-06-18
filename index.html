@@ -6019,8 +6019,9 @@ function renderCostWidget(b){
   }
   var tier=(b.tier||'free').toLowerCase();
   var oddsCost=TIER_COST[tier]!=null?TIER_COST[tier]:0;
-  var claudeEst=3; // ~$3/mo, Haiku-first across 5 agents
-  var totalMo=oddsCost+claudeEst;
+  var cl=b.claude||null;
+  var claudeProjected=cl?(cl.projectedMonthly||cl.cost||0):3; // measured month-end projection; 3 = fallback estimate
+  var totalMo=Math.round((oddsCost+claudeProjected)*100)/100;
   var perDay=Math.round(totalMo/30*100)/100;
   var pct=Math.max(0,Math.min(100,b.pctUsed||0));
   var over=b.projectedMonthly>b.budget;
@@ -6029,9 +6030,13 @@ function renderCostWidget(b){
   h+='<div class="card" style="padding:13px 14px;margin-bottom:6px">';
   // Headline cost
   h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
-  h+='<div><div style="font-family:var(--M);font-size:22px;font-weight:700;color:var(--txt)">≈ $'+totalMo+'<span style="font-size:11px;color:var(--muted);font-weight:400">/mo</span></div><div style="font-size:8px;color:var(--muted)">~$'+perDay+'/day · estimated</div></div>';
-  h+='<div style="text-align:right;font-size:9px;color:var(--leather);line-height:1.6">Odds API: <b style="color:var(--cream)">'+(oddsCost?'$'+oddsCost+'/mo':'$0 (free)')+'</b><br>Claude: <b style="color:var(--cream)">~$'+claudeEst+'/mo</b><br>ESPN·Weather·Stats: <b style="color:var(--cream)">free</b></div>';
+  var clLabel=cl?('$'+(cl.cost||0)+' MTD · ~$'+claudeProjected+'/mo'):('~$'+claudeProjected+'/mo est');
+  h+='<div><div style="font-family:var(--M);font-size:22px;font-weight:700;color:var(--txt)">≈ $'+totalMo+'<span style="font-size:11px;color:var(--muted);font-weight:400">/mo</span></div><div style="font-size:8px;color:var(--muted)">~$'+perDay+'/day · projected</div></div>';
+  h+='<div style="text-align:right;font-size:9px;color:var(--leather);line-height:1.6">Odds API: <b style="color:var(--cream)">'+(oddsCost?'$'+oddsCost+'/mo':'$0 (free)')+'</b><br>Claude: <b style="color:var(--cream)">'+clLabel+'</b><br>ESPN·Weather·Stats: <b style="color:var(--cream)">free</b></div>';
   h+='</div>';
+  if(cl){
+    h+='<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--muted);margin-top:7px"><span>CLAUDE · '+esc(cl.model||'')+'</span><span>'+cl.calls+' calls · '+(cl.tokens?Math.round((cl.tokens.input+cl.tokens.output)/1000):0)+'K tok'+(cl.webSearches?' · '+cl.webSearches+' searches':'')+'</span></div>';
+  }
 
   // Credits bar
   h+='<div style="margin-top:12px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim)"><span>ODDS API CREDITS · '+esc((b.tier||'free').toUpperCase())+'</span><span>'+(b.used||0)+' / '+b.budget+' ('+pct+'%)</span></div>';
