@@ -308,6 +308,9 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
   <div id="mod-nhl" class="hid"></div>
   <div id="mod-golf" class="hid"></div>
   <div id="mod-nfl" class="hid"></div>
+  <div id="mod-ncaaf" class="hid"></div>
+  <div id="mod-ncaab" class="hid"></div>
+  <div id="mod-wnba" class="hid"></div>
   <div id="mod-ufc" class="hid"></div>
   <div id="mod-soccer" class="hid"></div>
   <div id="mod-tennis" class="hid"></div>
@@ -337,6 +340,15 @@ var SPORTS = [
   ]},
   {id:'nfl',label:'NFL',icon:'🏈',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
+  ]},
+  {id:'ncaaf',label:'NCAAF',icon:'🏈',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'}
+  ]},
+  {id:'ncaab',label:'NCAAB',icon:'🏀',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'}
+  ]},
+  {id:'wnba',label:'WNBA',icon:'🏀',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'}
   ]},
   {id:'ufc',label:'UFC',icon:'🥊',active:true,tabs:[
     {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'},{id:'hist',icon:'📋',label:'History'},{id:'rec',icon:'🏆',label:'Record'},{id:'stats',icon:'📈',label:'Stats'}
@@ -3302,6 +3314,7 @@ function renderHomeLog(){
   h+='<div style="font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">Select a sport to open its log form.</div>';
   SPORTS.forEach(function(s){
     if(!s.active)return;
+    if(!s.tabs.some(function(t){return t.id==='log'}))return; // games-only sports have no log form
     var bets=s.id==='mlb'?state.mlbBets:s.id==='nba'?state.nbaBets:s.id==='nhl'?state.nhlBets:s.id==='nfl'?state.nflBets:s.id==='ufc'?state.ufcBets:s.id==='soccer'?state.soccerBets:s.id==='tennis'?state.tennisBets:s.id==='golf'?state.golfBets:[];
     var open=bets.filter(function(b){return!b.res}).length;
     var openLabel=open?' · '+open+' open':'';
@@ -5662,9 +5675,10 @@ var AGENTS_META=[
   {name:'tennis-surface',icon:'🎾',label:'Tennis Surface & Style',cadence:'every 60 min'},
   {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
   {name:'ev-scanner',icon:'💸',label:'+EV / Boost Scanner',cadence:'every 5 min'},
-  {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'}
+  {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'},
+  {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':1200000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5749,7 +5763,7 @@ function loadAgentsData(){
     // Plays
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
-    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];}
+    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5830,6 +5844,9 @@ function renderAgentsContent(){
     h+='</div>';
   });
   h+='</div>';
+
+  // ── Track Record / Backtest ──
+  h+=renderBacktest(state.agentsBacktest);
 
   // ── Qualifying Plays Queue ──
   var plays=(state.agentsPlays||[]).concat(state.agentsProps||[]);
@@ -5988,6 +6005,40 @@ function agentLogPlay(i){
 function gbChip(txt){return '<span style="font-size:9px;background:var(--panel2);color:var(--dim);padding:2px 7px;border-radius:10px;white-space:nowrap">'+esc(txt)+'</span>';}
 function gbOdds(p){if(p==null)return '';return p>0?'+'+p:''+p;}
 
+function btColor(v){return v>=0?'#34d399':'var(--wine)'}
+function renderBtRows(title,arr){
+  if(!arr||!arr.length)return '';
+  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">'+title+'</div>';
+  arr.forEach(function(x){
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
+    h+='<div style="font-size:11px;color:var(--cream);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.key)+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:62px;text-align:right">'+x.w+'-'+x.l+(x.p?'-'+x.p:'')+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+x.winPct+'%</div>';
+    h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+btColor(x.roi)+'">'+(x.roi>=0?'+':'')+x.roi+'%</div>';
+    h+='</div>';
+  });
+  return h;
+}
+function renderBacktest(bt){
+  var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">📊 TRACK RECORD</div>';
+  if(!bt||!bt.overall||!bt.overall.n){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No graded plays yet. As qualifying plays settle, this shows which signals actually win — record, win %, and ROI by signal, sport, tier, and confidence.</div>';
+    return h;
+  }
+  var o=bt.overall;
+  h+='<div class="card" style="padding:13px 14px;margin-bottom:6px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+  h+='<div><div style="font-family:var(--M);font-size:20px;font-weight:700;color:var(--txt)">'+o.w+'-'+o.l+(o.p?'-'+o.p:'')+'</div><div style="font-size:8px;color:var(--muted)">'+o.n+' graded · '+o.winPct+'% win</div></div>';
+  h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:20px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:8px;color:var(--muted)">ROI · '+(o.pnl>=0?'+$':'-$')+Math.abs(o.pnl)+'</div></div>';
+  h+='</div>';
+  h+=renderBtRows('BY SIGNAL — what actually wins',bt.bySignal);
+  h+=renderBtRows('BY SPORT',bt.bySport);
+  h+=renderBtRows('BY TIER',bt.byTier);
+  h+=renderBtRows('BY CONFIDENCE',bt.byConfidence);
+  h+='</div>';
+  h+='<div style="font-size:8px;color:var(--muted);text-align:right;margin:0 2px 16px">updated '+(bt.updated?new Date(bt.updated).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'')+'</div>';
+  return h;
+}
 function renderGamesBoard(el){
   var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
   if(!api){el.innerHTML='<div class="card" style="text-align:center;color:var(--dim)">Set the backend URL first — open the <b>🤖 Agents</b> tab and tap <span onclick="agentSetApiUrl()" style="color:var(--brass);cursor:pointer;text-decoration:underline">backend</span> — to load the live games board.</div>';return;}
