@@ -34,7 +34,7 @@ const ODDS_MONTHLY_BUDGET = ODDS_TIER_BUDGETS[ODDS_API_TIER] ?? ODDS_TIER_BUDGET
 // Budget allocation across sports (relative caps; out-of-season sports are
 // skipped automatically, so in-season ones effectively get more). Sums to 1.0.
 const BUDGET_ALLOCATION = {
-  MLB: 0.26,
+  MLB: 0.23,
   NBA: 0.14,
   NCAAB: 0.12,
   NHL: 0.10,
@@ -44,6 +44,7 @@ const BUDGET_ALLOCATION = {
   WNBA: 0.05,
   TENNIS: 0.05,
   UFC: 0.04,
+  BOXING: 0.03,
   GOLF: 0.03,
 };
 
@@ -57,6 +58,7 @@ const SPORTS = {
   NCAAB: { key: 'basketball_ncaab', emoji: '🏀', hasTotals: true },
   WNBA: { key: 'basketball_wnba', emoji: '🏀', hasTotals: true },
   UFC: { key: 'mma_mixed_martial_arts', emoji: '🥊', hasTotals: false },
+  BOXING: { key: 'boxing_boxing', emoji: '🥊', hasTotals: false },
   SOCCER: {
     key: 'soccer', emoji: '⚽', hasTotals: true,
     leagues: [
