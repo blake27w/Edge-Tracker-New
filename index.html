@@ -3334,7 +3334,7 @@ function renderHomeScreen(){
 
 function renderHomeDash(){
   var h='<div class="home-wrap">';
-  h+='<div class="home-hdr"><div class="home-title">EDGE TRACKER</div><div class="home-sub">select a sport</div></div>';
+  h+='<div class="home-hdr"><div class="home-sub" style="font-style:normal;letter-spacing:3px;text-transform:uppercase;font-family:var(--H);font-size:10px">Select a sport</div></div>';
 
   // ── SPORT GRID ──
   h+='<div class="home-grid">';
@@ -3615,7 +3615,7 @@ function renderHomeStats(){
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px">';
   [['overview','Overview'],['bets','My Bets'],['sports','By Sport'],['signals','🧠 Signals']].forEach(function(v){
     var on=state.statsView===v[0];
-    h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.statsView=\''+v[0]+'\';render()" style="flex:1;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';
+    h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.statsView=\''+v[0]+'\';render()" style="flex:1;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';
   });
   h+='</div>';
 
@@ -5878,7 +5878,7 @@ function renderResultsContent(){
   if(!state.recView)state.recView='overview';
   var views=[['overview','Overview'],['breakdown','What Works'],['opps','Opportunities'],['recent','Recent']];
   h+='<div style="display:flex;gap:4px;margin-bottom:12px">';
-  views.forEach(function(v){var on=state.recView===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.recView=\''+v[0]+'\';render()" style="flex:1;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
+  views.forEach(function(v){var on=state.recView===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.recView=\''+v[0]+'\';render()" style="flex:1;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
   var V=state.recView;
   if(V==='overview'){
@@ -5980,7 +5980,7 @@ function renderAgentsContent(){
   var pv=state.playView;
   var pviews=[['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['research','Research'],['model','Model']];
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
-  pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
+  pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
   if(pv==='bets'){
   // ── Qualifying Plays Queue ──
