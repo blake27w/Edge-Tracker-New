@@ -5820,11 +5820,26 @@ function renderResultsContent(){
   if(state.agentsError){h+='<div class="card" style="text-align:center;font-size:11px;color:var(--muted);font-style:italic">'+state.agentsError+'</div>';$('sport-selector').innerHTML=h;return;}
   var bt=state.agentsBacktest;
   if(!bt){h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">Loading… (set the backend URL on the Agents tab if this stays empty)</div>';$('sport-selector').innerHTML=h;return;}
-  h+=renderVerdict(bt);
-  if(bt.variance&&bt.variance.losses){var v=bt.variance;var bad=v.overtime+v.hook+v.close;if(bad)h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid var(--brass);font-size:10px;color:var(--cream)">🎲 '+bad+' of '+v.losses+' losses were variance — '+v.overtime+' OT, '+v.hook+' hook, '+v.close+' close. Bad beats, not bad reads.</div>';}
-  h+=renderBacktest(bt);
-  h+=renderOppRubric(bt);
-  h+=renderRecentResults(bt);
+  // Sub-tabs keep this organized instead of one long scroll.
+  if(!state.recView)state.recView='overview';
+  var views=[['overview','Overview'],['breakdown','What Works'],['opps','Opportunities'],['recent','Recent']];
+  h+='<div style="display:flex;gap:4px;margin-bottom:12px">';
+  views.forEach(function(v){var on=state.recView===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.recView=\''+v[0]+'\';render()" style="flex:1;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
+  h+='</div>';
+  var V=state.recView;
+  if(V==='overview'){
+    h+=renderVerdict(bt);
+    if(bt.variance&&bt.variance.losses){var v=bt.variance;var bad=v.overtime+v.hook+v.close;if(bad)h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid var(--brass);font-size:10px;color:var(--cream)">🎲 '+bad+' of '+v.losses+' losses were variance — '+v.overtime+' OT, '+v.hook+' hook, '+v.close+' close. Bad beats, not bad reads.</div>';}
+    h+=renderBtOverall(bt);
+  } else if(V==='breakdown'){
+    h+=renderBtBreakdowns(bt);
+  } else if(V==='opps'){
+    var oh=renderOppRubric(bt);
+    h+=oh||'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded opportunities yet. +EV / stale / divergence / key flags get graded after games end.</div>';
+  } else if(V==='recent'){
+    var rh=renderRecentResults(bt);
+    h+=rh||'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No recent graded plays yet.</div>';
+  }
   $('sport-selector').innerHTML=h;
 }
 
@@ -6258,6 +6273,28 @@ function renderRecentResults(bt){
     if(r.pnl!=null)h+='<div style="font-size:8px;color:'+(r.pnl>=0?'#34d399':'var(--wine)')+'">'+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl)+'</div>';
     h+='</div></div>';
   });
+  return h;
+}
+function renderBtOverall(bt){
+  var o=bt&&bt.overall;
+  if(!o||!o.n)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet. As plays settle, the record, win % and ROI fill in here.</div>';
+  var h='<div class="card" style="padding:15px 16px;margin-bottom:8px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+  h+='<div><div style="font-family:var(--M);font-size:24px;font-weight:700;color:var(--txt)">'+o.w+'-'+o.l+(o.p?'-'+o.p:'')+'</div><div style="font-size:8px;color:var(--muted)">'+o.n+' graded · '+o.winPct+'% win</div></div>';
+  h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:24px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:8px;color:var(--muted)">ROI · '+(o.pnl>=0?'+$':'-$')+Math.abs(o.pnl)+'</div></div>';
+  h+='</div></div>';
+  if(bt.research&&bt.research.n){var rr=bt.research;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">📝 RESEARCH PICKS</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+rr.w+'-'+rr.l+(rr.p?'-'+rr.p:'')+' · '+rr.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(rr.roi)+'">'+(rr.roi>=0?'+':'')+rr.roi+'%</div></div></div>';}
+  return h;
+}
+function renderBtBreakdowns(bt){
+  if(!bt||!bt.overall||!bt.overall.n)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet — breakdowns of what works appear once plays settle.</div>';
+  var h='<div class="card" style="padding:13px 14px;margin-bottom:8px">';
+  h+=renderBtRows('BY SIGNAL — what actually wins',bt.bySignal);
+  h+=renderBtRows('BY SPORT',bt.bySport);
+  h+=renderBtRows('BY MARKET',bt.byMarket);
+  h+=renderBtRows('BY TIER',bt.byTier);
+  h+=renderBtRows('BY CONFIDENCE',bt.byConfidence);
+  h+='</div>';
   return h;
 }
 function renderBacktest(bt){
