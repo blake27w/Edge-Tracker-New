@@ -32,11 +32,14 @@ export async function getFinals(path, dateStr) {
         if (!home || !away) continue;
         const hs = Number(home.score), as = Number(away.score);
         if (!Number.isFinite(hs) || !Number.isFinite(as)) continue;
+        // "Final/OT", "Final/2OT", "Final/SO", "Final/11" (extra innings) → overtime.
+        const detail = comp.status?.type?.detail || comp.status?.type?.shortDetail || '';
+        const overtime = /final/i.test(detail) && /\/(\d*ot|so|\d+)/i.test(detail);
         out.push({
           id: ev.id,
           homeNick: norm(home.team?.name || home.team?.shortDisplayName),
           awayNick: norm(away.team?.name || away.team?.shortDisplayName),
-          home_score: hs, away_score: as, total: hs + as,
+          home_score: hs, away_score: as, total: hs + as, overtime, detail,
         });
       }
     }

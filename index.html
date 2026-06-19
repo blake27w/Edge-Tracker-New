@@ -5820,6 +5820,7 @@ function renderResultsContent(){
   var bt=state.agentsBacktest;
   if(!bt){h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">Loading… (set the backend URL on the Agents tab if this stays empty)</div>';$('sport-selector').innerHTML=h;return;}
   h+=renderVerdict(bt);
+  if(bt.variance&&bt.variance.losses){var v=bt.variance;var bad=v.overtime+v.hook+v.close;if(bad)h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid var(--brass);font-size:10px;color:var(--cream)">🎲 '+bad+' of '+v.losses+' losses were variance — '+v.overtime+' OT, '+v.hook+' hook, '+v.close+' close. Bad beats, not bad reads.</div>';}
   h+=renderBacktest(bt);
   h+=renderOppRubric(bt);
   h+=renderRecentResults(bt);
@@ -6248,9 +6249,10 @@ function renderRecentResults(bt){
     var col=r.status==='win'?'#34d399':r.status==='loss'?'var(--wine)':'var(--muted)';
     var badge=r.status==='win'?'W':r.status==='loss'?'L':'P';
     var label=(r.player?esc(r.player)+' ':'')+esc(r.side||'')+(r.line!=null?' '+r.line:'');
+    var anom=r.anomaly?(' · <span style="color:var(--brass)">🎲 '+(r.anomaly==='overtime'?'OT':r.anomaly==='hook'?'hook':'close')+'</span>'):'';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
     h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.matchup||'')+'</div>';
-    h+='<div style="font-size:9px;color:var(--leather);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.sport||'')+' · '+esc(r.market||'')+' · '+label+(r.result_score?' · '+esc(r.result_score):'')+'</div></div>';
+    h+='<div style="font-size:9px;color:var(--leather);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.sport||'')+' · '+esc(r.market||'')+' · '+label+(r.result_score?' · '+esc(r.result_score):'')+anom+'</div></div>';
     h+='<div style="text-align:right;margin-left:8px"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+badge+'</span>';
     if(r.pnl!=null)h+='<div style="font-size:8px;color:'+(r.pnl>=0?'#34d399':'var(--wine)')+'">'+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl)+'</div>';
     h+='</div></div>';

@@ -93,7 +93,7 @@ async function run() {
 
   let rows = [];
   try {
-    rows = await db.select('monitor_scores', 'sport,market,tier,score,t1_count,signals,status,unit_dollars,pnl,matchup,side,line,player,result_score,graded_at', {
+    rows = await db.select('monitor_scores', 'sport,market,tier,score,t1_count,signals,status,unit_dollars,pnl,matchup,side,line,player,result_score,anomaly,graded_at', {
       in: { status: ['win', 'loss', 'push'] },
       order: { column: 'graded_at', ascending: false },
       limit: 5000,
@@ -142,8 +142,16 @@ async function run() {
   } catch (_) { report.opps = []; }
   report.recent = rows.slice(0, 50).map((r) => ({
     sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
-    status: r.status, pnl: r.pnl, result_score: r.result_score, graded_at: r.graded_at,
+    status: r.status, pnl: r.pnl, result_score: r.result_score, anomaly: r.anomaly, graded_at: r.graded_at,
   }));
+  // Variance losses — how many losses were bad beats (OT / hook / close) vs bad reads.
+  const losses = rows.filter((r) => r.status === 'loss');
+  report.variance = {
+    losses: losses.length,
+    overtime: losses.filter((r) => r.anomaly === 'overtime').length,
+    hook: losses.filter((r) => r.anomaly === 'hook').length,
+    close: losses.filter((r) => r.anomaly === 'close').length,
+  };
   setBacktest(report);
 
   const o = report.overall;
