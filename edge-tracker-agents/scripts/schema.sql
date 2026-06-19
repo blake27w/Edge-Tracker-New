@@ -399,6 +399,19 @@ create table if not exists research_notes (
 create index if not exists research_notes_idx on research_notes (created_at desc);
 create index if not exists research_notes_game_idx on research_notes (game_id);
 
+-- EXPERIMENTAL fair-line model log (observational — never feeds decisions/alerts).
+create table if not exists fair_line_log (
+  game_id       text primary key,
+  sport         text,
+  matchup       text,
+  model_spread  numeric,
+  market_spread numeric,
+  edge_pts      numeric,
+  side          text,
+  commence_time timestamptz,
+  fetched_at    timestamptz not null default now()
+);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

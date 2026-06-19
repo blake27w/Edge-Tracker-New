@@ -33,6 +33,7 @@ import sharpDivergence from '../agents/sharp-divergence/index.js';
 import watchdog from '../agents/watchdog/index.js';
 import digest from '../agents/digest/index.js';
 import keyNumber from '../agents/key-number/index.js';
+import fairLine from '../agents/fair-line/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
@@ -40,7 +41,7 @@ const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
-  evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber,
+  evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
   watchdog, digest,
 ];
 
