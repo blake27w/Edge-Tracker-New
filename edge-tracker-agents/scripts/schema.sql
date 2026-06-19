@@ -375,6 +375,30 @@ create table if not exists line_signals (
 );
 create index if not exists line_signals_idx on line_signals (fetched_at desc);
 
+-- Research notes & picks (pasted from chat or pushed via MCP). Picks get graded
+-- like signal plays so research earns its own track record.
+create table if not exists research_notes (
+  id          uuid primary key default gen_random_uuid(),
+  type        text not null default 'note',   -- note | pick
+  source      text default 'manual',          -- manual | chat
+  sport       text,
+  game_id     text,
+  matchup     text,
+  body        text,
+  market      text,
+  side        text,
+  line        numeric,
+  odds        integer,
+  confidence  numeric,
+  status      text default 'active',           -- active | pending | win | loss | push
+  result_score text,
+  pnl         numeric,
+  created_at  timestamptz not null default now(),
+  graded_at   timestamptz
+);
+create index if not exists research_notes_idx on research_notes (created_at desc);
+create index if not exists research_notes_game_idx on research_notes (game_id);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

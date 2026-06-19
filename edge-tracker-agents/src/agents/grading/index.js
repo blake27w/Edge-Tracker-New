@@ -109,13 +109,21 @@ async function run() {
     });
   } catch (e) { return { summary: `select failed: ${e.message}` }; }
   pending = pending.filter((p) => ESPN_PATH[p.sport]);
-  if (!pending.length) return { summary: 'no completed plays to grade' };
+
+  // Research picks awaiting grading (same finals, separate track record).
+  let rpending = [];
+  try {
+    rpending = await db.select('research_notes', '*', { match: { type: 'pick', status: 'pending' }, lte: { created_at: cutoff }, limit: 80 });
+  } catch (_) { /* table optional */ }
+  rpending = rpending.filter((p) => ESPN_PATH[p.sport]);
+
+  if (!pending.length && !rpending.length) return { summary: 'no completed plays to grade' };
 
   // Collect the (sport, date) pairs we need — game day plus the day before,
   // since a late-evening US game lands on the prior UTC date.
   const pairs = new Map();
-  for (const p of pending) {
-    const d = new Date(p.scored_at);
+  for (const p of [...pending, ...rpending]) {
+    const d = new Date(p.scored_at || p.created_at);
     for (const off of [0, -1]) {
       const dd = new Date(d.getTime() + off * 86400_000);
       pairs.set(`${p.sport}|${ymd(dd)}`, { sport: p.sport, date: ymd(dd) });
@@ -154,9 +162,27 @@ async function run() {
     if (result === 'win') wins++; else if (result === 'loss') losses++; else pushes++;
   }
 
+  // Grade research picks against the same finals.
+  let rGraded = 0;
+  for (const p of rpending) {
+    const parts = String(p.matchup || '').split(' @ ');
+    const awayName = norm(parts[0]), homeName = norm(parts[1]);
+    const f = (finalsBySport[p.sport] || []).find((x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick));
+    if (!f) continue;
+    const result = gradePlay(p, f);
+    if (!result) continue;
+    const stake = config.rules.unitDollars;
+    const pnl = result === 'win' ? Math.round(stake * profitPerUnit(p.odds || -110) * 100) / 100
+      : result === 'loss' ? -stake : 0;
+    try {
+      await db.update('research_notes', { status: result, result_score: `${f.away_score}-${f.home_score}`, pnl, graded_at: now }, { id: p.id });
+      rGraded++;
+    } catch (e) { logger.warn('grading', `research: ${e.message}`); }
+  }
+
   return {
-    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P) · free ESPN`,
-    data: { graded, wins, losses, pushes },
+    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${rGraded ? ` + ${rGraded} research` : ''} · free ESPN`,
+    data: { graded, wins, losses, pushes, research: rGraded },
   };
 }
 

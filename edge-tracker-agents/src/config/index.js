@@ -193,6 +193,9 @@ const config = {
     corsOrigins: list(env.CORS_ORIGINS, ['https://blake27w.github.io']),
   },
 
+  // Token guarding research writes (dashboard form + MCP push). Blank = writes disabled.
+  research: { token: clean(env.RESEARCH_TOKEN) },
+
   // ── Business rules ──
   rules: {
     confidenceFloor: num(env.CONFIDENCE_FLOOR, 70),

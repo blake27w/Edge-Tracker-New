@@ -422,6 +422,8 @@ var state = {
   homeSportFilter: 'all',
   // ── Agents tab ──
   agentApiUrl: ls('et_agent_api',''),   // optional backend base URL for /feed live data
+  agentsResearch: [], researchToken: ls('et_research_token',''),
+  rBody:'', rSport:'', rMatchup:'', rIsPick:false, rMarket:'total', rSide:'', rLine:'', rOdds:'', rConf:'',
   agentsDismissed: ls('et_agents_dismissed',[]),
   agentsHealth: [], agentsPlays: [], agentsProps: [], agentsFeed: [], agentsSystem: null,
   agentsLoading: false, agentsError: null, agentsLastLoad: null
@@ -5730,6 +5732,7 @@ function loadAgentsData(){
     tasks.push(fetch(api+'/plays').then(function(r){return r.json()}).then(function(j){return {bePlays:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/research').then(function(r){return r.json()}).then(function(j){return {beResearch:j}}).catch(function(){return {}}));
   }
   if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())renderAgentsContent();return}
 
@@ -5770,6 +5773,7 @@ function loadAgentsData(){
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
     if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];state.agentsWatchdog=bag.bePlays.watchdog||null;}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
+    if(bag.beResearch&&bag.beResearch.research)state.agentsResearch=bag.beResearch.research;
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5977,6 +5981,9 @@ function renderAgentsContent(){
     h+='<div style="height:8px"></div>';
   }
 
+  // ── Research ──
+  h+=renderResearch();
+
   // ── Live Feed ──
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 8px">LIVE FEED</div>';
   h+='<div class="card" style="padding:10px 12px;max-height:280px;overflow-y:auto;font-family:var(--M);font-size:9px">';
@@ -6131,9 +6138,70 @@ function renderBacktest(bt){
   h+=renderBtRows('BY SPORT',bt.bySport);
   h+=renderBtRows('BY TIER',bt.byTier);
   h+=renderBtRows('BY CONFIDENCE',bt.byConfidence);
+  if(bt.research&&bt.research.n){var rr=bt.research;h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">📝 RESEARCH PICKS</div><div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0"><div style="font-size:11px;color:var(--cream)">'+rr.w+'-'+rr.l+(rr.p?'-'+rr.p:'')+' · '+rr.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(rr.roi)+'">'+(rr.roi>=0?'+':'')+rr.roi+'%</div></div>';}
   h+='</div>';
   h+='<div style="font-size:8px;color:var(--muted);text-align:right;margin:0 2px 16px">updated '+(bt.updated?new Date(bt.updated).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'')+'</div>';
   return h;
+}
+var RIN='background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--cream);font-size:11px;padding:6px 8px';
+function renderResearch(){
+  var list=state.agentsResearch||[];
+  var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">📝 RESEARCH <span style="color:var(--brass)">('+list.length+')</span></div>';
+  h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+  h+='<textarea id="r-body" oninput="state.rBody=this.value" placeholder="Paste research from the Claude chat…" style="width:100%;box-sizing:border-box;min-height:52px;'+RIN+';resize:vertical">'+esc(state.rBody||'')+'</textarea>';
+  h+='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
+  h+='<input oninput="state.rSport=this.value" value="'+esc(state.rSport||'')+'" placeholder="Sport" style="flex:1;min-width:60px;box-sizing:border-box;'+RIN+'">';
+  h+='<input oninput="state.rMatchup=this.value" value="'+esc(state.rMatchup||'')+'" placeholder="Away @ Home" style="flex:2;min-width:120px;box-sizing:border-box;'+RIN+'">';
+  h+='</div>';
+  h+='<label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);margin-top:7px;cursor:pointer"><input type="checkbox" '+(state.rIsPick?'checked':'')+' onchange="state.rIsPick=this.checked;render()"> Log as a pick (gets graded)</label>';
+  if(state.rIsPick){
+    h+='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
+    h+='<select onchange="state.rMarket=this.value" style="'+RIN+'">'+['total','ml','spread'].map(function(m){return '<option '+(state.rMarket===m?'selected':'')+'>'+m+'</option>'}).join('')+'</select>';
+    h+='<input oninput="state.rSide=this.value" value="'+esc(state.rSide||'')+'" placeholder="Side (Over/team)" style="flex:1;min-width:80px;box-sizing:border-box;'+RIN+'">';
+    h+='<input oninput="state.rLine=this.value" value="'+esc(state.rLine||'')+'" placeholder="Line" style="width:60px;box-sizing:border-box;'+RIN+'">';
+    h+='<input oninput="state.rOdds=this.value" value="'+esc(state.rOdds||'')+'" placeholder="Odds" style="width:64px;box-sizing:border-box;'+RIN+'">';
+    h+='<input oninput="state.rConf=this.value" value="'+esc(state.rConf||'')+'" placeholder="Conf" style="width:56px;box-sizing:border-box;'+RIN+'">';
+    h+='</div>';
+  }
+  h+='<div style="display:flex;align-items:center;gap:10px;margin-top:9px">';
+  h+='<button onclick="researchSubmit()" style="background:var(--brass);color:#1a1a1a;border:none;border-radius:6px;padding:7px 14px;font-family:var(--H);font-size:11px;font-weight:600;cursor:pointer">Save to dashboard</button>';
+  h+='<span onclick="researchSetToken()" style="cursor:pointer;text-decoration:underline;font-size:9px;color:var(--dim)">'+(state.researchToken?'✓ token set':'set token')+'</span></div>';
+  h+='</div>';
+  if(!list.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No research yet. Notes tagged to a matchup show up on that game; picks get graded into a track record. You can also push from the Claude chat via the MCP connector.</div>';
+  } else {
+    list.slice(0,20).forEach(function(r){
+      var isPick=r.type==='pick';var stCol=r.status==='win'?'#34d399':r.status==='loss'?'var(--wine)':r.status==='push'?'var(--muted)':'var(--brass)';
+      h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;border-left:3px solid '+(isPick?stCol:'var(--leather)')+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">';
+      h+='<div style="flex:1;min-width:0">';
+      if(r.matchup||r.sport)h+='<div style="font-size:10px;color:var(--leather)">'+esc(r.sport||'')+(r.matchup?' · '+esc(r.matchup):'')+(r.source==='chat'?' · 💬 chat':'')+'</div>';
+      if(isPick)h+='<div style="font-family:var(--M);font-size:11px;color:var(--cream);margin-top:2px"><b>'+esc(r.side||'')+'</b> '+esc(r.market||'')+(r.line!=null?' '+r.line:'')+(r.odds!=null?' ('+(r.odds>0?'+'+r.odds:r.odds)+')':'')+' · <span style="color:'+stCol+'">'+(r.status||'pending')+'</span></div>';
+      if(r.body)h+='<div style="font-size:11px;color:var(--txt);margin-top:3px;white-space:pre-wrap">'+esc(r.body)+'</div>';
+      h+='</div>';
+      h+='<span onclick="researchDelete(\''+r.id+'\')" style="cursor:pointer;color:var(--dim);font-size:13px">✕</span>';
+      h+='</div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+  return h;
+}
+function researchSetToken(){var t=prompt('Research write token (must match RESEARCH_TOKEN on the backend):',state.researchToken||'');if(t!=null){state.researchToken=t.trim();save('et_research_token',state.researchToken);render();}}
+function researchSubmit(){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+  if(!api){toast('Set the backend URL first (Agents tab → backend)');return;}
+  if(!state.researchToken){researchSetToken();if(!state.researchToken)return;}
+  if(!state.rBody||!state.rBody.trim()){toast('Add some research text');return;}
+  var b={type:state.rIsPick?'pick':'note',source:'manual',body:state.rBody,sport:state.rSport,matchup:state.rMatchup};
+  if(state.rIsPick){b.market=state.rMarket;b.side=state.rSide;b.line=state.rLine;b.odds=state.rOdds;b.confidence=state.rConf;}
+  fetch(api+'/research',{method:'POST',headers:{'Content-Type':'application/json','x-research-token':state.researchToken},body:JSON.stringify(b)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})})
+    .then(function(o){if(!o.ok){toast('✗ '+(o.j.error||'failed'));return;}toast('✓ Saved');state.rBody='';state.rMatchup='';state.rSide='';state.rLine='';state.rOdds='';state.rConf='';loadAgentsData();render();})
+    .catch(function(e){toast('✗ '+e.message)});
+}
+function researchDelete(id){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');if(!api)return;
+  fetch(api+'/research/'+encodeURIComponent(id),{method:'DELETE',headers:{'x-research-token':state.researchToken}}).then(function(){loadAgentsData()}).catch(function(){});
 }
 function renderGamesBoard(el){
   var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
@@ -6207,6 +6275,9 @@ function renderGamesHTML(d){
     if(w){if(w.dome)chips+=gbChip('🏟 dome');else if(w.wind_mph!=null)chips+=gbChip('💨 '+Math.round(w.wind_mph)+'mph'+(w.total_impact==='under'?' ↓Und':''));}
     (g.injuries||[]).slice(0,4).forEach(function(i){chips+=gbChip('🚑 '+i.player+' '+i.status);});
     if(chips)h+='<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px">'+chips+'</div>';
+    (g.research||[]).slice(0,4).forEach(function(r){
+      h+='<div style="margin-top:6px;font-size:10px;color:var(--cream);border-left:2px solid var(--brass);padding-left:7px">📝 '+(r.type==='pick'?'<b>'+esc(r.side||'')+' '+esc(r.market||'')+(r.line!=null?' '+r.line:'')+'</b> — ':'')+esc(r.body||'')+'</div>';
+    });
     h+='</div>';
   });
   return h;

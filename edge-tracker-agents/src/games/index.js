@@ -88,6 +88,14 @@ export async function buildGames(sport) {
     };
   });
 
+  // Attach any research notes/picks tagged to these games.
+  try {
+    const rows = await db.select('research_notes', '*', { in: { game_id: games.map((g) => g.game_id) }, order: { column: 'created_at', ascending: false }, limit: 300 });
+    const byGame = {};
+    for (const r of rows) (byGame[r.game_id] ||= []).push(r);
+    for (const g of out) g.research = byGame[g.game_id] || [];
+  } catch (_) { /* table optional */ }
+
   out.sort((a, b) => new Date(a.commence_time || 0) - new Date(b.commence_time || 0));
   return { sport: want, count: out.length, games: out };
 }
