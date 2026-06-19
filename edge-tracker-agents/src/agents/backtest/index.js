@@ -5,6 +5,7 @@
 // market, tier, and confidence bucket. $0 — pure aggregation of data
 // the grading agent already produced.
 // ══════════════════════════════════════════════════════════════
+import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setBacktest } from '../../store/index.js';
@@ -89,6 +90,15 @@ async function run() {
     byConfidence: group(rows, confBucket),
     byT1: group(rows, t1Bucket),
   };
+  // Research picks get their own scorecard (separate from the signal track record).
+  try {
+    const rr = await db.select('research_notes', 'status,pnl', { match: { type: 'pick' }, in: { status: ['win', 'loss', 'push'] }, limit: 2000 });
+    if (rr.length) {
+      const a = blank();
+      for (const r of rr) { a.staked += config.rules.unitDollars; tally(a, { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
+      report.research = finalize(a);
+    } else report.research = finalize(blank());
+  } catch (_) { report.research = finalize(blank()); }
   setBacktest(report);
 
   const o = report.overall;
