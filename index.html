@@ -3203,7 +3203,7 @@ function gStats(){
 // ══════════════════════════════════════
 function render(){
   // Stop the Agents-tab poll whenever we render anything other than that view.
-  if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='stats')))stopAgentsPoll();
+  if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays')))stopAgentsPoll();
   if(state.homeScreen){
     renderHomeScreen();
     return;
@@ -3553,8 +3553,6 @@ function renderHomeRecord(){
 
 // ── HOME STATS: cross-sport + per-sport breakdown ──
 function renderHomeStats(){
-  // System track record (auto-graded suggestions) lives here too — keep its data fresh.
-  if(state.agentApiUrl){startAgentsPoll();if(!state.agentsLastLoad&&!state.agentsLoading){state.agentsLoading=true;Promise.resolve(loadAgentsData()).then(function(){state.agentsLoading=false})}}
   var allBets=getAllBets();
   var sportIcons={MLB:'⚾',NBA:'🏀',NHL:'🏒',NFL:'🏈',UFC:'🥊',Soccer:'⚽',Tennis:'🎾',Golf:'⛳'};
   var h='';
@@ -3572,16 +3570,6 @@ function renderHomeStats(){
   if(state.statsView==='sports'){h+=renderSportBreakdown(allBets,sportIcons);$('sport-selector').innerHTML=h;return}
 
   // ══════ OVERVIEW TAB ══════
-  // System (auto-graded suggestions) — the "are we winning?" read + track record.
-  if(state.agentApiUrl){
-    h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:2px;margin-bottom:10px">🤖 SYSTEM (AUTO-GRADED)</div>';
-    var vsec=renderVerdict(state.agentsBacktest);
-    var bsec=renderBacktest(state.agentsBacktest);
-    if(vsec||bsec){h+=vsec+bsec+renderRecentResults(state.agentsBacktest);}
-    else{h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Loading system track record… (needs the backend connected)</div>';}
-    h+='<div style="height:6px"></div>';
-  }
-
   var st=tStats(allBets);
   var totalPl=st.pl;
   h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:2px;margin-bottom:10px">📒 MY LOGGED BETS</div>';
@@ -5729,8 +5717,8 @@ function agentStatus(run,name){
 
 // ── Load data from Supabase (+ optional backend) ──
 function loadAgentsData(){
-  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='stats')};
-  var rerender=function(){if(state.homeTab==='stats')renderHomeStats();else renderAgentsContent();};
+  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays')};
+  var rerender=function(){renderAgentsContent();};
   var tasks=[];
   // Supabase reads
   if(SB.url&&SB.key){
@@ -5893,7 +5881,12 @@ function renderAgentsContent(){
 
   // ── Cost & Credits ──
   h+=renderCostWidget(state.agentsBudget);
-  } // end !onPlays (watchdog + cost)
+
+  // ── System performance (auto-graded suggestions) ──
+  h+=renderVerdict(state.agentsBacktest);
+  h+=renderBacktest(state.agentsBacktest);
+  h+=renderRecentResults(state.agentsBacktest);
+  } // end !onPlays (watchdog + cost + system performance)
 
   if(onPlays){
   // ── Qualifying Plays Queue ──
