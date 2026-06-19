@@ -93,7 +93,7 @@ async function run() {
 
   let rows = [];
   try {
-    rows = await db.select('monitor_scores', 'sport,market,tier,score,t1_count,signals,status,unit_dollars,pnl,matchup,side,line,player,result_score,anomaly,graded_at', {
+    rows = await db.select('monitor_scores', '*', {
       in: { status: ['win', 'loss', 'push'] },
       order: { column: 'graded_at', ascending: false },
       limit: 5000,
