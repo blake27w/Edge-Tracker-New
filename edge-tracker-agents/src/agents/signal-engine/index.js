@@ -26,6 +26,9 @@ import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getPower, signalsForGame, setPlays } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 
+// Fight sports are excluded from the team engine until they get a dedicated model.
+const FIGHT_SPORTS = new Set(['UFC', 'BOXING']);
+
 const { rules } = config;
 const TIER_POINTS = { 1: 20, 2: 10, 3: 3 };
 
@@ -131,6 +134,9 @@ async function run() {
   const newAlerts = [];
 
   for (const g of games) {
+    // Fight sports (UFC, Boxing) have no play model yet — they're handled
+    // separately and must never run through the team engine / Under bias.
+    if (FIGHT_SPORTS.has(g.sport)) continue;
     const intel = signalsForGame(g.game_id);
     const meta = config.SPORTS[g.sport] || {};
     const power = getPower(g.sport);
