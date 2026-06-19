@@ -64,6 +64,24 @@ async function run() {
     } catch (_) { /* ignore */ }
   }
 
+  // Schema check: probe the recently-added columns/tables so a missing-migration
+  // (schema.sql not re-run) surfaces immediately instead of as a blank tab.
+  if (db.isConnected()) {
+    const probes = [
+      ['monitor_scores', 'anomaly'], ['monitor_scores', 'player'],
+      ['opp_results', 'id'], ['line_signals', 'id'], ['ev_opportunities', 'id'],
+      ['arb_opportunities', 'id'], ['research_notes', 'id'], ['fair_line_log', 'game_id'],
+    ];
+    const missing = [];
+    for (const [t, c] of probes) {
+      try { await db.select(t, c, { limit: 1 }); }
+      catch (e) { if (/does not exist|could not find|schema cache|relation/i.test(e.message || '')) missing.push(`${t}.${c}`); }
+    }
+    if (missing.length) {
+      issues.push({ key: 'schema', type: 'schema', agent: 'db', label: 'Database schema', detail: `out of date — run scripts/schema.sql in Supabase (missing: ${missing.join(', ')})` });
+    }
+  }
+
   setWatchdog({ updated: new Date().toISOString(), issues });
 
   // Alert only NEW issues (deduped per day).
