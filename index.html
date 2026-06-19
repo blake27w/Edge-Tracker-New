@@ -38,11 +38,12 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 #main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 16px 28px}
 
 #tabs{background:var(--saddle);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom)}
-.tab{flex:1;padding:10px 0 8px;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;font-family:var(--H);position:relative;transition:.15s}
-.tab .ti{font-size:17px;opacity:.5;transition:.15s}.tab .tl{font-size:9px;color:var(--cream);font-weight:400;letter-spacing:1px;opacity:.4;transition:.15s}
-.tab.on .tl{opacity:1;font-weight:600}
+.tab{flex:1;padding:9px 0 7px;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-family:var(--H);position:relative;transition:.15s}
+.tab .ti{font-size:18px;opacity:.65;transition:.15s}.tab .tl{font-size:10px;color:var(--cream);font-weight:600;letter-spacing:.2px;opacity:.72;white-space:nowrap;transition:.15s}
+.tab.on{background:rgba(0,0,0,.16)}
+.tab.on .tl{opacity:1;font-weight:700;color:var(--brass)}
 .tab.on .ti{opacity:1}
-.tab .tln{position:absolute;top:0;left:20%;right:20%;height:2px;background:var(--brass);border-radius:0 0 2px 2px;display:none}
+.tab .tln{position:absolute;top:0;left:18%;right:18%;height:3px;background:var(--brass);border-radius:0 0 3px 3px;display:none}
 .tab.on .tln{display:block}
 
 .sp-row{display:flex;gap:6px;margin-bottom:16px}
