@@ -42,6 +42,7 @@ async function fetchFinals(sport, dateStr) {
     const hs = Number(home.score), as = Number(away.score);
     if (!Number.isFinite(hs) || !Number.isFinite(as)) continue;
     out.push({
+      id: ev.id,
       homeNick: norm(home.team?.name || home.team?.shortDisplayName),
       awayNick: norm(away.team?.name || away.team?.shortDisplayName),
       home_score: hs, away_score: as, total: hs + as,
@@ -72,6 +73,80 @@ function gradePlay(p, f) {
     return ats > 0 ? 'win' : 'loss';
   }
   return null; // props (and spreads without a stored number) left pending
+}
+
+// ── Player-prop grading from ESPN box scores ─────────────────────
+// stat_type → { labels: ESPN stat abbreviations, category?: stat group, altGA? }
+const STAT = {
+  player_points: { labels: ['PTS'], altGA: true },          // NBA PTS; NHL falls back to G+A
+  player_rebounds: { labels: ['REB'] },
+  player_assists: { labels: ['AST'] },
+  player_shots_on_goal: { labels: ['SOG', 'S', 'SH'] },
+  player_pass_yds: { labels: ['YDS'], category: 'passing' },
+  player_rush_yds: { labels: ['YDS'], category: 'rushing' },
+  player_reception_yds: { labels: ['YDS'], category: 'receiving' },
+  batter_hits: { labels: ['H'], category: 'batting' },
+  pitcher_strikeouts: { labels: ['K', 'SO'], category: 'pitching' },
+};
+
+function statNum(v) {
+  if (v == null) return null;
+  const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+function nameMatch(ath, name) {
+  const a = norm(ath?.displayName || ath?.shortName || ''), n = norm(name);
+  if (!a || !n) return false;
+  if (a === n || a.includes(n) || n.includes(a)) return true;
+  const an = a.split(' '), nn = n.split(' ');
+  return an.length && nn.length && an[an.length - 1] === nn[nn.length - 1] && an[0][0] === nn[0][0]; // last name + first initial
+}
+// Find a player's stat in an ESPN boxscore.
+function statValue(box, player, spec) {
+  for (const team of box?.players || []) {
+    for (const grp of team.statistics || []) {
+      if (spec.category) {
+        const gn = String(grp.name || grp.text || grp.type || '').toLowerCase();
+        if (!gn.includes(spec.category)) continue;
+      }
+      const labels = (grp.labels || grp.keys || []).map((s) => String(s).toUpperCase());
+      const ath = (grp.athletes || []).find((a) => nameMatch(a.athlete, player));
+      if (!ath) continue;
+      for (const w of spec.labels) {
+        const i = labels.indexOf(w);
+        if (i >= 0) { const v = statNum(ath.stats?.[i]); if (v != null) return v; }
+      }
+      if (spec.altGA) { // NHL points = goals + assists
+        const gi = labels.indexOf('G'), ai = labels.indexOf('A');
+        if (gi >= 0 && ai >= 0) { const g = statNum(ath.stats[gi]), a = statNum(ath.stats[ai]); if (g != null && a != null) return g + a; }
+      }
+    }
+  }
+  return null;
+}
+
+const boxCache = new Map();
+async function getBox(path, eventId) {
+  if (boxCache.has(eventId)) return boxCache.get(eventId);
+  let box = null;
+  try {
+    const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/summary?event=${eventId}`);
+    if (res.ok) box = (await res.json())?.boxscore || null;
+  } catch (_) { /* leave pending */ }
+  if (box) boxCache.set(eventId, box); // never cache a miss — retry next run
+  return box;
+}
+
+async function gradeProp(p, f, path) {
+  const spec = STAT[p.stat_type];
+  if (!spec || !f?.id || p.line == null) return null;
+  const box = await getBox(path, f.id);
+  if (!box) return null;
+  const val = statValue(box, p.player, spec);
+  if (val == null) return null; // couldn't find the stat → leave pending, never mis-grade
+  if (val === Number(p.line)) return 'push';
+  const over = String(p.side).toUpperCase().includes('OVER');
+  return (over ? val > p.line : val < p.line) ? 'win' : 'loss';
 }
 
 // Collapse duplicate qualifying plays (same game/market/side) left over from
@@ -156,7 +231,7 @@ async function run() {
       (x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick),
     );
     if (!f) continue;
-    const result = gradePlay(p, f);
+    const result = p.market === 'prop' ? await gradeProp(p, f, ESPN_PATH[p.sport]) : gradePlay(p, f);
     if (!result) continue;
     const stake = p.unit_dollars ?? config.rules.unitDollars;
     const pnl = result === 'win' ? Math.round(stake * profitPerUnit(-110) * 100) / 100

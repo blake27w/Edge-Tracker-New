@@ -28,6 +28,7 @@ const MAX_PER_RUN = num(process.env.PROP_MAX_GAMES_PER_RUN, 6);
 const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 40);
 
 const seenOut = new Set();          // game_id|player already alerted on
+const persisted = new Set();        // game_id|player|stat|side already in monitor_scores
 let day = today(), scansToday = 0;
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -122,6 +123,7 @@ async function run() {
       plays.push({
         sport: g.sport, game_id: gameId, matchup: `${g.away} @ ${g.home}`, commence_time: g.commence_time, market: 'prop',
         side: `${e.player} ${e.side} ${e.line} ${e.market.replace(/_/g, ' ')}`, line: e.line,
+        _player: e.player, _stat: e.market, _side: e.side.toUpperCase(),
         score: 75, confidence: 75, tier: '1u', unit_mult: 1, unit_dollars: config.rules.unitDollars, t1_count: 1,
         signals: [{ tier: 1, id: trigger, label: `${trigger} edge — best ${e.book} ${e.line} vs ${e.consensus} consensus` }],
         qualified: true, market_trigger: trigger, scored_at: now,
@@ -131,6 +133,24 @@ async function run() {
 
   if (snapshots.length) { try { await db.insert('prop_snapshots', snapshots); } catch (e) { logger.warn('prop-engine', e.message); } }
   setPropPlays(plays);
+
+  // Persist gradeable prop picks to monitor_scores (structured) so the grader
+  // can settle them from ESPN box scores and they count toward the record.
+  const gradeable = [];
+  for (const p of plays) {
+    if (!p._player || !p._side) continue;
+    const key = `${p.game_id}|${p._player}|${p._stat}|${p._side}`;
+    if (persisted.has(key)) continue;
+    persisted.add(key);
+    gradeable.push({
+      sport: p.sport, game_id: p.game_id, matchup: p.matchup, market: 'prop',
+      side: p._side, line: p.line, player: p._player, stat_type: p._stat,
+      raw_score: p.score, score: p.score, confidence: p.confidence, tier: p.tier,
+      unit_mult: p.unit_mult, unit_dollars: p.unit_dollars, t1_count: p.t1_count,
+      signals: p.signals, qualified: true, status: 'pending', scored_at: now,
+    });
+  }
+  if (gradeable.length) { try { await db.insert('monitor_scores', gradeable); } catch (e) { logger.warn('prop-engine', `persist: ${e.message}`); } }
 
   return {
     summary: `${scanned} games scanned, ${snapshots.length} prop edges flagged · Odds API (no Claude)`,
