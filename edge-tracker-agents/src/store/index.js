@@ -24,6 +24,8 @@ const store = {
   backtest: null,     // track-record / backtest report (which signals win)
   staleLines: [],     // slow-book / stale-line opportunities (line vs field)
   divergence: [],     // book price-divergence + sharp-side alignment
+  health: [],         // orchestrator health snapshot (published each run)
+  watchdog: null,     // latest watchdog report (issues found)
 };
 
 export function setEvPlays(p) { store.evPlays = p || []; }
@@ -40,6 +42,12 @@ export function getStaleLines() { return store.staleLines; }
 
 export function setDivergence(p) { store.divergence = p || []; }
 export function getDivergence() { return store.divergence; }
+
+export function setHealth(h) { store.health = h || []; }
+export function getHealth() { return store.health; }
+
+export function setWatchdog(w) { store.watchdog = w; }
+export function getWatchdog() { return store.watchdog; }
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }

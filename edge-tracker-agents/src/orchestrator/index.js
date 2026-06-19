@@ -6,6 +6,7 @@
 import config from '../config/index.js';
 import db from '../db/index.js';
 import { logger, notifyAll } from '../utils/index.js';
+import { setHealth } from '../store/index.js';
 
 // Agent modules (each default-exports { name, run }).
 import odds from '../agents/odds/index.js';
@@ -29,6 +30,8 @@ import arbScanner from '../agents/arb-scanner/index.js';
 import backtest from '../agents/backtest/index.js';
 import staleLine from '../agents/stale-line/index.js';
 import sharpDivergence from '../agents/sharp-divergence/index.js';
+import watchdog from '../agents/watchdog/index.js';
+import digest from '../agents/digest/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
@@ -37,6 +40,7 @@ const AGENTS = [
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence,
+  watchdog, digest,
 ];
 
 // name -> live status (the /health payload reads from here).
@@ -206,6 +210,9 @@ async function runAgent(agent) {
       } catch (e) { /* best effort */ }
     }
   }
+
+  // Publish the live health snapshot for the watchdog/digest to read.
+  try { setHealth(getHealth()); } catch (_) { /* ignore */ }
 
   // Self-reschedule: clock-scheduled agents go to their next clock time;
   // interval agents use their (possibly backed-off) interval.

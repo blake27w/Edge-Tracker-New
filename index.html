@@ -5678,9 +5678,11 @@ var AGENTS_META=[
   {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'},
   {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'},
   {name:'stale-line',icon:'🐢',label:'Slow-Book / Stale-Line',cadence:'every 5 min'},
-  {name:'sharp-divergence',icon:'🧭',label:'Book Divergence / Sharp Side',cadence:'every 5 min'}
+  {name:'sharp-divergence',icon:'🧭',label:'Book Divergence / Sharp Side',cadence:'every 5 min'},
+  {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
+  {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5766,7 +5768,7 @@ function loadAgentsData(){
     // Plays
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
-    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];}
+    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];state.agentsWatchdog=bag.bePlays.watchdog||null;}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -5848,6 +5850,20 @@ function renderAgentsContent(){
     h+='</div>';
   });
   h+='</div>';
+
+  // ── Watchdog status banner ──
+  var wd=state.agentsWatchdog;
+  if(wd){
+    var iss=wd.issues||[];
+    if(!iss.length){
+      h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid #34d399;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:#34d399;font-weight:600">🛡️ All systems healthy</span><span style="font-size:8px;color:var(--muted)">'+(wd.updated?agentAgo(wd.updated):'')+'</span></div>';
+    } else {
+      h+='<div class="card" style="padding:10px 13px;margin-bottom:8px;border-left:3px solid var(--wine)">';
+      h+='<div style="font-size:11px;color:var(--wine);font-weight:600;margin-bottom:4px">🛡️ '+iss.length+' issue'+(iss.length>1?'s':'')+' detected</div>';
+      iss.slice(0,8).forEach(function(i){h+='<div style="font-size:10px;color:var(--cream);margin-top:2px">• <b>'+esc(i.label||i.agent)+'</b>: '+esc(i.detail||i.type)+'</div>';});
+      h+='</div>';
+    }
+  }
 
   // ── Cost & Credits ──
   h+=renderCostWidget(state.agentsBudget);
