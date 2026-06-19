@@ -117,6 +117,7 @@ const AGENT_DEFS = {
   'stale-line': { label: 'Slow-Book / Stale-Line', emoji: '🐢', min: 5 },
   'sharp-divergence': { label: 'Book Divergence / Sharp Side', emoji: '🧭', min: 5 },
   'key-number': { label: 'Key-Number Analysis', emoji: '🔑', min: 5 },
+  'fair-line': { label: 'Fair-Line Model (experimental)', emoji: '🧪', min: 30 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };

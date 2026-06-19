@@ -5682,10 +5682,11 @@ var AGENTS_META=[
   {name:'stale-line',icon:'🐢',label:'Slow-Book / Stale-Line',cadence:'every 5 min'},
   {name:'sharp-divergence',icon:'🧭',label:'Book Divergence / Sharp Side',cadence:'every 5 min'},
   {name:'key-number',icon:'🔑',label:'Key-Number Analysis',cadence:'every 5 min'},
+  {name:'fair-line',icon:'🧪',label:'Fair-Line Model (experimental)',cadence:'every 30 min'},
   {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5776,6 +5777,7 @@ function loadAgentsData(){
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
     if(bag.beResearch&&bag.beResearch.research)state.agentsResearch=bag.beResearch.research;
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
+    if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5994,6 +5996,25 @@ function renderAgentsContent(){
 
   // ── Research ──
   h+=renderResearch();
+
+  // ── Fair-Line Model (experimental, walled off from decisions) ──
+  var fl=state.agentsFairLine||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:6px">🧪 FAIR-LINE MODEL <span style="color:var(--muted)">('+fl.length+')</span></div>';
+  h+='<div style="font-size:9px;color:var(--muted);font-style:italic;margin-bottom:7px">Experimental power-rating model. Observational only — not used for any pick, signal, or alert. Collecting data to validate.</div>';
+  if(!fl.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px;opacity:.75">No model edges right now (football & basketball only).</div>';
+  } else {
+    fl.slice(0,16).forEach(function(f){
+      var ms=f.model_spread>0?'+'+f.model_spread:''+f.model_spread;var mk=f.market_spread>0?'+'+f.market_spread:''+f.market_spread;
+      h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;border-left:3px solid var(--muted);opacity:.85">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--cream)">'+esc(f.matchup||'')+'</div>';
+      h+='<div style="font-size:9px;color:var(--leather);margin-top:2px">'+esc(f.sport||'')+' · model leans <b>'+esc(f.side||'')+'</b></div></div>';
+      h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--cream)">'+f.edge_pts+'pt</div><div style="font-size:7px;color:var(--muted)">model '+ms+' vs mkt '+mk+'</div></div>';
+      h+='</div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
 
   // ── Live Feed ──
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 8px">LIVE FEED</div>';
