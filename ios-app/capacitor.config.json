@@ -1,0 +1,13 @@
+{
+  "appId": "com.blake27w.edgetracker",
+  "appName": "Edge Tracker",
+  "webDir": "www",
+  "server": {
+    "url": "https://blake27w.github.io",
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#0b1422"
+  }
+}
