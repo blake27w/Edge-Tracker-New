@@ -323,4 +323,7 @@ async function run() {
   };
 }
 
+// Reused by the opportunity grader.
+export { ESPN_PATH, profitPerUnit, ymd, norm, fetchFinals, gradePlay };
+
 export default { name: 'grading', run };

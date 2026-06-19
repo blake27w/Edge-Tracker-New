@@ -3203,7 +3203,7 @@ function gStats(){
 // ══════════════════════════════════════
 function render(){
   // Stop the Agents-tab poll whenever we render anything other than that view.
-  if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='results')))stopAgentsPoll();
+  if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')))stopAgentsPoll();
   if(state.homeScreen){
     renderHomeScreen();
     return;
@@ -3256,12 +3256,10 @@ function renderHomeScreen(){
   var HOME_TABS=[
     {id:'dash',icon:'📊',label:'Dashboard'},
     {id:'log',icon:'➕',label:'Log'},
-    {id:'hist',icon:'📋',label:'History'},
-    {id:'rec',icon:'🏆',label:'Record'},
     {id:'plays',icon:'🎯',label:'Plays'},
-    {id:'results',icon:'✅',label:'Results'},
+    {id:'rec',icon:'🏆',label:'Record'},
     {id:'agents',icon:'🤖',label:'Agents'},
-    {id:'stats',icon:'📈',label:'Stats'}
+    {id:'stats',icon:'📈',label:'My Stats'}
   ];
   var th='';
   HOME_TABS.forEach(function(t){
@@ -3273,11 +3271,10 @@ function renderHomeScreen(){
 
   if(state.homeTab==='dash')renderHomeDash();
   else if(state.homeTab==='log')renderHomeLog();
-  else if(state.homeTab==='hist')renderHomeHistory();
-  else if(state.homeTab==='rec')renderHomeRecord();
+  else if(state.homeTab==='rec')renderResultsView();
   else if(state.homeTab==='agents'||state.homeTab==='plays')renderAgentsView();
-  else if(state.homeTab==='results')renderResultsView();
   else if(state.homeTab==='stats')renderHomeStats();
+  else renderHomeDash();
 }
 
 function renderHomeDash(){
@@ -3305,7 +3302,7 @@ function renderHomeDash(){
 
   // ── FOOTER ACTIONS ──
   h+='<div class="home-footer">';
-  h+='<button class="home-run" onclick="state.homeTab=\'agents\';render()">🤖 VIEW TODAY\'S PLAYS</button>';
+  h+='<button class="home-run" onclick="state.homeTab=\'plays\';render()">🎯 VIEW TODAY\'S PLAYS</button>';
   h+='</div>';
   h+='</div>';
   $('sport-selector').innerHTML=h;
@@ -5719,8 +5716,8 @@ function agentStatus(run,name){
 
 // ── Load data from Supabase (+ optional backend) ──
 function loadAgentsData(){
-  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='results')};
-  var rerender=function(){if(state.homeTab==='results')renderResultsContent();else renderAgentsContent();};
+  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')};
+  var rerender=function(){if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
   var tasks=[];
   // Supabase reads
   if(SB.url&&SB.key){
@@ -5818,12 +5815,13 @@ function renderResultsContent(){
   h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">✅ TRACK RECORD</div>';
   h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
-  h+='<div style="font-size:9px;color:var(--muted);font-style:italic;margin-bottom:12px">Auto-graded performance of the system’s projected plays. Your own logged bets are under Record / History / Stats.</div>';
+  h+='<div style="font-size:9px;color:var(--muted);font-style:italic;margin-bottom:12px">Every system play after grading — overall record, what works by signal/sport/tier, opportunity-scanner hit rates, and recent results. Your own logged bets are under My Stats.</div>';
   if(state.agentsError){h+='<div class="card" style="text-align:center;font-size:11px;color:var(--muted);font-style:italic">'+state.agentsError+'</div>';$('sport-selector').innerHTML=h;return;}
   var bt=state.agentsBacktest;
   if(!bt){h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">Loading… (set the backend URL on the Agents tab if this stays empty)</div>';$('sport-selector').innerHTML=h;return;}
   h+=renderVerdict(bt);
   h+=renderBacktest(bt);
+  h+=renderOppRubric(bt);
   h+=renderRecentResults(bt);
   $('sport-selector').innerHTML=h;
 }
@@ -6222,6 +6220,22 @@ function renderBtRows(title,arr){
     h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+btColor(x.roi)+'">'+(x.roi>=0?'+':'')+x.roi+'%</div>';
     h+='</div>';
   });
+  return h;
+}
+function renderOppRubric(bt){
+  if(!bt||!bt.opps||!bt.opps.length)return '';
+  var labels={ev:'+EV / Boosts',stale:'Stale lines',divergence:'Book divergence',key:'Key numbers',middle:'Middles'};
+  var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:14px 0 6px">🧮 OPPORTUNITY SCANNERS — WHAT WORKS</div>';
+  h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+  bt.opps.forEach(function(o){
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
+    h+='<div style="font-size:11px;color:var(--cream);flex:1">'+esc(labels[o.key]||o.key)+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:60px;text-align:right">'+o.w+'-'+o.l+(o.p?'-'+o.p:'')+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+o.winPct+'%</div>';
+    h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div>';
+    h+='</div>';
+  });
+  h+='</div>';
   return h;
 }
 function renderRecentResults(bt){

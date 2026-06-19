@@ -380,6 +380,22 @@ create table if not exists line_signals (
 );
 create index if not exists line_signals_idx on line_signals (fetched_at desc);
 
+-- Graded opportunity flags (did +EV / stale / divergence / key picks actually win?).
+create table if not exists opp_results (
+  id          uuid primary key default gen_random_uuid(),
+  type        text,            -- ev | stale | divergence | key
+  sport       text,
+  game_id     text,
+  matchup     text,
+  market      text,
+  side        text,
+  line        numeric,
+  status      text,            -- win | loss | push
+  pnl         numeric,
+  graded_at   timestamptz not null default now()
+);
+create index if not exists opp_results_idx on opp_results (graded_at desc);
+
 -- Research notes & picks (pasted from chat or pushed via MCP). Picks get graded
 -- like signal plays so research earns its own track record.
 create table if not exists research_notes (
