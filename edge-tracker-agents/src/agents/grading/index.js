@@ -8,6 +8,7 @@
 import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
+import { getFinals, getBox } from '../shared/espn.js';
 
 // monitor_scores sport → ESPN scoreboard path.
 const ESPN_PATH = {
@@ -21,34 +22,9 @@ function profitPerUnit(odds = -110) {
 function ymd(d) { return d.toISOString().slice(0, 10).replace(/-/g, ''); }
 function norm(s) { return String(s || '').toLowerCase(); }
 
-// Fetch completed finals for a sport+date from ESPN. Returns array of
-// { homeNick, awayNick, home_score, away_score, total }.
+// Completed finals for a sport+date — via the shared TTL-cached ESPN fetcher.
 async function fetchFinals(sport, dateStr) {
-  const path = ESPN_PATH[sport];
-  if (!path) return [];
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${dateStr}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`ESPN ${res.status} ${sport}`);
-  const data = await res.json();
-  const out = [];
-  for (const ev of data.events || []) {
-    const comp = (ev.competitions || [])[0];
-    if (!comp) continue;
-    const completed = comp.status?.type?.completed || ev.status?.type?.completed;
-    if (!completed) continue;
-    const home = (comp.competitors || []).find((c) => c.homeAway === 'home');
-    const away = (comp.competitors || []).find((c) => c.homeAway === 'away');
-    if (!home || !away) continue;
-    const hs = Number(home.score), as = Number(away.score);
-    if (!Number.isFinite(hs) || !Number.isFinite(as)) continue;
-    out.push({
-      id: ev.id,
-      homeNick: norm(home.team?.name || home.team?.shortDisplayName),
-      awayNick: norm(away.team?.name || away.team?.shortDisplayName),
-      home_score: hs, away_score: as, total: hs + as,
-    });
-  }
-  return out;
+  return getFinals(ESPN_PATH[sport], dateStr);
 }
 
 function gradePlay(p, f) {
@@ -125,17 +101,6 @@ function statValue(box, player, spec) {
   return null;
 }
 
-const boxCache = new Map();
-async function getBox(path, eventId) {
-  if (boxCache.has(eventId)) return boxCache.get(eventId);
-  let box = null;
-  try {
-    const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/summary?event=${eventId}`);
-    if (res.ok) box = (await res.json())?.boxscore || null;
-  } catch (_) { /* leave pending */ }
-  if (box) boxCache.set(eventId, box); // never cache a miss — retry next run
-  return box;
-}
 
 // Loose name match for tennis (full name vs ESPN displayName; fall back to surname).
 function tName(a, b) {
