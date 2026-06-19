@@ -46,6 +46,34 @@ function group(rows, keyFn, { min = 1, top = 14 } = {}) {
     .slice(0, top);
 }
 
+const sign = (n) => (n >= 0 ? '+' + n : '' + n);
+
+async function clvSummary() {
+  let rows = [];
+  try { rows = await db.select('clv_records', 'clv,beat_close', { limit: 2000 }); } catch (_) { return null; }
+  if (!rows.length) return null;
+  const avg = rows.reduce((s, r) => s + (Number(r.clv) || 0), 0) / rows.length;
+  const beat = rows.filter((r) => r.beat_close).length;
+  return { n: rows.length, avg: Math.round(avg * 10) / 10, beatPct: Math.round((beat / rows.length) * 100) };
+}
+
+// One honest "are we winning?" read — weights CLV early, ROI once the sample is real.
+function verdict(o, clv) {
+  const n = o.n || 0, roi = o.roi || 0;
+  const beat = clv ? clv.beatPct : null, cAvg = clv ? clv.avg : null;
+  let state, headline;
+  if (n < 25) {
+    if (beat != null && beat >= 55) { state = 'early-good'; headline = `Too early on results (${n} graded) — but CLV is positive (${beat}% beat the close, ${sign(cAvg)} avg). That's the best early sign you're winning.`; }
+    else if (beat != null && beat < 45) { state = 'early-warn'; headline = `Only ${n} graded — too early to judge, and CLV is soft (${beat}% beat the close). Watch it.`; }
+    else { state = 'early'; headline = `Only ${n} graded plays — too early to call. Need ~100+ before ROI means much; CLV will tell us sooner.`; }
+  } else {
+    state = roi > 2 ? 'winning' : roi < -2 ? 'losing' : 'breakeven';
+    const lead = state === 'winning' ? 'Winning' : state === 'losing' ? 'Losing' : 'Break-even';
+    headline = `${lead}: ${sign(roi)}% ROI over ${n} graded (${o.w}-${o.l}-${o.p}, ${o.winPct}% win)` + (cAvg != null ? ` · ${sign(cAvg)} avg CLV, ${beat}% beat close.` : '.');
+  }
+  return { state, n, roi, winPct: o.winPct, clvAvg: cAvg, beatPct: beat, headline };
+}
+
 function confBucket(r) {
   const s = Number(r.score) || 0;
   if (s >= 90) return '90+'; if (s >= 80) return '80–89'; if (s >= 70) return '70–79'; return '<70';
@@ -73,7 +101,9 @@ async function run() {
   } catch (e) { logger.warn('backtest', e.message); setBacktest(null); return { summary: `select failed: ${e.message}` }; }
 
   if (!rows.length) {
-    setBacktest({ updated: new Date().toISOString(), overall: finalize(blank()), bySignal: [], bySport: [], byMarket: [], byTier: [], byConfidence: [], byT1: [] });
+    const clv0 = await clvSummary();
+    const o0 = finalize(blank());
+    setBacktest({ updated: new Date().toISOString(), overall: o0, bySignal: [], bySport: [], byMarket: [], byTier: [], byConfidence: [], byT1: [], clv: clv0, verdict: verdict(o0, clv0) });
     return { summary: 'no graded plays yet' };
   }
 
@@ -99,6 +129,9 @@ async function run() {
       report.research = finalize(a);
     } else report.research = finalize(blank());
   } catch (_) { report.research = finalize(blank()); }
+
+  report.clv = await clvSummary();
+  report.verdict = verdict(report.overall, report.clv);
   setBacktest(report);
 
   const o = report.overall;
