@@ -5681,10 +5681,11 @@ var AGENTS_META=[
   {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'},
   {name:'stale-line',icon:'🐢',label:'Slow-Book / Stale-Line',cadence:'every 5 min'},
   {name:'sharp-divergence',icon:'🧭',label:'Book Divergence / Sharp Side',cadence:'every 5 min'},
+  {name:'key-number',icon:'🔑',label:'Key-Number Analysis',cadence:'every 5 min'},
   {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5774,6 +5775,7 @@ function loadAgentsData(){
     if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];state.agentsWatchdog=bag.bePlays.watchdog||null;}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
     if(bag.beResearch&&bag.beResearch.research)state.agentsResearch=bag.beResearch.research;
+    if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5954,10 +5956,10 @@ function renderAgentsContent(){
     h+='<div style="height:8px"></div>';
   }
 
-  // ── Line Intelligence (divergence + stale lines) ──
-  var dv=state.agentsDivergence||[],st=state.agentsStale||[];
-  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🧭 LINE INTELLIGENCE <span style="color:var(--brass)">('+(dv.length+st.length)+')</span></div>';
-  if(!dv.length&&!st.length){
+  // ── Line Intelligence (divergence + stale lines + key numbers) ──
+  var dv=state.agentsDivergence||[],st=state.agentsStale||[],kn=state.agentsKey||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🧭 LINE INTELLIGENCE <span style="color:var(--brass)">('+(dv.length+st.length+kn.length)+')</span></div>';
+  if(!dv.length&&!st.length&&!kn.length){
     h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No line signals right now. Flags books whose price diverges from the field (★ = on the side steam money is moving) and books hanging a stale number.</div>';
   } else {
     dv.slice(0,16).forEach(function(d){
@@ -5977,6 +5979,15 @@ function renderAgentsContent(){
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(s.sport||'')+' · '+esc(s.market||'')+' · <b>'+esc(s.side||'')+'</b></div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:var(--cream)">'+s.pts+'pt</div><div style="font-size:7px;color:var(--muted)">off field</div></div></div>';
       h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+s.line+' @ <b>'+esc(s.book)+'</b> <span style="color:var(--dim)">vs field '+s.consensus+(pr?' · '+pr:'')+'</span></div></div>';
+    });
+    kn.slice(0,16).forEach(function(k){
+      var ln=k.line>0?'+'+k.line:''+k.line;var fld=k.consensus>0?'+'+k.consensus:''+k.consensus;var hi=k.importance==='high';
+      h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+(hi?'var(--brass)':'var(--leather)')+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">🔑 '+esc(k.matchup||'')+'</div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(k.sport||'')+' · spread · <b>'+esc(k.side||'')+'</b></div></div>';
+      h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:'+(hi?'var(--brass)':'var(--cream)')+'">key '+k.key+'</div><div style="font-size:7px;color:var(--muted)">'+esc(k.importance)+'</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+ln+' @ <b>'+esc(k.book)+'</b> <span style="color:var(--dim)">crosses '+k.key+' · field '+fld+'</span></div></div>';
     });
     h+='<div style="height:8px"></div>';
   }
