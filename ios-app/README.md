@@ -8,10 +8,13 @@ build/sign iOS apps without Xcode).
 
 ## 1. First-time setup (on your Mac, in this `ios-app/` folder)
 ```bash
-npm install
+npm install              # Capacitor pinned to exact 6.1.2 (no surprise upgrades)
+git add package-lock.json && git commit -m "lock ios-app deps"  # commit the lockfile
 npx cap add ios          # creates the ios/ Xcode project
 npx cap sync ios
 ```
+The direct Capacitor packages are pinned to exact `6.1.2`. After your first
+`npm install`, commit the generated `package-lock.json` to lock transitive deps too.
 
 ## 2. Set the live site URL
 `capacitor.config.json` → `server.url` must be your deployed frontend URL.
