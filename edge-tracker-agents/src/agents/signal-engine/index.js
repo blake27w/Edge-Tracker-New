@@ -24,6 +24,7 @@ import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getPower, signalsForGame, setPlays } from '../../store/index.js';
+import { computeMarkets } from '../../games/lines.js';
 
 const { rules } = config;
 const TIER_POINTS = { 1: 20, 2: 10, 3: 3 };
@@ -143,7 +144,12 @@ async function run() {
     }
     // Spread / ML: side from sharp/divergence, else power as a soft tiebreak.
     const sideSpread = pickTeamSide(intel, 'spread') || pickPowerSide(power, g);
-    if (sideSpread) candidates.push({ market: 'spread', side: sideSpread, line: null, sigs: collectSignals(g, 'spread', sideSpread, intel, power) });
+    if (sideSpread) {
+      // Capture the consensus spread number for the chosen side so it can be graded.
+      const consH = computeMarkets(g).spread.consensusHome;
+      const spreadLine = consH == null ? null : (sideSpread === g.home ? consH : -consH);
+      candidates.push({ market: 'spread', side: sideSpread, line: spreadLine, sigs: collectSignals(g, 'spread', sideSpread, intel, power) });
+    }
     const sideMl = pickTeamSide(intel, 'ml') || pickPowerSide(power, g);
     if (sideMl) candidates.push({ market: 'ml', side: sideMl, line: null, sigs: collectSignals(g, 'ml', sideMl, intel, power) });
 
