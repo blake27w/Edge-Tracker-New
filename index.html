@@ -5859,6 +5859,9 @@ function renderAgentsContent(){
   });
   h+='</div>';
 
+  // ── Are We Winning? verdict ──
+  h+=renderVerdict(state.agentsBacktest);
+
   // ── Watchdog status banner ──
   var wd=state.agentsWatchdog;
   if(wd){
@@ -6138,6 +6141,24 @@ function renderCostWidget(b){
   }
   h+='</div>';
   h+='<div style="font-size:8px;color:var(--muted);text-align:right;margin:0 2px 16px">resets monthly · '+esc(b.month||'')+'</div>';
+  return h;
+}
+function renderVerdict(bt){
+  if(!bt||!bt.verdict)return '';
+  var v=bt.verdict,o=bt.overall||{};
+  var col=(v.state==='winning'||v.state==='early-good')?'#34d399':v.state==='losing'?'var(--wine)':'var(--brass)';
+  var icon=v.state==='winning'?'📈':v.state==='losing'?'📉':v.state==='early-good'?'📈':'⏳';
+  var h='<div class="card" style="padding:13px 14px;margin-bottom:8px;border-left:4px solid '+col+'">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-family:var(--H);font-size:11px;letter-spacing:1.5px;color:var(--dim)">ARE WE WINNING?</span><span style="font-size:18px">'+icon+'</span></div>';
+  h+='<div style="font-size:12px;color:var(--cream);line-height:1.5">'+esc(v.headline||'')+'</div>';
+  h+='<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap">';
+  h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--txt)">'+(o.n||0)+'</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">GRADED</div></div>';
+  if(o.n){
+    h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--txt)">'+o.winPct+'%</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">WIN</div></div>';
+    h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">ROI</div></div>';
+  }
+  if(bt.clv){h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+btColor(bt.clv.avg)+'">'+(bt.clv.avg>=0?'+':'')+bt.clv.avg+'</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">CLV · '+bt.clv.beatPct+'%</div></div>';}
+  h+='</div></div>';
   return h;
 }
 function btColor(v){return v>=0?'#34d399':'var(--wine)'}

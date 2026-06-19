@@ -64,7 +64,8 @@ async function run() {
   if (res && res.n) L.push(`Results (24h): ${res.w}-${res.l}-${res.p} · ${sign(res.pnl)}$ · ${sign(res.roi)}% ROI`);
 
   const bt = getBacktest();
-  if (bt && bt.overall && bt.overall.n) L.push(`Track record: ${bt.overall.w}-${bt.overall.l} · ${bt.overall.winPct}% · ${sign(bt.overall.roi)}% ROI (${bt.overall.n})`);
+  if (bt && bt.verdict) L.push(`Status: ${bt.verdict.headline}`);
+  else if (bt && bt.overall && bt.overall.n) L.push(`Track record: ${bt.overall.w}-${bt.overall.l} · ${bt.overall.winPct}% · ${sign(bt.overall.roi)}% ROI (${bt.overall.n})`);
 
   const clv = await clvSummary();
   if (clv) L.push(`CLV (30d): ${sign(clv.avg)} avg · ${clv.beatPct}% beat close (${clv.n})`);
