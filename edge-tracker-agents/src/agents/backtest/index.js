@@ -132,6 +132,14 @@ async function run() {
 
   report.clv = await clvSummary();
   report.verdict = verdict(report.overall, report.clv);
+
+  // Opportunity scanners — did the flags actually win? (graded by opp-grading)
+  try {
+    const orows = await db.select('opp_results', 'type,status,pnl', { limit: 8000 });
+    const m = {};
+    for (const r of orows) { (m[r.type] ||= blank()); m[r.type].staked += config.rules.unitDollars; tally(m[r.type], { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
+    report.opps = Object.entries(m).map(([k, a]) => ({ key: k, ...finalize(a) })).sort((x, y) => y.n - x.n);
+  } catch (_) { report.opps = []; }
   report.recent = rows.slice(0, 50).map((r) => ({
     sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
     status: r.status, pnl: r.pnl, result_score: r.result_score, graded_at: r.graded_at,
