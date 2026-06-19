@@ -14,7 +14,7 @@ import { computeMarkets } from '../../games/lines.js';
 import { impliedProb, toAmerican, median, fmtOdds } from '../shared/odds-math.js';
 
 const MIN_BOOKS = 4;
-const DIVERGE = Number(process.env.DIVERGE_PCT) || 0.02; // 2% implied-prob gap vs field
+const DIVERGE = Number(process.env.DIVERGE_PCT) || 0.03; // 3% implied-prob gap vs field
 
 // Best price (lowest implied prob) and field median from {book,price} list.
 function analyze(outs) {

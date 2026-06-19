@@ -12,7 +12,7 @@ import { getGames, setStaleLines } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { fmtOdds } from '../shared/odds-math.js';
 
-const STALE_PTS = Number(process.env.STALE_LINE_PTS) || 1.0; // min points off consensus
+const STALE_PTS = Number(process.env.STALE_LINE_PTS) || 1.5; // min points off consensus
 
 function push(rows, g, market, side, o, consensus) {
   rows.push({
