@@ -137,6 +137,36 @@ async function getBox(path, eventId) {
   return box;
 }
 
+// Loose name match for tennis (full name vs ESPN displayName; fall back to surname).
+function tName(a, b) {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  if (x === y || x.includes(y) || y.includes(x)) return true;
+  const xn = x.split(' '), yn = y.split(' ');
+  return xn[xn.length - 1] === yn[yn.length - 1];
+}
+// Completed tennis matches for a date across ATP + WTA. Returns [{ names, winner }].
+async function fetchTennis(dateStr) {
+  const out = [];
+  for (const lg of ['atp', 'wta']) {
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/tennis/${lg}/scoreboard?dates=${dateStr}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const ev of data.events || []) {
+        const comp = (ev.competitions || [])[0];
+        if (!comp) continue;
+        if (!(comp.status?.type?.completed || ev.status?.type?.completed)) continue;
+        const cs = comp.competitors || [];
+        const names = cs.map((c) => c.athlete?.displayName || c.athlete?.shortName || '').filter(Boolean);
+        const winner = cs.find((c) => c.winner)?.athlete?.displayName;
+        if (names.length >= 2 && winner) out.push({ names, winner });
+      }
+    } catch (_) { /* leave pending */ }
+  }
+  return out;
+}
+
 async function gradeProp(p, f, path) {
   const spec = STAT[p.stat_type];
   if (!spec || !f?.id || p.line == null) return null;
@@ -200,7 +230,13 @@ async function run() {
   } catch (_) { /* table optional */ }
   rpending = rpending.filter((p) => ESPN_PATH[p.sport]);
 
-  if (!pending.length && !rpending.length) return { summary: 'no completed plays to grade' };
+  // Tennis picks grade via ESPN's tennis scoreboards (separate from team finals).
+  let tpending = [];
+  try {
+    tpending = await db.select('monitor_scores', '*', { match: { sport: 'TENNIS', status: 'pending', qualified: true }, lte: { scored_at: cutoff }, limit: 80 });
+  } catch (_) { /* table optional */ }
+
+  if (!pending.length && !rpending.length && !tpending.length) return { summary: 'no completed plays to grade' };
 
   // Collect the (sport, date) pairs we need — game day plus the day before,
   // since a late-evening US game lands on the prior UTC date.
@@ -263,9 +299,27 @@ async function run() {
     } catch (e) { logger.warn('grading', `research: ${e.message}`); }
   }
 
+  // Grade tennis picks by player name against ESPN tennis results.
+  let tGraded = 0;
+  if (tpending.length) {
+    const dates = new Set();
+    for (const p of tpending) { const d = new Date(p.scored_at); for (const off of [0, -1, 1]) dates.add(ymd(new Date(d.getTime() + off * 86400_000))); }
+    const results = [];
+    for (const d of dates) { try { results.push(...await fetchTennis(d)); } catch (e) { logger.warn('grading', `tennis: ${e.message}`); } }
+    for (const p of tpending) {
+      const m = results.find((r) => r.names.some((n) => tName(n, p.side)));
+      if (!m) continue;
+      const result = tName(m.winner, p.side) ? 'win' : 'loss';
+      const stake = p.unit_dollars ?? config.rules.unitDollars;
+      const pnl = result === 'win' ? Math.round(stake * profitPerUnit(-110) * 100) / 100 : -stake;
+      try { await db.update('monitor_scores', { status: result, pnl, graded_at: now }, { id: p.id }); tGraded++; }
+      catch (e) { logger.warn('grading', `tennis: ${e.message}`); }
+    }
+  }
+
   return {
-    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${rGraded ? ` + ${rGraded} research` : ''} · free ESPN`,
-    data: { graded, wins, losses, pushes, research: rGraded },
+    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${rGraded ? ` + ${rGraded} research` : ''}${tGraded ? ` + ${tGraded} tennis` : ''} · free ESPN`,
+    data: { graded, wins, losses, pushes, research: rGraded, tennis: tGraded },
   };
 }
 
