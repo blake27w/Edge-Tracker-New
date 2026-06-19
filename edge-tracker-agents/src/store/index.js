@@ -22,6 +22,8 @@ const store = {
   evPlays: [],        // +EV / boost opportunities (value vs no-vig fair price)
   arbPlays: [],       // arbitrage + middle opportunities across books
   backtest: null,     // track-record / backtest report (which signals win)
+  staleLines: [],     // slow-book / stale-line opportunities (line vs field)
+  divergence: [],     // book price-divergence + sharp-side alignment
 };
 
 export function setEvPlays(p) { store.evPlays = p || []; }
@@ -32,6 +34,12 @@ export function getArbPlays() { return store.arbPlays; }
 
 export function setBacktest(r) { store.backtest = r; }
 export function getBacktest() { return store.backtest; }
+
+export function setStaleLines(p) { store.staleLines = p || []; }
+export function getStaleLines() { return store.staleLines; }
+
+export function setDivergence(p) { store.divergence = p || []; }
+export function getDivergence() { return store.divergence; }
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }
