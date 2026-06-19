@@ -312,6 +312,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
   <div id="mod-ncaab" class="hid"></div>
   <div id="mod-wnba" class="hid"></div>
   <div id="mod-ufc" class="hid"></div>
+  <div id="mod-boxing" class="hid"></div>
   <div id="mod-soccer" class="hid"></div>
   <div id="mod-tennis" class="hid"></div>
 
@@ -329,20 +330,15 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 // ══════════════════════════════════════
 
 var SPORTS = [
-  {id:'mlb',label:'MLB',icon:'⚾',active:true,tabs:[
-    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
-  ]},
-  {id:'nba',label:'NBA',icon:'🏀',active:true,tabs:[
-    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
-  ]},
-  {id:'nhl',label:'NHL',icon:'🏒',active:true,tabs:[
-    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
-  ]},
+  // Grouped so like sports sit together: football · basketball · baseball/hockey · combat · soccer · tennis · golf
   {id:'nfl',label:'NFL',icon:'🏈',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
   ]},
   {id:'ncaaf',label:'NCAAF',icon:'🏈',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'}
+  ]},
+  {id:'nba',label:'NBA',icon:'🏀',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
   ]},
   {id:'ncaab',label:'NCAAB',icon:'🏀',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'}
@@ -350,17 +346,26 @@ var SPORTS = [
   {id:'wnba',label:'WNBA',icon:'🏀',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'}
   ]},
+  {id:'mlb',label:'MLB',icon:'⚾',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
+  ]},
+  {id:'nhl',label:'NHL',icon:'🏒',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
+  ]},
   {id:'ufc',label:'UFC',icon:'🥊',active:true,tabs:[
     {id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
   ]},
-  {id:'golf',label:'Golf',icon:'⛳',active:true,tabs:[
-    {id:'week',icon:'🏌️',label:'Week'},{id:'score',icon:'🧮',label:'Score'},{id:'slip',icon:'🎯',label:'Slip'},{id:'gstats',icon:'📈',label:'Stats'}
+  {id:'boxing',label:'Boxing',icon:'🥊',active:true,tabs:[
+    {id:'games',icon:'📅',label:'Fights'}
   ]},
   {id:'soccer',label:'Soccer',icon:'⚽',active:true,tabs:[
     {id:'games',icon:'📅',label:'Games'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
   ]},
   {id:'tennis',label:'Tennis',icon:'🎾',active:true,tabs:[
     {id:'games',icon:'📅',label:'Matches'},{id:'dash',icon:'📊',label:'Dashboard'},{id:'log',icon:'➕',label:'Log'}
+  ]},
+  {id:'golf',label:'Golf',icon:'⛳',active:true,tabs:[
+    {id:'week',icon:'🏌️',label:'Week'},{id:'score',icon:'🧮',label:'Score'},{id:'slip',icon:'🎯',label:'Slip'},{id:'gstats',icon:'📈',label:'Stats'}
   ]}
 ];
 
