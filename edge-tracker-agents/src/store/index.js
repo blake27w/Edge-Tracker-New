@@ -24,6 +24,7 @@ const store = {
   backtest: null,     // track-record / backtest report (which signals win)
   staleLines: [],     // slow-book / stale-line opportunities (line vs field)
   divergence: [],     // book price-divergence + sharp-side alignment
+  keyNumbers: [],     // football key-number shopping edges
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
 };
@@ -42,6 +43,9 @@ export function getStaleLines() { return store.staleLines; }
 
 export function setDivergence(p) { store.divergence = p || []; }
 export function getDivergence() { return store.divergence; }
+
+export function setKeyNumbers(p) { store.keyNumbers = p || []; }
+export function getKeyNumbers() { return store.keyNumbers; }
 
 export function setHealth(h) { store.health = h || []; }
 export function getHealth() { return store.health; }
