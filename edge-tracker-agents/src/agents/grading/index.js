@@ -51,6 +51,18 @@ function gradePlay(p, f) {
   return null; // props (and spreads without a stored number) left pending
 }
 
+// Why did a play lose? Flags variance (a bad beat, not a bad read).
+function lossAnomaly(p, f) {
+  if (f.overtime) return 'overtime';
+  if (p.market === 'spread' && p.line != null) {
+    const betHome = norm(p.side).includes(f.homeNick) && !norm(p.side).includes(f.awayNick);
+    const margin = betHome ? (f.home_score - f.away_score) : (f.away_score - f.home_score);
+    if (Math.abs(margin + Number(p.line)) <= 1) return 'hook'; // lost by ≤1 (the hook)
+  }
+  if (p.market === 'total' && p.line != null && Math.abs(f.total - Number(p.line)) <= 1) return 'close';
+  return null;
+}
+
 // ── Player-prop grading from ESPN box scores ─────────────────────
 // stat_type → { labels: ESPN stat abbreviations, category?: stat group, altGA? }
 const STAT = {
@@ -237,9 +249,10 @@ async function run() {
     const stake = p.unit_dollars ?? config.rules.unitDollars;
     const pnl = result === 'win' ? Math.round(stake * profitPerUnit(-110) * 100) / 100
       : result === 'loss' ? -stake : 0;
+    const anomaly = result === 'loss' ? (p.market === 'prop' ? (f.overtime ? 'overtime' : null) : lossAnomaly(p, f)) : null;
     try {
       await db.update('monitor_scores', {
-        status: result, result_score: `${f.away_score}-${f.home_score}`, pnl, graded_at: now,
+        status: result, result_score: `${f.away_score}-${f.home_score}`, pnl, anomaly, graded_at: now,
       }, { id: p.id });
     } catch (e) { logger.warn('grading', e.message); continue; }
     graded++;

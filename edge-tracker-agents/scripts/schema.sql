@@ -245,14 +245,16 @@ create table if not exists monitor_scores (
   status               text default 'pending',        -- pending | win | loss | push | dismissed
   result_score         text,
   pnl                  numeric,
+  anomaly              text,                           -- loss cause: overtime | hook | close
   scored_at            timestamptz not null default now(),
   graded_at            timestamptz
 );
 create index if not exists monitor_scores_game_idx on monitor_scores (game_id, scored_at desc);
 create index if not exists monitor_scores_qual_idx on monitor_scores (qualified, status, scored_at desc);
--- For existing databases, add the prop columns if missing.
+-- For existing databases, add the prop + anomaly columns if missing.
 alter table monitor_scores add column if not exists player text;
 alter table monitor_scores add column if not exists stat_type text;
+alter table monitor_scores add column if not exists anomaly text;
 
 -- ── CLV tracking ────────────────────────────────────────────────
 create table if not exists clv_records (
