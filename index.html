@@ -3577,7 +3577,7 @@ function renderHomeStats(){
     h+='<div style="font-family:var(--H);font-size:11px;color:var(--txt);letter-spacing:2px;margin-bottom:10px">🤖 SYSTEM (AUTO-GRADED)</div>';
     var vsec=renderVerdict(state.agentsBacktest);
     var bsec=renderBacktest(state.agentsBacktest);
-    if(vsec||bsec){h+=vsec+bsec;}
+    if(vsec||bsec){h+=vsec+bsec+renderRecentResults(state.agentsBacktest);}
     else{h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Loading system track record… (needs the backend connected)</div>';}
     h+='<div style="height:6px"></div>';
   }
@@ -6190,6 +6190,25 @@ function renderBtRows(title,arr){
     h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+x.winPct+'%</div>';
     h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+btColor(x.roi)+'">'+(x.roi>=0?'+':'')+x.roi+'%</div>';
     h+='</div>';
+  });
+  return h;
+}
+function renderRecentResults(bt){
+  if(!bt||!bt.recent||!bt.recent.length)return '';
+  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 4px">RECENT RESULTS</div>';
+  var lastDay='';
+  bt.recent.slice(0,40).forEach(function(r){
+    var day=r.graded_at?(function(){try{return new Date(r.graded_at).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})}catch(e){return ''}})():'';
+    if(day&&day!==lastDay){lastDay=day;h+='<div style="font-size:8px;color:var(--muted);margin:8px 0 3px;letter-spacing:.5px">'+esc(day)+'</div>';}
+    var col=r.status==='win'?'#34d399':r.status==='loss'?'var(--wine)':'var(--muted)';
+    var badge=r.status==='win'?'W':r.status==='loss'?'L':'P';
+    var label=(r.player?esc(r.player)+' ':'')+esc(r.side||'')+(r.line!=null?' '+r.line:'');
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.matchup||'')+'</div>';
+    h+='<div style="font-size:9px;color:var(--leather);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.sport||'')+' · '+esc(r.market||'')+' · '+label+(r.result_score?' · '+esc(r.result_score):'')+'</div></div>';
+    h+='<div style="text-align:right;margin-left:8px"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+badge+'</span>';
+    if(r.pnl!=null)h+='<div style="font-size:8px;color:'+(r.pnl>=0?'#34d399':'var(--wine)')+'">'+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl)+'</div>';
+    h+='</div></div>';
   });
   return h;
 }

@@ -93,7 +93,7 @@ async function run() {
 
   let rows = [];
   try {
-    rows = await db.select('monitor_scores', 'sport,market,tier,score,t1_count,signals,status,unit_dollars,pnl', {
+    rows = await db.select('monitor_scores', 'sport,market,tier,score,t1_count,signals,status,unit_dollars,pnl,matchup,side,line,player,result_score,graded_at', {
       in: { status: ['win', 'loss', 'push'] },
       order: { column: 'graded_at', ascending: false },
       limit: 5000,
@@ -132,6 +132,10 @@ async function run() {
 
   report.clv = await clvSummary();
   report.verdict = verdict(report.overall, report.clv);
+  report.recent = rows.slice(0, 50).map((r) => ({
+    sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
+    status: r.status, pnl: r.pnl, result_score: r.result_score, graded_at: r.graded_at,
+  }));
   setBacktest(report);
 
   const o = report.overall;
