@@ -237,6 +237,8 @@ create table if not exists monitor_scores (
   unit_mult            numeric,
   unit_dollars         numeric,
   t1_count             integer default 0,
+  player               text,                           -- props: player name
+  stat_type            text,                           -- props: e.g. player_points
   signals              jsonb,
   qualified            boolean default false,
   over_penalty_applied boolean default false,
@@ -248,6 +250,9 @@ create table if not exists monitor_scores (
 );
 create index if not exists monitor_scores_game_idx on monitor_scores (game_id, scored_at desc);
 create index if not exists monitor_scores_qual_idx on monitor_scores (qualified, status, scored_at desc);
+-- For existing databases, add the prop columns if missing.
+alter table monitor_scores add column if not exists player text;
+alter table monitor_scores add column if not exists stat_type text;
 
 -- ── CLV tracking ────────────────────────────────────────────────
 create table if not exists clv_records (
