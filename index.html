@@ -6432,7 +6432,7 @@ function renderGamesHTML(d){
   h+='<button class="flt" onclick="render()">↻ Refresh</button></div>';
   if(!games.length){h+='<div class="card" style="text-align:center;color:var(--dim);font-style:italic">'+esc((d&&d.note)||'No games right now.')+'</div>';return h;}
   games.forEach(function(g){
-    var t=g.total||{};var play=g.play;
+    var t=g.total||{};var play=g.play;var ml=g.ml||{};
     var moveStr='';
     if(t.open!=null&&t.current!=null&&t.move!=null&&t.move!==0){
       var dn=t.move<0;
