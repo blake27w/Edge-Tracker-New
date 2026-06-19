@@ -5907,8 +5907,10 @@ function renderAgentsContent(){
   } // end !onPlays (watchdog + cost)
 
   if(onPlays){
+  // ── RECOMMENDED group banner ──
+  h+='<div style="background:rgba(70,207,144,.12);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">✅ RECOMMENDED PLAYS</div><div style="font-size:8px;color:var(--muted);margin-top:1px">High-conviction bets from the Signal Engine (70+ score, Tier-1 signal).</div></div>';
   // ── Qualifying Plays Queue ──
-  var plays=(state.agentsPlays||[]).concat(state.agentsProps||[]);
+  var plays=(state.agentsPlays||[]);
   var dismissed=state.agentsDismissed||[];
   plays=plays.filter(function(p){return dismissed.indexOf(agentPlayKey(p))<0});
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">QUALIFYING PLAYS <span style="color:var(--pine)">('+plays.length+')</span></div>';
@@ -5942,6 +5944,24 @@ function renderAgentsContent(){
   }
   // stash the currently-rendered (filtered) play list so the buttons resolve by index
   state._agentsVisiblePlays=plays;
+
+  // ── OPPORTUNITIES group banner ──
+  h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin:4px 0 10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🛒 OPPORTUNITIES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Edges to shop — not recommended bets. Verify and price them yourself.</div></div>';
+
+  // ── Prop Shopping ──
+  var props=state.agentsProps||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🎯 PROP SHOPPING <span style="color:var(--brass)">('+props.length+')</span></div>';
+  if(!props.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No prop edges right now.</div>';
+  } else {
+    props.slice(0,20).forEach(function(p){
+      h+='<div class="card" style="padding:10px 12px;margin:0 0 7px;border-left:3px solid var(--brass)">';
+      h+='<div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(p.matchup||'')+'</div>';
+      h+='<div style="font-family:var(--M);font-size:11px;color:var(--cream);margin-top:3px">'+esc(p.side||'')+'</div>';
+      h+='<div style="font-size:9px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+(p.signals&&p.signals[0]?' · '+esc(p.signals[0].label||''):'')+'</div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
 
   // ── Value & Boosts (+EV) ──
   var ev=state.agentsEv||[];
