@@ -5676,9 +5676,11 @@ var AGENTS_META=[
   {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
   {name:'ev-scanner',icon:'💸',label:'+EV / Boost Scanner',cadence:'every 5 min'},
   {name:'arb-scanner',icon:'🔒',label:'Arbitrage & Middle Scanner',cadence:'every 5 min'},
-  {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'}
+  {name:'backtest',icon:'📊',label:'Backtest / Track Record',cadence:'every 30 min'},
+  {name:'stale-line',icon:'🐢',label:'Slow-Book / Stale-Line',cadence:'every 5 min'},
+  {name:'sharp-divergence',icon:'🧭',label:'Book Divergence / Sharp Side',cadence:'every 5 min'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5764,7 +5766,7 @@ function loadAgentsData(){
     // Plays
     if(bag.bePlays&&bag.bePlays.plays){state.agentsPlays=bag.bePlays.plays;state.agentsProps=bag.bePlays.props||[]}
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
-    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;}
+    if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -5928,6 +5930,33 @@ function renderAgentsContent(){
         h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+esc(l.side||'')+ln+' &nbsp;'+pr+' @ <b>'+esc(l.book)+'</b>'+(l.stake!=null?' <span style="color:var(--dim)">· stake '+l.stake+'%</span>':'')+'</div>';
       });
       h+='</div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+
+  // ── Line Intelligence (divergence + stale lines) ──
+  var dv=state.agentsDivergence||[],st=state.agentsStale||[];
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🧭 LINE INTELLIGENCE <span style="color:var(--brass)">('+(dv.length+st.length)+')</span></div>';
+  if(!dv.length&&!st.length){
+    h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No line signals right now. Flags books whose price diverges from the field (★ = on the side steam money is moving) and books hanging a stale number.</div>';
+  } else {
+    dv.slice(0,16).forEach(function(d){
+      var pr=d.price>0?'+'+d.price:''+d.price;var fp=d.fieldFair>0?'+'+d.fieldFair:''+d.fieldFair;
+      h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+(d.aligned?'#34d399':'var(--brass)')+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+(d.aligned?'★ ':'')+esc(d.matchup||'')+'</div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(d.sport||'')+' · '+esc(d.market||'')+' · <b>'+esc(d.side||'')+'</b>'+(d.aligned?' <span style="color:#34d399">sharp side</span>':'')+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:'+(d.aligned?'#34d399':'var(--brass)')+'">+'+d.edgePct+'%</div><div style="font-size:7px;color:var(--muted)">vs field</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+pr+' @ <b>'+esc(d.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span></div></div>';
+    });
+    st.slice(0,16).forEach(function(s){
+      var pr=s.price!=null?(s.price>0?'+'+s.price:''+s.price):'';
+      h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid var(--leather)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">🐢 '+esc(s.matchup||'')+'</div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(s.sport||'')+' · '+esc(s.market||'')+' · <b>'+esc(s.side||'')+'</b></div></div>';
+      h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:var(--cream)">'+s.pts+'pt</div><div style="font-size:7px;color:var(--muted)">off field</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+s.line+' @ <b>'+esc(s.book)+'</b> <span style="color:var(--dim)">vs field '+s.consensus+(pr?' · '+pr:'')+'</span></div></div>';
     });
     h+='<div style="height:8px"></div>';
   }

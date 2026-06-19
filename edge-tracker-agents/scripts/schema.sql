@@ -355,6 +355,26 @@ create table if not exists arb_opportunities (
 );
 create index if not exists arb_opportunities_idx on arb_opportunities (fetched_at desc);
 
+-- Line-intelligence signals: stale lines (slow books) + book price divergence.
+create table if not exists line_signals (
+  id          uuid primary key default gen_random_uuid(),
+  type        text,            -- 'stale' | 'divergence'
+  sport       text,
+  game_id     text,
+  matchup     text,
+  market      text,
+  side        text,
+  book        text,
+  line        numeric,
+  consensus   numeric,
+  pts         numeric,
+  price       integer,
+  aligned     boolean,
+  detail      text,
+  fetched_at  timestamptz not null default now()
+);
+create index if not exists line_signals_idx on line_signals (fetched_at desc);
+
 create table if not exists subscribers (
   id         uuid primary key default gen_random_uuid(),
   name       text,

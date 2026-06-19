@@ -114,6 +114,8 @@ const AGENT_DEFS = {
   'ev-scanner': { label: '+EV / Boost Scanner', emoji: '💸', min: 5 },
   'arb-scanner': { label: 'Arbitrage & Middle Scanner', emoji: '🔒', min: 5 },
   'backtest': { label: 'Backtest / Track Record', emoji: '📊', min: 30 },
+  'stale-line': { label: 'Slow-Book / Stale-Line', emoji: '🐢', min: 5 },
+  'sharp-divergence': { label: 'Book Divergence / Sharp Side', emoji: '🧭', min: 5 },
 };
 const AGENTS = {};
 for (const [name, d] of Object.entries(AGENT_DEFS)) {
