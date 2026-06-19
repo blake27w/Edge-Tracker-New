@@ -15,8 +15,8 @@ import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getTennisGames, setArbPlays } from '../../store/index.js';
 
 const ARB_MIN = Number(process.env.ARB_MIN_PCT) || 0.5;   // report arbs ≥ 0.5% ROI
-const MID_MIN_WIDTH = Number(process.env.MID_MIN_WIDTH) || 1; // ≥1 pt of middle
-const MID_MAX_HOLD = Number(process.env.MID_MAX_HOLD) || 0.08; // ≤8% worst-case cost
+const MID_MIN_WIDTH = Number(process.env.MID_MIN_WIDTH) || 2; // ≥2 pt of middle
+const MID_MAX_HOLD = Number(process.env.MID_MAX_HOLD) || 0.06; // ≤6% worst-case cost
 const ALERT_ARB = Number(process.env.ARB_ALERT_PCT) || 1.0;   // text/email arbs ≥ 1%
 
 const alerted = new Set();

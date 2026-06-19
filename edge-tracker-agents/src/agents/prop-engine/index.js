@@ -22,7 +22,7 @@ const PROP_MARKETS = {
   NFL: ['player_pass_yds', 'player_rush_yds', 'player_reception_yds'],
 };
 // Line-shopping thresholds (a book this far off the consensus line = an edge).
-const LINE_EDGE = { MLB: 0.5, NBA: 1.5, NHL: 0.5, NFL: 10 };
+const LINE_EDGE = { MLB: 1, NBA: 2.5, NHL: 1, NFL: 15 };
 
 const MAX_PER_RUN = num(process.env.PROP_MAX_GAMES_PER_RUN, 6);
 const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 40);
