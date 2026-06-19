@@ -63,7 +63,15 @@ function gradePlay(p, f) {
     const betHome = homeName.includes(f.homeNick) && norm(p.side).includes(f.homeNick);
     return (homeWon === betHome) ? 'win' : 'loss';
   }
-  return null; // spreads need the stored number; left pending
+  if (p.market === 'spread' && p.line != null) {
+    // p.side is the team; p.line is that side's spread number (home -3 / away +3).
+    const betHome = norm(p.side).includes(f.homeNick) && !norm(p.side).includes(f.awayNick);
+    const margin = betHome ? (f.home_score - f.away_score) : (f.away_score - f.home_score);
+    const ats = Math.round((margin + Number(p.line)) * 10) / 10;
+    if (ats === 0) return 'push';
+    return ats > 0 ? 'win' : 'loss';
+  }
+  return null; // props (and spreads without a stored number) left pending
 }
 
 // Collapse duplicate qualifying plays (same game/market/side) left over from
