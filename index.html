@@ -5922,8 +5922,13 @@ function renderAgentsContent(){
   } // end !onPlays (watchdog + cost)
 
   if(onPlays){
-  // ── RECOMMENDED group banner ──
-  h+='<div style="background:rgba(70,207,144,.12);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">✅ RECOMMENDED PLAYS</div><div style="font-size:8px;color:var(--muted);margin-top:1px">High-conviction bets from the Signal Engine (70+ score, Tier-1 signal).</div></div>';
+  if(!state.playView)state.playView='bets';
+  var pv=state.playView;
+  var pviews=[['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['research','Research'],['model','Model']];
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
+  pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:9px;padding:8px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
+  h+='</div>';
+  if(pv==='bets'){
   // ── Qualifying Plays Queue ──
   var plays=(state.agentsPlays||[]);
   var dismissed=state.agentsDismissed||[];
@@ -5959,10 +5964,9 @@ function renderAgentsContent(){
   }
   // stash the currently-rendered (filtered) play list so the buttons resolve by index
   state._agentsVisiblePlays=plays;
+  } // end bets
 
-  // ── OPPORTUNITIES group banner ──
-  h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin:4px 0 10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🛒 OPPORTUNITIES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Edges to shop — not recommended bets. Verify and price them yourself.</div></div>';
-
+  if(pv==='props'){
   // ── Prop Shopping ──
   var props=state.agentsProps||[];
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🎯 PROP SHOPPING <span style="color:var(--brass)">('+props.length+')</span></div>';
@@ -5977,7 +5981,9 @@ function renderAgentsContent(){
     });
     h+='<div style="height:8px"></div>';
   }
+  } // end props
 
+  if(pv==='ev'){
   // ── Value & Boosts (+EV) ──
   var ev=state.agentsEv||[];
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">💸 VALUE & BOOSTS <span style="color:var(--brass)">('+ev.length+')</span></div>';
@@ -5996,7 +6002,9 @@ function renderAgentsContent(){
     });
     h+='<div style="height:8px"></div>';
   }
+  } // end ev
 
+  if(pv==='arb'){
   // ── Arbitrage & Middles ──
   var arb=state.agentsArb||[];
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🔒 ARBITRAGE & MIDDLES <span style="color:var(--brass)">('+arb.length+')</span></div>';
@@ -6020,7 +6028,9 @@ function renderAgentsContent(){
     });
     h+='<div style="height:8px"></div>';
   }
+  } // end arb
 
+  if(pv==='lines'){
   // ── Line Intelligence (divergence + stale lines + key numbers) ──
   var dv=state.agentsDivergence||[],st=state.agentsStale||[],kn=state.agentsKey||[];
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">🧭 LINE INTELLIGENCE <span style="color:var(--brass)">('+(dv.length+st.length+kn.length)+')</span></div>';
@@ -6056,10 +6066,14 @@ function renderAgentsContent(){
     });
     h+='<div style="height:8px"></div>';
   }
+  } // end lines
 
+  if(pv==='research'){
   // ── Research ──
   h+=renderResearch();
+  } // end research
 
+  if(pv==='model'){
   // ── Fair-Line Model (experimental, walled off from decisions) ──
   var fl=state.agentsFairLine||[];
   h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:6px">🧪 FAIR-LINE MODEL <span style="color:var(--muted)">('+fl.length+')</span></div>';
@@ -6078,8 +6092,9 @@ function renderAgentsContent(){
     });
     h+='<div style="height:8px"></div>';
   }
+  } // end model
 
-  } // end onPlays (verdict → fair-line)
+  } // end onPlays
 
   if(!onPlays){
   // ── Live Feed ──
