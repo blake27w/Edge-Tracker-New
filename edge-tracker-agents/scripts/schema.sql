@@ -485,3 +485,61 @@ alter table subscribers add column if not exists email text;
 alter table subscribers add column if not exists sms boolean default true;
 alter table subscribers add column if not exists email_opt boolean default true;
 alter table subscribers alter column phone drop not null;
+
+-- ── NFL offseason prep modules (reference / observational) ──────────
+-- Preseason power ratings: prior-season Elo regressed toward the mean.
+create table if not exists nfl_power_ratings (
+  season         integer not null,         -- the upcoming season being projected
+  team           text not null,
+  rating         numeric,                  -- preseason baseline (1500 = avg)
+  end_of_season  numeric,                  -- prior-season end-of-year Elo
+  carryover      numeric,
+  notes          text,
+  updated_at     timestamptz not null default now(),
+  primary key (season, team)
+);
+
+-- Season win-totals model vs posted total (observational; graded post-season).
+create table if not exists nfl_win_totals (
+  season        integer not null,
+  team          text not null,
+  posted_total  numeric,
+  model_wins    numeric,
+  edge          numeric,                   -- model_wins - posted_total
+  side          text,                      -- Over | Under
+  over_price    integer,
+  under_price   integer,
+  fair_over_pct numeric,                   -- devigged book lean on the Over
+  updated_at    timestamptz not null default now(),
+  primary key (season, team)
+);
+
+-- Situational / schedule spots (reference data).
+create table if not exists nfl_schedule_spots (
+  id          uuid primary key default gen_random_uuid(),
+  season      integer not null,
+  team        text not null,
+  week        integer,
+  opponent    text,
+  home        boolean,
+  game_date   timestamptz,
+  rest_days   integer,
+  opp_rest_days integer,
+  tags        jsonb,
+  note        text,
+  updated_at  timestamptz not null default now()
+);
+create index if not exists nfl_schedule_spots_idx on nfl_schedule_spots (season, week);
+
+-- Prop workload baselines: prior-year volume regressed to positional mean.
+create table if not exists nfl_prop_baselines (
+  season        integer not null,
+  stat          text not null,             -- rush_att | targets | pass_att
+  player        text not null,
+  stat_label    text,
+  team          text,
+  last_pg       numeric,                   -- prior-season per-game volume
+  projected_pg  numeric,                   -- regressed projection
+  updated_at    timestamptz not null default now(),
+  primary key (season, stat, player)
+);

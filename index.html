@@ -5746,9 +5746,13 @@ var AGENTS_META=[
   {name:'combat-market',icon:'🥋',label:'Combat Market (C1)',cadence:'every 10 min'},
   {name:'combat-weighin',icon:'⚖️',label:'Weigh-In News (C2)',cadence:'every 2h (fight wks)'},
   {name:'combat-signal',icon:'🥊',label:'Combat Signal (C3)',cadence:'every 5 min'},
+  {name:'nfl-power',icon:'🏈',label:'NFL Preseason Power',cadence:'daily'},
+  {name:'nfl-win-totals',icon:'🏈',label:'NFL Win-Totals Model',cadence:'every 12h'},
+  {name:'nfl-schedule',icon:'🗓️',label:'NFL Schedule Spots',cadence:'daily'},
+  {name:'nfl-props',icon:'📊',label:'NFL Prop Baselines',cadence:'daily'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5842,6 +5846,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
+    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5987,7 +5992,7 @@ function renderAgentsContent(){
   if(onPlays){
   if(!state.playView)state.playView='bets';
   var pv=state.playView;
-  var pviews=[['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['combat','Combat'],['research','Research'],['model','Model']];
+  var pviews=[['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
   pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
@@ -6060,6 +6065,48 @@ function renderAgentsContent(){
     h+='</div>';
   }); h+='<div style="height:8px"></div>'; }
   } // end combat
+
+  if(pv==='nfl'){
+  // ── NFL Offseason Prep (win totals · schedule spots · prop baselines) ──
+  var wt=state.agentsNflWinTotals||[],nsch=state.agentsNflSchedule||[],npr=state.agentsNflProps||[];
+  h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🏈 NFL PREP — OFFSEASON</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Win-totals model vs posted, situational schedule spots, and prior-year prop workload baselines. Reference / observational — graded once the season runs.</div></div>';
+
+  // Win totals
+  var wtq=wt.filter(function(r){return r.qualified}),wtShow=wtq.length?wtq:wt;
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">📈 WIN TOTALS — MODEL vs POSTED <span style="color:var(--brass)">('+wt.length+')</span></div>';
+  if(!wt.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">No win-totals yet. Preseason power ratings build first; posted totals load when books hang them.</div>'; }
+  else { wtShow.slice(0,32).forEach(function(r){
+    var e=r.edge>0?'+'+r.edge:''+r.edge,col=Math.abs(r.edge)>=1.3?'var(--brass)':'var(--leather)';
+    h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;border-left:3px solid '+col+'">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(r.team||'')+'</div>';
+    h+='<div style="font-size:9px;color:var(--leather);margin-top:1px">posted <b>'+r.posted_total+'</b> · model <b>'+r.model_wins+'</b> wins'+(r.fair_over_pct!=null?' · book Over '+r.fair_over_pct+'%':'')+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:'+col+'">'+esc(r.side||'')+'</div><div style="font-size:8px;color:var(--muted)">'+e+' edge</div></div></div>';
+    h+='</div>';
+  }); h+='<div style="height:10px"></div>'; }
+
+  // Schedule spots
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🗓️ SITUATIONAL SPOTS <span style="color:var(--brass)">('+nsch.length+')</span></div>';
+  if(!nsch.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">No schedule spots yet (loads when the upcoming schedule is posted).</div>'; }
+  else { nsch.slice(0,40).forEach(function(r){
+    h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid var(--leather)">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><span style="font-family:var(--H);font-size:11px;font-weight:600;color:var(--txt)">'+esc(r.team||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+(r.home?'vs':'@')+' '+esc(r.opponent||'')+'</span></div>';
+    h+='<div style="font-size:9px;color:var(--muted)">Wk '+r.week+(r.rest_days!=null?' · '+r.rest_days+'d rest':'')+'</div></div>';
+    h+='<div style="font-size:9px;color:var(--brass);margin-top:2px">'+esc(r.note||'')+'</div>';
+    h+='</div>';
+  }); h+='<div style="height:10px"></div>'; }
+
+  // Prop baselines
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">📊 PROP WORKLOAD BASELINES <span style="color:var(--brass)">('+npr.length+')</span></div>';
+  if(!npr.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">No baselines yet (built from prior-season usage).</div>'; }
+  else { npr.slice(0,60).forEach(function(r){
+    h+='<div class="card" style="padding:7px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(r.player||'')+'</span> <span style="font-size:8px;color:var(--dim)">'+esc(r.team||'')+' · '+esc(r.stat_label||r.stat||'')+'</span></div>';
+    h+='<div style="text-align:right;font-family:var(--M)"><span style="font-size:13px;font-weight:700;color:var(--brass)">'+r.projected_pg+'</span><span style="font-size:8px;color:var(--muted)">/g (was '+r.last_pg+')</span></div>';
+    h+='</div>';
+  }); h+='<div style="height:8px"></div>'; }
+  } // end nfl
 
   if(pv==='ev'){
   // ── Value & Boosts (+EV) ──
