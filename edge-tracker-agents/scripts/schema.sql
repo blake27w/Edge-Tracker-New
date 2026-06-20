@@ -543,3 +543,43 @@ create table if not exists nfl_prop_baselines (
   updated_at    timestamptz not null default now(),
   primary key (season, stat, player)
 );
+
+-- ── Public-fade engine (heavy public + sharp disagrees) ────────────
+create table if not exists public_fades (
+  id            uuid primary key default gen_random_uuid(),
+  sport         text,
+  game_id       text,
+  matchup       text,
+  commence_time timestamptz,
+  market        text,                       -- ml | spread | total
+  public_side   text,
+  fade_side     text,
+  bets_pct      numeric,
+  handle_pct    numeric,
+  divergence    numeric,
+  rlm           boolean default false,
+  score         numeric,
+  reasons       jsonb,
+  detected_at   timestamptz not null default now()
+);
+create index if not exists public_fades_idx on public_fades (detected_at desc);
+
+-- ── Combat derivatives (round totals etc., observational) ──────────
+create table if not exists combat_derivatives (
+  id            uuid primary key default gen_random_uuid(),
+  sport         text,
+  game_id       text,
+  matchup       text,
+  commence_time timestamptz,
+  market        text,                       -- rounds | method | distance
+  line          numeric,
+  side          text,
+  book          text,
+  price         integer,
+  fair_price    integer,
+  ev_pct        numeric,
+  unit_mult     numeric,
+  unit_dollars  numeric,
+  detected_at   timestamptz not null default now()
+);
+create index if not exists combat_derivatives_idx on combat_derivatives (detected_at desc);

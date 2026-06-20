@@ -30,6 +30,9 @@ const store = {
   nflWinTotals: [],   // NFL season win-totals model vs posted (offseason prep)
   nflSchedule: [],    // NFL situational/schedule spots (offseason prep)
   nflProps: [],       // NFL prop workload baselines (offseason prep)
+  fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
+  clvReport: null,    // aggregated closing-line-value dashboard
+  combatDerivs: [],   // combat derivative plays (round totals etc., observational)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
 };
@@ -66,6 +69,15 @@ export function getNflSchedule() { return store.nflSchedule; }
 
 export function setNflProps(p) { store.nflProps = p || []; }
 export function getNflProps() { return store.nflProps; }
+
+export function setFadePlays(p) { store.fadePlays = p || []; }
+export function getFadePlays() { return store.fadePlays; }
+
+export function setClvReport(r) { store.clvReport = r; }
+export function getClvReport() { return store.clvReport; }
+
+export function setCombatDerivs(p) { store.combatDerivs = p || []; }
+export function getCombatDerivs() { return store.combatDerivs; }
 
 export function setHealth(h) { store.health = h || []; }
 export function getHealth() { return store.health; }
