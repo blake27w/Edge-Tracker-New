@@ -107,6 +107,10 @@ async function run() {
     return { summary: 'no graded plays yet' };
   }
 
+  // Observational plays (combat, validation-gated) are kept OUT of the main record.
+  const combatRows = rows.filter((r) => r.observational);
+  rows = rows.filter((r) => !r.observational);
+
   const all = blank();
   for (const r of rows) tally(all, r);
 
@@ -140,6 +144,13 @@ async function run() {
     for (const r of orows) { (m[r.type] ||= blank()); m[r.type].staked += config.rules.unitDollars; tally(m[r.type], { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
     report.opps = Object.entries(m).map(([k, a]) => ({ key: k, ...finalize(a) })).sort((x, y) => y.n - x.n);
   } catch (_) { report.opps = []; }
+
+  // Combat (observational, validation-gated — not in the main record yet).
+  {
+    const a = blank();
+    for (const r of combatRows) { a.staked += config.rules.unitDollars; tally(a, { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
+    report.combat = { ...finalize(a), gate: 50, gated: combatRows.length < 50 };
+  }
   report.recent = rows.slice(0, 50).map((r) => ({
     sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
     status: r.status, pnl: r.pnl, result_score: r.result_score, anomaly: r.anomaly, graded_at: r.graded_at,
