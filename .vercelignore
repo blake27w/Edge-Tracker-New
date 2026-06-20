@@ -1,0 +1,6 @@
+# Vercel hosts only the static dashboard. Exclude the backend engine
+# (runs on Railway) and the native app wrapper from the static deploy.
+edge-tracker-agents
+ios-app
+.github
+README.md
