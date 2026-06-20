@@ -38,6 +38,8 @@ import oppGrading from '../agents/opp-grading/index.js';
 import combatMarket from '../agents/combat-market/index.js';
 import combatWeighin from '../agents/combat-weighin/index.js';
 import combatSignal from '../agents/combat-signal/index.js';
+import combatDerivatives from '../agents/combat-derivatives/index.js';
+import publicFade from '../agents/public-fade/index.js';
 import nflPower from '../agents/nfl-power/index.js';
 import nflWinTotals from '../agents/nfl-win-totals/index.js';
 import nflSchedule from '../agents/nfl-schedule/index.js';
@@ -51,8 +53,8 @@ const AGENTS = [
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
-  oppGrading, combatMarket, combatWeighin, combatSignal,
-  nflPower, nflWinTotals, nflSchedule, nflProps, watchdog, digest,
+  oppGrading, combatMarket, combatWeighin, combatSignal, combatDerivatives,
+  publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, watchdog, digest,
 ];
 
 // name -> live status (the /health payload reads from here).

@@ -6,8 +6,34 @@
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
+import { setClvReport } from '../../store/index.js';
 
 const WINDOW_MS = 12 * 3600_000;
+const REPORT_DAYS = Number(process.env.CLV_REPORT_DAYS) || 90;
+
+// Aggregate clv_records into the dashboard summary (overall + by sport + recent).
+async function publishReport() {
+  const since = new Date(Date.now() - REPORT_DAYS * 86400_000).toISOString();
+  let all = [];
+  try {
+    all = await db.select('clv_records', '*', { gte: { recorded_at: since }, order: { column: 'recorded_at', ascending: false }, limit: 1000 });
+  } catch (e) { return; }
+  const fin = (rows) => {
+    const n = rows.length;
+    const beat = rows.filter((r) => r.beat_close).length;
+    const avg = n ? Math.round((rows.reduce((s, r) => s + (Number(r.clv) || 0), 0) / n) * 100) / 100 : 0;
+    return { n, beat, beat_pct: n ? Math.round((beat / n) * 1000) / 10 : 0, avg_clv: avg };
+  };
+  const bySport = {};
+  for (const r of all) (bySport[r.sport || '—'] ||= []).push(r);
+  setClvReport({
+    days: REPORT_DAYS,
+    overall: fin(all),
+    bySport: Object.entries(bySport).map(([sport, rows]) => ({ sport, ...fin(rows) })).sort((a, b) => b.n - a.n),
+    recent: all.slice(0, 30).map((r) => ({ sport: r.sport, game_id: r.game_id, market: r.bet_market, side: r.side, line_logged: r.line_logged, line_close: r.line_close, clv: r.clv, beat_close: r.beat_close, recorded_at: r.recorded_at })),
+    updated_at: new Date().toISOString(),
+  });
+}
 
 async function run() {
   if (!db.isConnected()) return { summary: 'skipped — no DB' };
@@ -20,7 +46,7 @@ async function run() {
       match: { qualified: true }, gte: { scored_at: since }, order: { column: 'scored_at', ascending: false }, limit: 200,
     });
   } catch (e) { return { summary: `select failed: ${e.message}` }; }
-  if (!plays.length) return { summary: 'no recent plays for CLV' };
+  if (!plays.length) { await publishReport(); return { summary: 'no recent plays for CLV (dashboard refreshed)' }; }
 
   // Existing CLV rows to avoid duplicates.
   let existing = [];
@@ -58,6 +84,7 @@ async function run() {
   if (records.length) {
     try { await db.insert('clv_records', records); } catch (e) { logger.warn('clv', e.message); }
   }
+  await publishReport();
   const beat = records.filter((r) => r.beat_close).length;
   return { summary: `${records.length} CLV records (${beat} beat close)`, data: { count: records.length, beat } };
 }

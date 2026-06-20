@@ -126,6 +126,8 @@ const AGENT_DEFS = {
   // Boxing fires whenever a card is ≤48h out (throttled ~6h between Claude calls).
   'combat-weighin': { label: 'Weigh-In News (C2)', emoji: '⚖️', min: 120 },
   'combat-signal': { label: 'Combat Signal (C3)', emoji: '🥊', min: 5 },
+  'combat-derivatives': { label: 'Combat Derivatives (C4)', emoji: '🎯', min: 10 },
+  'public-fade': { label: 'Public-Fade Engine', emoji: '🎭', min: 5 },
   // NFL offseason prep modules — slow daily cadences (reference data, free).
   'nfl-power': { label: 'NFL Preseason Power', emoji: '🏈', min: 1440 },
   'nfl-win-totals': { label: 'NFL Win-Totals Model', emoji: '🏈', min: 720 },
