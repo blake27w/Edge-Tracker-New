@@ -38,15 +38,21 @@ import oppGrading from '../agents/opp-grading/index.js';
 import combatMarket from '../agents/combat-market/index.js';
 import combatWeighin from '../agents/combat-weighin/index.js';
 import combatSignal from '../agents/combat-signal/index.js';
+import nflPower from '../agents/nfl-power/index.js';
+import nflWinTotals from '../agents/nfl-win-totals/index.js';
+import nflSchedule from '../agents/nfl-schedule/index.js';
+import nflProps from '../agents/nfl-props/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
+// nfl-power precedes win-totals/schedule, which read its preseason ratings.
 const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
-  oppGrading, combatMarket, combatWeighin, combatSignal, watchdog, digest,
+  oppGrading, combatMarket, combatWeighin, combatSignal,
+  nflPower, nflWinTotals, nflSchedule, nflProps, watchdog, digest,
 ];
 
 // name -> live status (the /health payload reads from here).

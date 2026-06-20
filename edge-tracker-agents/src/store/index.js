@@ -27,6 +27,9 @@ const store = {
   keyNumbers: [],     // football key-number shopping edges
   fairLine: [],       // EXPERIMENTAL model fair-line edges (observational only)
   combatPlays: [],    // UFC/Boxing observational plays (combat signal engine)
+  nflWinTotals: [],   // NFL season win-totals model vs posted (offseason prep)
+  nflSchedule: [],    // NFL situational/schedule spots (offseason prep)
+  nflProps: [],       // NFL prop workload baselines (offseason prep)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
 };
@@ -54,6 +57,15 @@ export function getFairLine() { return store.fairLine; }
 
 export function setCombatPlays(p) { store.combatPlays = p || []; }
 export function getCombatPlays() { return store.combatPlays; }
+
+export function setNflWinTotals(p) { store.nflWinTotals = p || []; }
+export function getNflWinTotals() { return store.nflWinTotals; }
+
+export function setNflSchedule(p) { store.nflSchedule = p || []; }
+export function getNflSchedule() { return store.nflSchedule; }
+
+export function setNflProps(p) { store.nflProps = p || []; }
+export function getNflProps() { return store.nflProps; }
 
 export function setHealth(h) { store.health = h || []; }
 export function getHealth() { return store.health; }
