@@ -26,6 +26,7 @@ const store = {
   divergence: [],     // book price-divergence + sharp-side alignment
   keyNumbers: [],     // football key-number shopping edges
   fairLine: [],       // EXPERIMENTAL model fair-line edges (observational only)
+  combatPlays: [],    // UFC/Boxing observational plays (combat signal engine)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
 };
@@ -50,6 +51,9 @@ export function getKeyNumbers() { return store.keyNumbers; }
 
 export function setFairLine(p) { store.fairLine = p || []; }
 export function getFairLine() { return store.fairLine; }
+
+export function setCombatPlays(p) { store.combatPlays = p || []; }
+export function getCombatPlays() { return store.combatPlays; }
 
 export function setHealth(h) { store.health = h || []; }
 export function getHealth() { return store.health; }

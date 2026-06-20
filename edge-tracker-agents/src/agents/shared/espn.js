@@ -48,6 +48,31 @@ export async function getFinals(path, dateStr) {
   return out;
 }
 
+// Completed UFC fights for a date (ESPN MMA). [{ names:[a,b], winner }].
+export async function getUfcResults(dateStr) {
+  const key = `ufc|${dateStr}`;
+  const hit = finalsCache.get(key);
+  if (hit && Date.now() - hit.at < FINALS_TTL) return hit.data;
+  const out = [];
+  try {
+    const res = await fetch(`${BASE}/mma/ufc/scoreboard?dates=${dateStr}`);
+    if (res.ok) {
+      const data = await res.json();
+      for (const ev of data.events || []) {
+        for (const comp of ev.competitions || []) {
+          if (!comp.status?.type?.completed) continue;
+          const cs = comp.competitors || [];
+          const names = cs.map((c) => c.athlete?.displayName || c.athlete?.shortName || '').filter(Boolean);
+          const winner = cs.find((c) => c.winner)?.athlete?.displayName;
+          if (names.length >= 2 && winner) out.push({ names, winner });
+        }
+      }
+    }
+  } catch (_) { /* leave pending */ }
+  finalsCache.set(key, { at: Date.now(), data: out });
+  return out;
+}
+
 // Box score for a single event. Cached once available (never cache a miss).
 export async function getBox(path, eventId) {
   if (boxCache.has(eventId)) return boxCache.get(eventId);

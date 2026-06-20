@@ -255,6 +255,40 @@ create index if not exists monitor_scores_qual_idx on monitor_scores (qualified,
 alter table monitor_scores add column if not exists player text;
 alter table monitor_scores add column if not exists stat_type text;
 alter table monitor_scores add column if not exists anomaly text;
+alter table monitor_scores add column if not exists observational boolean default false;
+
+-- Combat (UFC/Boxing) market snapshots — open vs current per fighter, softest book.
+create table if not exists combat_markets (
+  game_id     text,
+  fighter     text,
+  matchup     text,
+  sport       text,
+  line_open   integer,
+  line_current integer,
+  best_ml     integer,
+  best_book   text,
+  opened_at   timestamptz,
+  fetched_at  timestamptz not null default now(),
+  primary key (game_id, fighter)
+);
+
+-- Combat fight-week news (weigh-ins, scratches, replacements) with the
+-- timestamp-pairing fields that determine whether value still remains.
+create table if not exists combat_news (
+  id            uuid primary key default gen_random_uuid(),
+  game_id       text,
+  fighter       text,
+  opponent      text,
+  sport         text,
+  type          text,            -- missed_weight | scratch | replacement
+  detail        text,
+  over_lbs      numeric,
+  line_at_detection integer,     -- compromised fighter's line when detected
+  opp_line_at_detection integer, -- opponent's line when detected
+  value_remains boolean,         -- opponent price hadn't moved yet
+  detected_at   timestamptz not null default now()
+);
+create index if not exists combat_news_idx on combat_news (detected_at desc);
 
 -- ── CLV tracking ────────────────────────────────────────────────
 create table if not exists clv_records (

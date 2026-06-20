@@ -121,6 +121,9 @@ const AGENT_DEFS = {
   'key-number': { label: 'Key-Number Analysis', emoji: '🔑', min: 5 },
   'fair-line': { label: 'Fair-Line Model (experimental)', emoji: '🧪', min: 30 },
   'opp-grading': { label: 'Opportunity Grading', emoji: '🧮', min: 30 },
+  'combat-market': { label: 'Combat Market (C1)', emoji: '🥋', min: 10 },
+  'combat-weighin': { label: 'Weigh-In News (C2)', emoji: '⚖️', times: ['12:00', '13:00', '14:00', '15:00'], days: [5] },
+  'combat-signal': { label: 'Combat Signal (C3)', emoji: '🥊', min: 5 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };

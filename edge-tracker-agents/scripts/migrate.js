@@ -15,7 +15,7 @@ const TABLES = [
   'scan_runs', 'api_usage', 'opening_lines', 'line_snapshots', 'line_movements', 'injury_updates',
   'game_weather', 'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots',
   'mlb_context', 'player_usage', 'prop_snapshots', 'monitor_scores', 'clv_records',
-  'alert_log', 'subscribers', 'ev_opportunities', 'arb_opportunities', 'line_signals', 'opp_results', 'research_notes', 'fair_line_log', 'tennis_markets', 'tennis_fatigue', 'tennis_matchups',
+  'alert_log', 'subscribers', 'ev_opportunities', 'arb_opportunities', 'line_signals', 'opp_results', 'research_notes', 'fair_line_log', 'combat_markets', 'combat_news', 'tennis_markets', 'tennis_fatigue', 'tennis_matchups',
 ];
 
 async function main() {

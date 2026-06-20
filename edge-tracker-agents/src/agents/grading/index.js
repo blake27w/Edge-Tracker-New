@@ -8,7 +8,7 @@
 import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
-import { getFinals, getBox } from '../shared/espn.js';
+import { getFinals, getBox, getUfcResults } from '../shared/espn.js';
 
 // monitor_scores sport → ESPN scoreboard path.
 const ESPN_PATH = {
@@ -213,7 +213,13 @@ async function run() {
     tpending = await db.select('monitor_scores', '*', { match: { sport: 'TENNIS', status: 'pending', qualified: true }, lte: { scored_at: cutoff }, limit: 80 });
   } catch (_) { /* table optional */ }
 
-  if (!pending.length && !rpending.length && !tpending.length) return { summary: 'no completed plays to grade' };
+  // UFC picks grade via ESPN MMA (winner). They're observational but still grade.
+  let upending = [];
+  try {
+    upending = await db.select('monitor_scores', '*', { match: { sport: 'UFC', status: 'pending', qualified: true }, lte: { scored_at: cutoff }, limit: 80 });
+  } catch (_) { /* table optional */ }
+
+  if (!pending.length && !rpending.length && !tpending.length && !upending.length) return { summary: 'no completed plays to grade' };
 
   // Collect the (sport, date) pairs we need — game day plus the day before,
   // since a late-evening US game lands on the prior UTC date.
@@ -295,9 +301,27 @@ async function run() {
     }
   }
 
+  // Grade UFC picks by fighter name against ESPN MMA results.
+  let uGraded = 0;
+  if (upending.length) {
+    const dates = new Set();
+    for (const p of upending) { const d = new Date(p.scored_at); for (const off of [0, 1, 2]) dates.add(ymd(new Date(d.getTime() + off * 86400_000))); }
+    const results = [];
+    for (const d of dates) { try { results.push(...await getUfcResults(d)); } catch (e) { logger.warn('grading', `ufc: ${e.message}`); } }
+    for (const p of upending) {
+      const m = results.find((r) => r.names.some((n) => tName(n, p.side)));
+      if (!m) continue;
+      const result = tName(m.winner, p.side) ? 'win' : 'loss';
+      const stake = p.unit_dollars ?? config.rules.unitDollars;
+      const pnl = result === 'win' ? Math.round(stake * profitPerUnit(-110) * 100) / 100 : -stake;
+      try { await db.update('monitor_scores', { status: result, pnl, graded_at: now }, { id: p.id }); uGraded++; }
+      catch (e) { logger.warn('grading', `ufc: ${e.message}`); }
+    }
+  }
+
   return {
-    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${rGraded ? ` + ${rGraded} research` : ''}${tGraded ? ` + ${tGraded} tennis` : ''} · free ESPN`,
-    data: { graded, wins, losses, pushes, research: rGraded, tennis: tGraded },
+    summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${rGraded ? ` + ${rGraded} research` : ''}${tGraded ? ` + ${tGraded} tennis` : ''}${uGraded ? ` + ${uGraded} UFC` : ''} · free ESPN`,
+    data: { graded, wins, losses, pushes, research: rGraded, tennis: tGraded, ufc: uGraded },
   };
 }
 
