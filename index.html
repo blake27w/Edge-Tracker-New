@@ -5744,11 +5744,11 @@ var AGENTS_META=[
   {name:'fair-line',icon:'🧪',label:'Fair-Line Model (experimental)',cadence:'every 30 min'},
   {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
   {name:'combat-market',icon:'🥋',label:'Combat Market (C1)',cadence:'every 10 min'},
-  {name:'combat-weighin',icon:'⚖️',label:'Weigh-In News (C2)',cadence:'Fri 12–3 ET'},
+  {name:'combat-weighin',icon:'⚖️',label:'Weigh-In News (C2)',cadence:'every 2h (fight wks)'},
   {name:'combat-signal',icon:'🥊',label:'Combat Signal (C3)',cadence:'every 5 min'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':700000000,'combat-signal':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -6048,12 +6048,13 @@ function renderAgentsContent(){
 
   if(pv==='combat'){
   var cb=state.agentsCombat||[];
-  h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🥊 COMBAT — OBSERVATIONAL</div><div style="font-size:8px;color:var(--muted);margin-top:1px">UFC market signals + weigh-in news. NOT counted in the track record until 50+ graded (variance is brutal). Strict sizing.</div></div>';
-  if(!cb.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No combat signals right now (UFC fight weeks only).</div>'; }
+  h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🥊 COMBAT — OBSERVATIONAL</div><div style="font-size:8px;color:var(--muted);margin-top:1px">UFC + Boxing market signals + weigh-in news. NOT counted in the track record until 50+ graded (variance is brutal). Strict sizing. Boxing grades manually.</div></div>';
+  if(!cb.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No combat signals right now (UFC / Boxing fight weeks only).</div>'; }
   else { cb.slice(0,20).forEach(function(c){
+    var csport=c.sport==='BOXING'?'Boxing':'UFC';
     h+='<div class="card" style="padding:11px 13px;margin:0 0 8px;border-left:3px solid var(--brass)">';
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="flex:1;min-width:0"><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(c.matchup||'')+'</div>';
-    h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">UFC · ML · <b>'+esc(c.side||'')+'</b></div></div>';
+    h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+csport+' · ML · <b>'+esc(c.side||'')+'</b></div></div>';
     h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:var(--brass)">'+Math.round(c.score||0)+'</div><div style="font-size:7px;color:var(--muted)">'+esc(c.tier||'')+'</div></div></div>';
     if(c.signals&&c.signals.length){h+='<div style="font-size:8px;color:var(--dim);margin-top:4px">'+c.signals.slice(0,3).map(function(s){return '• '+esc(s.label||s.id||'')}).join('<br>')+'</div>';}
     h+='</div>';

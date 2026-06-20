@@ -122,7 +122,9 @@ const AGENT_DEFS = {
   'fair-line': { label: 'Fair-Line Model (experimental)', emoji: '🧪', min: 30 },
   'opp-grading': { label: 'Opportunity Grading', emoji: '🧮', min: 30 },
   'combat-market': { label: 'Combat Market (C1)', emoji: '🥋', min: 10 },
-  'combat-weighin': { label: 'Weigh-In News (C2)', emoji: '⚖️', times: ['12:00', '13:00', '14:00', '15:00'], days: [5] },
+  // Interval-based, but self-gates internally: UFC only fires Fri noon–3pm ET,
+  // Boxing fires whenever a card is ≤48h out (throttled ~6h between Claude calls).
+  'combat-weighin': { label: 'Weigh-In News (C2)', emoji: '⚖️', min: 120 },
   'combat-signal': { label: 'Combat Signal (C3)', emoji: '🥊', min: 5 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
