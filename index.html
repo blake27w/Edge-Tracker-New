@@ -430,7 +430,7 @@ var state = {
   homeHistFilter: 'a',
   homeSportFilter: 'all',
   // ── Agents tab ──
-  agentApiUrl: ls('et_agent_api',''),   // optional backend base URL for /feed live data
+  agentApiUrl: ls('et_agent_api','https://edge-tracker-new-production.up.railway.app'),   // backend base URL; defaults to the Railway engine so every device loads data with no setup (override via 🤖 Agents → backend)
   agentsResearch: [], researchToken: ls('et_research_token',''),
   rBody:'', rSport:'', rMatchup:'', rIsPick:false, rMarket:'total', rSide:'', rLine:'', rOdds:'', rConf:'',
   agentsDismissed: ls('et_agents_dismissed',[]),
