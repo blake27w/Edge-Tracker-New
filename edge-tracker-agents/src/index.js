@@ -15,10 +15,15 @@ import { buildGames } from './games/index.js';
 import { listResearch, addResearch, deleteResearch } from './research/index.js';
 
 // ── CORS ────────────────────────────────────────────────────────
+// Allow the configured origins (CORS_ORIGINS env, default GitHub Pages) plus
+// any *.vercel.app domain, so the dashboard works on Vercel prod + preview
+// deploys (random preview subdomains) without re-listing each one. These are
+// public read endpoints, so allowing Vercel-hosted frontends is low-risk.
 function cors(req, res) {
   const origin = req.headers.origin;
   const allowed = config.server.corsOrigins;
-  if (origin && (allowed.includes('*') || allowed.includes(origin))) {
+  const okOrigin = origin && (allowed.includes('*') || allowed.includes(origin) || /\.vercel\.app$/.test(origin));
+  if (okOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (allowed.includes('*')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
