@@ -543,6 +543,7 @@ create table if not exists nfl_prop_baselines (
   updated_at    timestamptz not null default now(),
   primary key (season, stat, player)
 );
+<<<<<<< HEAD
 
 -- ── Public-fade engine (heavy public + sharp disagrees) ────────────
 create table if not exists public_fades (
@@ -583,3 +584,5 @@ create table if not exists combat_derivatives (
   detected_at   timestamptz not null default now()
 );
 create index if not exists combat_derivatives_idx on combat_derivatives (detected_at desc);
+=======
+>>>>>>> origin/main
