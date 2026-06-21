@@ -588,3 +588,19 @@ create table if not exists combat_derivatives (
 create index if not exists combat_derivatives_idx on combat_derivatives (detected_at desc);
 =======
 >>>>>>> origin/main
+
+-- ── CLV pipeline integrity (entry/close must be distinct; one row per play) ──
+alter table clv_records add column if not exists entry_at timestamptz;
+alter table clv_records add column if not exists close_at timestamptz;
+alter table clv_records add column if not exists suspect boolean default false;
+-- Pre-fix CLV is unreliable (the entry==close bug): flag everything captured
+-- before the timing fix so the dashboard stats ignore it.
+update clv_records set suspect = true where close_at is null;
+-- Collapse duplicate (game_id, bet_market, side) rows, keeping one, so the
+-- one-row-per-play unique index can be created.
+delete from clv_records a using clv_records b
+  where a.id < b.id
+    and a.game_id = b.game_id
+    and coalesce(a.bet_market, '') = coalesce(b.bet_market, '')
+    and coalesce(a.side, '') = coalesce(b.side, '');
+create unique index if not exists ux_clv_play on clv_records (game_id, bet_market, side);

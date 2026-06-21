@@ -204,11 +204,21 @@ async function run() {
   }
 
   // Persist ONLY newly-qualified plays (newAlerts), not every cycle's full set —
-  // otherwise monitor_scores accumulates the same play every 2 minutes.
+  // otherwise monitor_scores accumulates the same play every 2 minutes. The
+  // in-memory `alerted` set resets on restart, so ALSO dedupe against pending
+  // rows already in the DB (prevents the duplicate-play inflation that broke the
+  // CLV-record-vs-graded-play count).
   if (newAlerts.length) {
+    let pendingKeys = new Set();
+    try {
+      const ex = await db.select('monitor_scores', 'game_id,market,side', { match: { status: 'pending' }, limit: 3000 });
+      pendingKeys = new Set(ex.map((r) => `${r.game_id}|${r.market}|${r.side}`));
+    } catch (e) { /* if the read fails, fall back to the in-memory dedup only */ }
     // commence_time is for the dashboard (via /plays); not a monitor_scores column.
-    const dbRows = newAlerts.map(({ commence_time, ...r }) => r);
-    try { await db.insert('monitor_scores', dbRows); } catch (e) { logger.warn('signal', e.message); }
+    const dbRows = newAlerts
+      .filter((p) => !pendingKeys.has(`${p.game_id}|${p.market}|${p.side}`))
+      .map(({ commence_time, ...r }) => r);
+    if (dbRows.length) { try { await db.insert('monitor_scores', dbRows); } catch (e) { logger.warn('signal', e.message); } }
   }
   setPlays(plays);
 
