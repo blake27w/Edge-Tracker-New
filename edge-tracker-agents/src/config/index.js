@@ -133,6 +133,7 @@ const AGENT_DEFS = {
   'nfl-win-totals': { label: 'NFL Win-Totals Model', emoji: '🏈', min: 720 },
   'nfl-schedule': { label: 'NFL Schedule Spots', emoji: '🗓️', min: 1440 },
   'nfl-props': { label: 'NFL Prop Baselines', emoji: '📊', min: 1440 },
+  'nfl-totals': { label: 'NFL Scoring/Totals Model', emoji: '🏈', min: 720 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };
