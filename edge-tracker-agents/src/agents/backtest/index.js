@@ -87,6 +87,12 @@ function signalLabels(r) {
   if (!Array.isArray(s)) return [];
   return s.map((x) => x && (x.label || x.id)).filter(Boolean);
 }
+// Distinct signal ids on a play (for the totals-by-sub-signal breakdown).
+function signalIds(r) {
+  const s = r.signals;
+  if (!Array.isArray(s)) return [];
+  return [...new Set(s.map((x) => x && x.id).filter(Boolean))];
+}
 
 // Human labels for stable signal ids (the per-signal CLV scorecard groups by id).
 const SIG_LABELS = {
@@ -111,12 +117,13 @@ async function signalCard() {
   for (const c of clvRows) clvMap.set(`${c.game_id}|${c.bet_market}|${c.side}`, c);
 
   let plays = [];
-  try { plays = await db.select('monitor_scores', 'game_id,market,side,signals,status,pnl,unit_dollars,observational', { match: { qualified: true }, order: { column: 'scored_at', ascending: false }, limit: 8000 }); }
+  try { plays = await db.select('monitor_scores', 'sport,game_id,market,side,signals,status,pnl,unit_dollars,observational', { match: { qualified: true }, order: { column: 'scored_at', ascending: false }, limit: 8000 }); }
   catch (_) { return []; }
 
+  const FIGHT = new Set(['UFC', 'BOXING']);
   const agg = {};
   for (const p of plays) {
-    if (p.observational) continue;                 // combat etc. stay out of the main scorecard
+    if (p.observational && FIGHT.has(p.sport)) continue; // combat stays out; totals on probation are INCLUDED (that's how we judge them)
     const c = clvMap.get(`${p.game_id}|${p.market}|${p.side}`);
     if (!c) continue;
     const ids = [...new Set((Array.isArray(p.signals) ? p.signals : []).map((s) => s && s.id).filter(Boolean))];
@@ -165,8 +172,13 @@ async function run() {
     return { summary: 'no graded plays yet' };
   }
 
-  // Observational plays (combat, validation-gated) are kept OUT of the main record.
-  const combatRows = rows.filter((r) => r.observational);
+  // Observational plays are kept OUT of the headline record. Two kinds:
+  // combat (validation-gated) and totals on probation. Separate them so each
+  // gets its own scorecard.
+  const FIGHT = new Set(['UFC', 'BOXING']);
+  const observational = rows.filter((r) => r.observational);
+  const combatRows = observational.filter((r) => FIGHT.has(r.sport));
+  const probTotals = observational.filter((r) => !FIGHT.has(r.sport)); // totals on probation
   rows = rows.filter((r) => !r.observational);
 
   const all = blank();
@@ -181,6 +193,8 @@ async function run() {
     byTier: group(rows, (r) => r.tier),
     byConfidence: group(rows, confBucket),
     byT1: group(rows, t1Bucket),
+    // Prop sub-type breakdown — learn WHICH prop trigger works as the sample grows.
+    propBySub: group(rows.filter((r) => r.market === 'prop'), (r) => r.prop_signal_type || 'other', { min: 1 }),
   };
   // Research picks get their own scorecard (separate from the signal track record).
   try {
@@ -214,6 +228,13 @@ async function run() {
     const a = blank();
     for (const r of combatRows) { a.staked += config.rules.unitDollars; tally(a, { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
     report.combat = { ...finalize(a), gate: 50, gated: combatRows.length < 50 };
+  }
+  // Totals on probation (observational) — kept out of the headline; broken down
+  // by sub-signal so we can see if ANY totals trigger beats the close.
+  {
+    const a = blank();
+    for (const r of probTotals) tally(a, r);
+    report.totals = { ...finalize(a), probation: config.rules.totalsProbation, bySignal: group(probTotals, signalIds, { min: 1 }) };
   }
   report.recent = rows.slice(0, 50).map((r) => ({
     sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,

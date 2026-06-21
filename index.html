@@ -6484,6 +6484,22 @@ function renderVerdict(bt){
   return h;
 }
 function btColor(v){return v>=0?'#34d399':'var(--wine)'}
+var PROP_SUB={injury_backup:'Injury backup',weather_passing_under:'Weather pass Under',pitcher_mismatch_k:'Pitcher K mismatch',usage_spike:'Usage spike',line_shop:'Line shop',other:'Other'};
+var TSIG_LABELS={wind:'Wind (directional)',rlm:'RLM vs public',divergence:'Handle>bets',injury_out:'Key player OUT',bullpen:'Bullpen/park',bullpen_over:'Bullpen Over',under_bias:'Structural Under',steam:'Steam (correlated)',schedule:'Schedule',weather_mild:'Mild wind'};
+// Breakdown rows that GREY OUT small samples (learning, not actionable).
+function renderSubRows(arr,minN,labels){
+  var h='';
+  arr.forEach(function(x){
+    var dec=(x.w||0)+(x.l||0),small=dec<minN,dim=small?';opacity:.45':'';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
+    h+='<div style="font-size:11px;color:var(--cream);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((labels&&labels[x.key])||x.key)+(small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:62px;text-align:right">'+x.w+'-'+x.l+(x.p?'-'+x.p:'')+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+x.winPct+'%</div>';
+    h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+(small?'var(--muted)':btColor(x.roi))+'">'+(x.roi>=0?'+':'')+x.roi+'%</div>';
+    h+='</div>';
+  });
+  return h;
+}
 function renderBtRows(title,arr){
   if(!arr||!arr.length)return '';
   var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">'+title+'</div>';
@@ -6656,6 +6672,23 @@ function renderBtBreakdowns(bt){
   h+=renderBtRows('BY TIER',bt.byTier);
   h+=renderBtRows('BY CONFIDENCE',bt.byConfidence);
   h+='</div>';
+  // Props by sub-type (learn which prop trigger is the real edge).
+  if(bt.propBySub&&bt.propBySub.length){
+    h+='<div class="card" style="padding:13px 14px;margin-bottom:8px"><div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim)">🎯 PROPS BY SUB-TYPE</div><div style="font-size:7.5px;color:var(--muted);margin:2px 0 4px">Greyed = under 15 graded — learning, not actionable yet.</div>';
+    h+=renderSubRows(bt.propBySub,15,PROP_SUB);
+    h+='</div>';
+  }
+  // Totals — on probation: shown separately, broken down by sub-signal.
+  if(bt.totals){
+    var t=bt.totals;
+    h+='<div class="card" style="padding:13px 14px;margin-bottom:8px;border-left:3px solid var(--leather)">';
+    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim)">📉 TOTALS'+(t.probation?' — ON PROBATION':'')+'</div>';
+    h+='<div style="font-size:7.5px;color:var(--muted);margin:2px 0 6px">'+(t.probation?'Observational + reduced stake (out of the headline record) until a totals sub-signal proves it beats the close.':'Active.')+'</div>';
+    if(t.n){ h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0"><div style="font-size:11px;color:var(--cream)">'+t.w+'-'+t.l+(t.p?'-'+t.p:'')+' · '+t.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(t.roi)+'">'+(t.roi>=0?'+':'')+t.roi+'%</div></div>'; }
+    else { h+='<div style="font-size:9px;color:var(--muted);font-style:italic">No graded totals yet.</div>'; }
+    if(t.bySignal&&t.bySignal.length){ h+='<div style="font-family:var(--H);font-size:8px;letter-spacing:1px;color:var(--leather);margin:8px 0 2px">BY SUB-SIGNAL — does any totals trigger beat?</div>'+renderSubRows(t.bySignal,15,TSIG_LABELS); }
+    h+='</div>';
+  }
   return h;
 }
 function renderBacktest(bt){

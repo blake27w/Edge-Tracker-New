@@ -221,6 +221,12 @@ const config = {
   rules: {
     confidenceFloor: num(env.CONFIDENCE_FLOOR, 70),
     unitDollars: num(env.UNIT_DOLLARS, 12),
+    // Totals probation: totals are a proven break-even market (75-75, -6.2% over
+    // 150). While ON, new totals plays are observational + reduced-stake (kept out
+    // of the headline record, still graded) until a totals sub-signal proves
+    // positive CLV. Spreads/props/ml unaffected. Lift with TOTALS_PROBATION=false.
+    totalsProbation: bool(env.TOTALS_PROBATION, true),
+    totalsProbationStake: num(env.TOTALS_PROBATION_STAKE, 0.5), // stake multiplier while on probation
     // DEFAULT TO UNDERS. An Over on a game total takes a -10 confidence penalty.
     overTotalPenalty: 10,
     // Unit sizing by raw score.

@@ -55,7 +55,13 @@ function collectSignals(game, market, side, intel, power) {
   }
   for (const s of intel.sharp) {
     const mk = isTotal ? 'totals' : (market === 'spread' ? 'spreads' : 'h2h');
-    if (s.market === mk && (!isTotal || s.side === side)) add(1, 'steam', s.detail || 'steam move');
+    if (s.market === mk && (!isTotal || s.side === side)) {
+      // Steam on TOTALS is the correlated line-move signal that grades badly
+      // (1-4-1, -51.5%) — demote to confirmation-only so it can't qualify a
+      // totals play on its own. On spreads/ml it stays a Tier-1 edge.
+      if (isTotal) add(3, 'steam', `${s.detail || 'steam move'} (totals — confirmation only)`);
+      else add(1, 'steam', s.detail || 'steam move');
+    }
   }
   if (isTotal && under) {
     for (const w of intel.weather) {
@@ -185,14 +191,20 @@ async function run() {
       const sc = score(c.sigs, c.side, c.market);
       const qualified = qualifies(c.side, c.market, sc);
       const unit = qualified ? unitFor(sc.score) : unitFor(0);
+      // Totals probation: keep grading them, but mark observational (out of the
+      // headline record) and cut the stake until a totals sub-signal proves CLV.
+      const probation = c.market === 'total' && rules.totalsProbation;
+      const stakeMult = probation ? (rules.totalsProbationStake || 0.5) : 1;
       const row = {
         sport: g.sport, game_id: g.game_id, matchup: `${g.away} @ ${g.home}`,
         commence_time: g.commence_time,
         market: c.market, side: c.side, line: c.line,
         raw_score: sc.raw, score: sc.score, confidence: sc.score,
-        tier: unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars,
+        tier: probation ? `${unit.label} (prob)` : unit.label,
+        unit_mult: Math.round(unit.mult * stakeMult * 100) / 100,
+        unit_dollars: Math.round(unit.dollars * stakeMult * 100) / 100,
         t1_count: sc.t1, signals: c.sigs, qualified, over_penalty_applied: sc.overPenalty,
-        status: 'pending', scored_at: now,
+        observational: probation, status: 'pending', scored_at: now,
       };
       rows.push(row);
       if (qualified) {
