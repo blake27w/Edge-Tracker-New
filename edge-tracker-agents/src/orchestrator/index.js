@@ -23,6 +23,7 @@ import clv from '../agents/clv-tracker/index.js';
 import grading from '../agents/grading/index.js';
 import tennisIngest from '../agents/tennis-ingest/index.js';
 import tennisSignal from '../agents/tennis-signal/index.js';
+import tennisClose from '../agents/tennis-close/index.js';
 import tennisFatigue from '../agents/tennis-fatigue/index.js';
 import tennisSurface from '../agents/tennis-surface/index.js';
 import evScanner from '../agents/ev-scanner/index.js';
@@ -56,7 +57,7 @@ import nflDerivatives from '../agents/nfl-derivatives/index.js';
 const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
   mlbContext, signal, propEngine, clv, grading,
-  tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
+  tennisIngest, tennisFatigue, tennisSurface, tennisSignal, tennisClose,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
   oppGrading, bookEdges, combatMarket, combatWeighin, combatSignal, combatDerivatives,
   publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, nflInactives, nflLineMove, nflDerivatives, watchdog, digest,

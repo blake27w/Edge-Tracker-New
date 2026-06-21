@@ -113,6 +113,8 @@ const AGENT_DEFS = {
   'tennis-fatigue': { label: 'Tennis Fatigue & Schedule', emoji: '🎾', min: 30 },
   'tennis-surface': { label: 'Tennis Surface & Style', emoji: '🎾', min: 60 },
   'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
+  // Disabled unless TENNIS_CLOSE_CAPTURE=true; self-no-ops otherwise.
+  'tennis-close': { label: 'Tennis Close-Capture', emoji: '🎾', min: 20 },
   'ev-scanner': { label: '+EV / Boost Scanner', emoji: '💸', min: 5 },
   'arb-scanner': { label: 'Arbitrage & Middle Scanner', emoji: '🔒', min: 5 },
   'backtest': { label: 'Backtest / Track Record', emoji: '📊', min: 30 },
@@ -169,6 +171,10 @@ const config = {
   // additional markets are billed per event on The Odds API. Enable with
   // NFL_DERIVATIVES=true once you're OK with the extra credit spend.
   nflDerivatives: bool(env.NFL_DERIVATIVES, false),
+
+  // Tennis close-capture: fetch a near-start price for imminent matches so CLV
+  // has a distinct close point. OFF by default to honor "ingest once a day".
+  tennisCloseCapture: bool(env.TENNIS_CLOSE_CAPTURE, false),
 
   supabase: {
     url: clean(env.SUPABASE_URL),
@@ -236,6 +242,9 @@ const config = {
     // positive CLV. Spreads/props/ml unaffected. Lift with TOTALS_PROBATION=false.
     totalsProbation: bool(env.TOTALS_PROBATION, true),
     totalsProbationStake: num(env.TOTALS_PROBATION_STAKE, 0.5), // stake multiplier while on probation
+    // Tennis is observational until it proves positive CLV over a sample (kept
+    // out of the headline record, still graded). Lift with TENNIS_OBSERVATIONAL=false.
+    tennisObservational: bool(env.TENNIS_OBSERVATIONAL, true),
     // DEFAULT TO UNDERS. An Over on a game total takes a -10 confidence penalty.
     overTotalPenalty: 10,
     // Unit sizing by raw score.
