@@ -6494,9 +6494,27 @@ function renderBtOverall(bt){
   if(bt.research&&bt.research.n){var rr=bt.research;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">📝 RESEARCH PICKS</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+rr.w+'-'+rr.l+(rr.p?'-'+rr.p:'')+' · '+rr.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(rr.roi)+'">'+(rr.roi>=0?'+':'')+rr.roi+'%</div></div></div>';}
   return h;
 }
-function renderBtBreakdowns(bt){
-  if(!bt||!bt.overall||!bt.overall.n)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet — breakdowns of what works appear once plays settle.</div>';
+// Per-signal CLV scorecard — which signal TYPES actually beat the close.
+function renderSignalClv(bt){
+  var rows=bt&&bt.signalClv;
+  if(!rows||!rows.length)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:8px">Per-signal CLV builds as plays reach their close. This is the key read: which signals beat the closing line.</div>';
   var h='<div class="card" style="padding:13px 14px;margin-bottom:8px">';
+  h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:2px">📐 SIGNAL CLV — DOES IT BEAT THE CLOSE?</div>';
+  h+='<div style="font-size:8px;color:var(--muted);margin-bottom:7px">CLV is the honest test. Beat % &gt;50 and +avg CLV = a real edge; consistently &lt;50 = flagged for removal.</div>';
+  rows.forEach(function(s){
+    var col=s.beatPct>=55?'var(--sage)':s.beatPct>=50?'var(--brass)':'var(--wine)';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">';
+    h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(s.label||'')+'</span>'+(s.flag?' <span style="font-size:7px;color:var(--wine);border:1px solid var(--wine);border-radius:3px;padding:0 3px">⚠ REVIEW</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+s.n+' plays'+(s.graded?' · '+s.graded+' graded'+(s.roi!=null?' · '+(s.roi>=0?'+':'')+s.roi+'% ROI':''):'')+'</div></div>';
+    h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:'+col+'">'+s.beatPct+'%</span><div style="font-size:7.5px;color:var(--muted)">'+(s.avgClv>=0?'+':'')+s.avgClv+' avg CLV</div></div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+function renderBtBreakdowns(bt){
+  if(!bt||!bt.overall||!bt.overall.n)return renderSignalClv(bt)+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet — win/ROI breakdowns appear once plays settle. (Signal CLV above builds sooner.)</div>';
+  var h=renderSignalClv(bt);
+  h+='<div class="card" style="padding:13px 14px;margin-bottom:8px">';
   h+=renderBtRows('BY SIGNAL — what actually wins',bt.bySignal);
   h+=renderBtRows('BY SPORT',bt.bySport);
   h+=renderBtRows('BY MARKET',bt.byMarket);
