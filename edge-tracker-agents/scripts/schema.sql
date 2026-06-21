@@ -689,3 +689,14 @@ create table if not exists nfl_derivatives (
   fetched_at  timestamptz not null default now()
 );
 create index if not exists nfl_derivatives_idx on nfl_derivatives (fetched_at desc);
+
+-- ── NFL coaching/pace tempo map (curated; review each offseason) ─────
+create table if not exists nfl_pace (
+  season     integer not null,
+  team       text not null,
+  pace       text,                       -- fast | avg | slow
+  pass       text,                       -- pass | bal | run
+  lean       numeric,                    -- + Over-leaning, − Under-leaning
+  updated_at timestamptz not null default now(),
+  primary key (season, team)
+);

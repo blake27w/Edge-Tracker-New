@@ -19,7 +19,7 @@ line-vs-public. Under bias applies to totals.
 | 5 | Key Number Engine | ✅ exists (`key-number`) | NFL spreads: buy/sell past 3,7,6,10,14,4. Possible enhancement: quantify half-point EV |
 | 6 | Weather (NFL mode) | ✅ exists (`weather`) | high wind → Under, direction-agnostic for football |
 | 7 | **Scoring-environment / totals model** | ✅ built (`nfl-totals`) | off/def points-per-game ratings from prior-season finals → projected game total → Under/Over lean. THIS DOC'S BUILD. |
-| 8 | Coaching / pace module | ⬜ pending | needs reliable pace data (plays/g, sec/play, pass rate) — ESPN pace endpoint unverified; revisit near camp |
+| 8 | Coaching / pace module | ✅ built (`nfl-pace`) | curated team-tempo map (pace + pass tendency, like MLB park factors) → totals lean; no verified free pace feed, so review each offseason / override via NFL_PACE_OVERRIDES. Reference/observational |
 | 9 | Injury / inactives-speed agent | ✅ built (`nfl-inactives`) | self-gates to NFL games near kickoff (dormant offseason); flags key skill-position OUTs + Under lean + how early caught. Observational |
 | 10 | Derivative ingestion | ✅ built (`nfl-derivatives`) | team totals +EV (devigged); OFF by default (`NFL_DERIVATIVES=true`), daily-capped, self-gates. Add alt_totals/alt_spreads via `NFL_DERIVATIVE_MARKETS` |
 | 11 | Opener→close CLV (NFL) | ✅ built (`nfl-line-move`) | per-game open→close total/spread move + history aggregate; self-gates (dormant offseason). Reference |
