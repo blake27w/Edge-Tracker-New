@@ -5756,9 +5756,10 @@ var AGENTS_META=[
   {name:'nfl-totals',icon:'🏈',label:'NFL Scoring/Totals Model',cadence:'every 12h'},
   {name:'nfl-inactives',icon:'🚑',label:'NFL Inactives-Speed',cadence:'10m (game days)'},
   {name:'nfl-line-move',icon:'📐',label:'NFL Opener→Close Lines',cadence:'30m (in-season)'},
+  {name:'nfl-derivatives',icon:'🧩',label:'NFL Derivatives (team totals)',cadence:'off unless enabled'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5852,7 +5853,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
-    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;}
+    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];}
     if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -6241,6 +6242,22 @@ function renderAgentsContent(){
       if(g.open_total!=null)h+='<span>O/U '+g.open_total+'→'+g.close_total+' '+esc(tdir)+(g.total_move!=null?' ('+(g.total_move>0?'+':'')+g.total_move+')':'')+'</span>';
       if(g.open_spread!=null)h+='<span style="color:var(--dim)"> · spr '+(g.spread_move!=null?(g.spread_move>0?'+':'')+g.spread_move:'')+'</span>';
       h+='</div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+
+  // Derivatives (team totals) — only present when NFL_DERIVATIVES is enabled.
+  var nd=state.agentsNflDerivs||[];
+  if(nd.length){
+    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🧩 DERIVATIVES — TEAM TOTALS <span style="color:var(--brass)">('+nd.length+')</span></div>';
+    nd.slice(0,24).forEach(function(d){
+      var col=d.side==='Under'?'var(--sage)':'var(--leather)',pr=d.price>0?'+'+d.price:''+d.price;
+      h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid '+col+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(d.team||'')+' '+esc(d.side||'')+' '+d.line+'</span><div style="font-size:8px;color:var(--dim)">'+esc(d.matchup||'')+'</div></div>';
+      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">+'+d.ev_pct+'%</span><div style="font-size:7.5px;color:var(--muted)">EV</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+pr+' @ <b>'+esc(d.book||'')+'</b> <span style="color:var(--dim)">vs fair '+(d.fair_price>0?'+':'')+d.fair_price+'</span></div>';
+      h+='</div>';
     });
     h+='<div style="height:8px"></div>';
   }

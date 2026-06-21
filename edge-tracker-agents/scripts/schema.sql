@@ -672,3 +672,20 @@ create table if not exists nfl_line_moves (
   captured_at  timestamptz not null default now()
 );
 create index if not exists nfl_line_moves_idx on nfl_line_moves (captured_at desc);
+
+-- ── NFL derivative edges (team totals etc.; only when NFL_DERIVATIVES=true) ──
+create table if not exists nfl_derivatives (
+  id          uuid primary key default gen_random_uuid(),
+  game_id     text,
+  matchup     text,
+  market      text,                        -- team_total | alt_total | alt_spread
+  team        text,
+  side        text,
+  line        numeric,
+  book        text,
+  price       integer,
+  fair_price  integer,
+  ev_pct      numeric,
+  fetched_at  timestamptz not null default now()
+);
+create index if not exists nfl_derivatives_idx on nfl_derivatives (fetched_at desc);

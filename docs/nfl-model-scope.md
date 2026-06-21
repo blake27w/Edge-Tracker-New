@@ -21,7 +21,7 @@ line-vs-public. Under bias applies to totals.
 | 7 | **Scoring-environment / totals model** | ✅ built (`nfl-totals`) | off/def points-per-game ratings from prior-season finals → projected game total → Under/Over lean. THIS DOC'S BUILD. |
 | 8 | Coaching / pace module | ⬜ pending | needs reliable pace data (plays/g, sec/play, pass rate) — ESPN pace endpoint unverified; revisit near camp |
 | 9 | Injury / inactives-speed agent | ✅ built (`nfl-inactives`) | self-gates to NFL games near kickoff (dormant offseason); flags key skill-position OUTs + Under lean + how early caught. Observational |
-| 10 | Derivative ingestion | ⬜ pending | team totals / alt lines — costs extra Odds API credits; gate behind a flag |
+| 10 | Derivative ingestion | ✅ built (`nfl-derivatives`) | team totals +EV (devigged); OFF by default (`NFL_DERIVATIVES=true`), daily-capped, self-gates. Add alt_totals/alt_spreads via `NFL_DERIVATIVE_MARKETS` |
 | 11 | Opener→close CLV (NFL) | ✅ built (`nfl-line-move`) | per-game open→close total/spread move + history aggregate; self-gates (dormant offseason). Reference |
 
 ## Wiring notes
