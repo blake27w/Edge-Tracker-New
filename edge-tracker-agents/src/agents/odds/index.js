@@ -50,6 +50,16 @@ export function getOddsBudget() {
   };
 }
 
+// Budget guard for discretionary Odds-API consumers (props, tennis,
+// derivatives). Returns false when fewer than `reserve` monthly credits remain
+// so core odds ingestion is protected. `budget.remaining` is reconciled from the
+// API's x-requests-remaining header each odds run, so it reflects ALL account
+// usage (lagged at most one odds cycle). Allows freely until the budget loads.
+export function hasOddsBudget(reserve = 0) {
+  if (!budget.loaded) return true;
+  return budget.remaining > reserve;
+}
+
 function sportCap(sport) {
   const alloc = oddsApi.allocation[sport] ?? 0.05;
   return Math.floor(oddsApi.monthlyBudget * alloc);

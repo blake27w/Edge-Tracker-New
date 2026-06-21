@@ -12,6 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getTennisGames } from '../../store/index.js';
+import { hasOddsBudget } from '../odds/index.js';
 
 const { oddsApi, BOOKS } = config;
 const WINDOW_H = Number(process.env.TENNIS_CLOSE_WINDOW_H) || 2;
@@ -31,6 +32,7 @@ async function fetchEvent(tournament, eventId) {
 async function run() {
   if (!config.tennisCloseCapture) return { summary: 'disabled (set TENNIS_CLOSE_CAPTURE=true)' };
   if (!oddsApi.key) return { summary: 'skipped — no ODDS_API_KEY' };
+  if (!hasOddsBudget(config.rules.oddsReserve)) return { summary: 'skipped — protecting odds budget' };
   if (today() !== day) { day = today(); used = 0; }
 
   const now = Date.now();

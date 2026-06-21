@@ -10,20 +10,13 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getTennisGames, setIntel } from '../../store/index.js';
+import { hasOddsBudget } from '../odds/index.js';
 
 const { oddsApi } = config;
 const DAY = 86400_000;
 const MAX_TOURNEYS = Number(process.env.TENNIS_MAX_TOURNEYS) || 8;
 // Significant differential: someone played recently AND has ≥1.5 days less rest.
 const DIFF_DAYS = Number(process.env.TENNIS_FATIGUE_DIFF) || 1.5;
-
-async function activeKeys() {
-  try {
-    const res = await fetch(`${oddsApi.base}/sports?apiKey=${oddsApi.key}`);
-    if (!res.ok) return [];
-    return (await res.json()).filter((s) => s.active && /^tennis_/.test(s.key)).map((s) => s.key);
-  } catch (_) { return []; }
-}
 
 async function fetchScores(key) {
   const params = new URLSearchParams({ apiKey: oddsApi.key, daysFrom: '3', dateFormat: 'iso' });
@@ -34,12 +27,17 @@ async function fetchScores(key) {
 
 async function run() {
   if (!oddsApi.key) return { summary: 'skipped — no ODDS_API_KEY' };
+  if (!hasOddsBudget(config.rules.oddsReserve)) return { summary: 'skipped — protecting odds budget' };
   const games = getTennisGames();
   if (!games.length) { setIntel('tennisFatigue', []); return { summary: 'no tennis matches' }; }
 
+  // Only the tournaments we actually have upcoming matches in — no /sports call,
+  // and we never fetch scores for tournaments we won't score.
+  const tourneys = [...new Set(games.map((g) => g.tournament).filter(Boolean))].slice(0, MAX_TOURNEYS);
+
   // Most recent completed match datetime per player.
   const lastMatch = {};
-  for (const key of (await activeKeys()).slice(0, MAX_TOURNEYS)) {
+  for (const key of tourneys) {
     let evs = [];
     try { evs = await fetchScores(key); } catch (e) { logger.warn('tennis-fatigue', e.message); continue; }
     for (const ev of evs) {

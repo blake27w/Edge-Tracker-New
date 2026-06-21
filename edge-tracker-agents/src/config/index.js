@@ -110,7 +110,8 @@ const AGENT_DEFS = {
   grading: { label: 'Grading Agent', emoji: '✅', min: 30 },
   // Tennis module (Phase 3) — skip cleanly when no tournaments are active.
   'tennis-ingest': { label: 'Tennis Ingestion', emoji: '🎾', min: 1440 },
-  'tennis-fatigue': { label: 'Tennis Fatigue & Schedule', emoji: '🎾', min: 30 },
+  // Rest-day data changes slowly — every 6h is plenty (was 30m, a budget drain).
+  'tennis-fatigue': { label: 'Tennis Fatigue & Schedule', emoji: '🎾', min: 360 },
   'tennis-surface': { label: 'Tennis Surface & Style', emoji: '🎾', min: 60 },
   'tennis-signal': { label: 'Tennis Signal Engine', emoji: '🎾', min: 5 },
   // Disabled unless TENNIS_CLOSE_CAPTURE=true; self-no-ops otherwise.
@@ -245,6 +246,10 @@ const config = {
     // Tennis is observational until it proves positive CLV over a sample (kept
     // out of the headline record, still graded). Lift with TENNIS_OBSERVATIONAL=false.
     tennisObservational: bool(env.TENNIS_OBSERVATIONAL, true),
+    // Budget protection: discretionary Odds-API consumers (props, tennis,
+    // derivatives) stand down when fewer than this many monthly credits remain,
+    // reserving them for core odds ingestion. Set ODDS_BUDGET_RESERVE.
+    oddsReserve: num(env.ODDS_BUDGET_RESERVE, ODDS_API_TIER === 'free' ? 50 : 1000),
     // DEFAULT TO UNDERS. An Over on a game total takes a -10 confidence penalty.
     overTotalPenalty: 10,
     // Unit sizing by raw score.
