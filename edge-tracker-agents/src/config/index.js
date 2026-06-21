@@ -139,6 +139,8 @@ const AGENT_DEFS = {
   'nfl-inactives': { label: 'NFL Inactives-Speed', emoji: '🚑', min: 10 },
   // Self-gates to NFL games — dormant (cheap no-op) in the offseason.
   'nfl-line-move': { label: 'NFL Opener→Close Lines', emoji: '📐', min: 30 },
+  // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
+  'nfl-derivatives': { label: 'NFL Derivatives (team totals)', emoji: '🧩', min: 20 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };
@@ -162,6 +164,11 @@ for (const [name, d] of Object.entries(AGENT_DEFS)) {
 
 const config = {
   dryRun: bool(env.DRY_RUN, false),
+
+  // NFL derivative ingestion (team totals / alt lines) — OFF by default because
+  // additional markets are billed per event on The Odds API. Enable with
+  // NFL_DERIVATIVES=true once you're OK with the extra credit spend.
+  nflDerivatives: bool(env.NFL_DERIVATIVES, false),
 
   supabase: {
     url: clean(env.SUPABASE_URL),

@@ -8,7 +8,7 @@ import config from './config/index.js';
 import db from './db/index.js';
 import { detectModel, getFeed, getMetrics, getClaudeUsage, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
-import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog } from './store/index.js';
+import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook } from './export/index.js';
 import { buildGames } from './games/index.js';
@@ -174,7 +174,7 @@ const server = http.createServer(async (req, res) => {
         system: systemHealth(),
       });
     case '/plays':
-      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove() }, watchdog: getWatchdog() });
+      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs() }, watchdog: getWatchdog() });
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');
