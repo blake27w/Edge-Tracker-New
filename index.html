@@ -5755,9 +5755,10 @@ var AGENTS_META=[
   {name:'nfl-props',icon:'📊',label:'NFL Prop Baselines',cadence:'daily'},
   {name:'nfl-totals',icon:'🏈',label:'NFL Scoring/Totals Model',cadence:'every 12h'},
   {name:'nfl-inactives',icon:'🚑',label:'NFL Inactives-Speed',cadence:'10m (game days)'},
+  {name:'nfl-line-move',icon:'📐',label:'NFL Opener→Close Lines',cadence:'30m (in-season)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5851,7 +5852,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
-    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];}
+    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;}
     if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -6221,6 +6222,25 @@ function renderAgentsContent(){
       h+='<div class="card" style="padding:6px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
       h+='<div><span style="font-size:10px;font-weight:600;color:var(--txt)">'+esc(t.team||'')+'</span></div>';
       h+='<div style="font-family:var(--M);font-size:9px"><span style="color:'+(t.off_rating>=0?'var(--sage)':'var(--wine)')+'">O '+(t.off_rating>=0?'+':'')+t.off_rating+'</span> <span style="color:'+(t.def_rating<=0?'var(--sage)':'var(--wine)')+'">D '+(t.def_rating>=0?'+':'')+t.def_rating+'</span></div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+
+  // Opener→close line movement (in-season; dormant otherwise).
+  var lm=state.agentsNflLineMove;
+  if(lm&&((lm.live&&lm.live.length)||(lm.agg&&lm.agg.n))){
+    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">📐 LINE MOVEMENT — OPEN → CLOSE</div>';
+    if(lm.agg&&lm.agg.n){
+      h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;font-size:9px;color:var(--cream)">History ('+lm.agg.n+' games): totals close lower <b>'+(lm.agg.total_down_pct!=null?lm.agg.total_down_pct+'%':'—')+'</b> of the time · avg total move <b>'+(lm.agg.total_avg_abs!=null?lm.agg.total_avg_abs:'—')+'</b> · avg spread move <b>'+(lm.agg.spread_avg_abs!=null?lm.agg.spread_avg_abs:'—')+'</b></div>';
+    }
+    (lm.live||[]).slice(0,16).forEach(function(g){
+      var tdir=g.total_move==null?'':(g.total_move<0?'↓':'↑');
+      h+='<div class="card" style="padding:7px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><span style="font-size:10px;color:var(--txt)">'+esc(g.matchup||'')+'</span></div>';
+      h+='<div style="font-family:var(--M);font-size:9px;color:var(--muted);text-align:right">';
+      if(g.open_total!=null)h+='<span>O/U '+g.open_total+'→'+g.close_total+' '+esc(tdir)+(g.total_move!=null?' ('+(g.total_move>0?'+':'')+g.total_move+')':'')+'</span>';
+      if(g.open_spread!=null)h+='<span style="color:var(--dim)"> · spr '+(g.spread_move!=null?(g.spread_move>0?'+':'')+g.spread_move:'')+'</span>';
+      h+='</div></div>';
     });
     h+='<div style="height:8px"></div>';
   }

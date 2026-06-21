@@ -657,3 +657,18 @@ create table if not exists nfl_inactives (
   detected_at  timestamptz not null default now()
 );
 create index if not exists nfl_inactives_idx on nfl_inactives (detected_at desc);
+
+-- ── NFL opener→close line moves (market-direction history) ─────────
+create table if not exists nfl_line_moves (
+  id           uuid primary key default gen_random_uuid(),
+  game_id      text,
+  matchup      text,
+  open_total   numeric,
+  close_total  numeric,
+  total_move   numeric,
+  open_spread  numeric,
+  close_spread numeric,
+  spread_move  numeric,
+  captured_at  timestamptz not null default now()
+);
+create index if not exists nfl_line_moves_idx on nfl_line_moves (captured_at desc);

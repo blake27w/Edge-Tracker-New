@@ -47,6 +47,7 @@ import nflSchedule from '../agents/nfl-schedule/index.js';
 import nflProps from '../agents/nfl-props/index.js';
 import nflTotals from '../agents/nfl-totals/index.js';
 import nflInactives from '../agents/nfl-inactives/index.js';
+import nflLineMove from '../agents/nfl-line-move/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
@@ -57,7 +58,7 @@ const AGENTS = [
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
   oppGrading, bookEdges, combatMarket, combatWeighin, combatSignal, combatDerivatives,
-  publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, nflInactives, watchdog, digest,
+  publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, nflInactives, nflLineMove, watchdog, digest,
 ];
 
 // name -> live status (the /health payload reads from here).
