@@ -22,7 +22,7 @@ line-vs-public. Under bias applies to totals.
 | 8 | Coaching / pace module | ⬜ pending | needs reliable pace data (plays/g, sec/play, pass rate) — ESPN pace endpoint unverified; revisit near camp |
 | 9 | Injury / inactives-speed agent | ✅ built (`nfl-inactives`) | self-gates to NFL games near kickoff (dormant offseason); flags key skill-position OUTs + Under lean + how early caught. Observational |
 | 10 | Derivative ingestion | ⬜ pending | team totals / alt lines — costs extra Odds API credits; gate behind a flag |
-| 11 | Opener→close CLV (NFL) | ⬜ pending | we capture openings + CLV already; add an NFL opener→close move tracker |
+| 11 | Opener→close CLV (NFL) | ✅ built (`nfl-line-move`) | per-game open→close total/spread move + history aggregate; self-gates (dormant offseason). Reference |
 
 ## Wiring notes
 - Offseason prep agents run on slow daily cadences and produce reference data.
