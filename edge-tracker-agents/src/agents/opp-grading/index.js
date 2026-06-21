@@ -21,7 +21,8 @@ function fromEv(r) {
   else if (/^total/.test(market)) { line = parseFloat(String(market).split(' ')[1]); market = 'total'; }
   else return null;
   if (market === 'total' && !Number.isFinite(line)) return null;
-  return { type: 'ev', sport: r.sport, game_id: r.game_id, matchup: r.matchup, market, side: r.side, line, price: r.price };
+  const detail = `+${r.ev_pct}% vs fair${r.book ? ` @ ${r.book}` : ''}${r.fair_price != null ? ` (fair ${r.fair_price > 0 ? '+' + r.fair_price : r.fair_price})` : ''}`;
+  return { type: 'ev', sport: r.sport, game_id: r.game_id, matchup: r.matchup, market, side: r.side, line, price: r.price, detail };
 }
 
 // line_signals row (stale | divergence | key) → gradeable play.
@@ -32,7 +33,7 @@ function fromSignal(r) {
   else if (market === 'spreads') market = 'spread';
   if (!['ml', 'total', 'spread'].includes(market)) return null;
   if ((market === 'total' || market === 'spread') && line == null) return null; // divergence totals/spreads lack a line
-  return { type: r.type, sport: r.sport, game_id: r.game_id, matchup: r.matchup, market, side: r.side, line, price: r.price };
+  return { type: r.type, sport: r.sport, game_id: r.game_id, matchup: r.matchup, market, side: r.side, line, price: r.price, detail: r.detail || null };
 }
 
 async function run() {
@@ -79,7 +80,7 @@ async function run() {
     if (!result) continue;
     const stake = config.rules.unitDollars;
     const pnl = result === 'win' ? Math.round(stake * profitPerUnit(f.price || -110) * 100) / 100 : result === 'loss' ? -stake : 0;
-    out.push({ type: f.type, sport: f.sport, game_id: f.game_id, matchup: f.matchup, market: f.market, side: f.side, line: f.line, status: result, pnl, graded_at: now });
+    out.push({ type: f.type, sport: f.sport, game_id: f.game_id, matchup: f.matchup, market: f.market, side: f.side, line: f.line, price: f.price ?? null, detail: f.detail || null, status: result, pnl, graded_at: now });
   }
   if (out.length) { try { await db.insert('opp_results', out); } catch (e) { logger.warn('opp-grading', e.message); } }
 

@@ -5943,7 +5943,8 @@ function renderResultsContent(){
     h+=renderClvDashboard();
   } else if(V==='opps'){
     var oh=renderOppRubric(bt);
-    h+=oh||'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded opportunities yet. +EV / stale / divergence / key flags get graded after games end.</div>';
+    if(oh){ h+=oh+renderOppDetail(bt); }
+    else h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded opportunities yet. +EV / stale / divergence / key flags get graded after games end.</div>';
   } else if(V==='recent'){
     var rh=renderRecentResults(bt);
     h+=rh||'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No recent graded plays yet.</div>';
@@ -6494,6 +6495,33 @@ function renderOppRubric(bt){
     h+='</div>';
   });
   h+='</div>';
+  return h;
+}
+// Per-opportunity breakdown: each graded flag, its trigger, and win/loss.
+function renderOppDetail(bt){
+  var rows=bt&&bt.oppsRecent; if(!rows||!rows.length)return '';
+  var labels={ev:'+EV',stale:'Stale',divergence:'Diverge',key:'Key #',middle:'Middle'};
+  if(!state.oppFilter)state.oppFilter='all';
+  var types=['all'].concat(Object.keys(labels).filter(function(k){return rows.some(function(r){return r.type===k})}));
+  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 6px">EACH GRADED OPPORTUNITY — HOW WE GOT THERE</div>';
+  // type filter chips
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:7px">';
+  types.forEach(function(t){var on=state.oppFilter===t;h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.oppFilter=\''+t+'\';render()" style="font-size:9px;padding:5px 9px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+(t==='all'?'All':esc(labels[t]||t))+'</button>';});
+  h+='</div>';
+  var list=rows.filter(function(r){return state.oppFilter==='all'||r.type===state.oppFilter});
+  list.slice(0,60).forEach(function(r){
+    var col=r.status==='win'?'var(--sage)':r.status==='loss'?'var(--wine)':'var(--dim)';
+    var ic=r.status==='win'?'✓ WIN':r.status==='loss'?'✗ LOSS':'– PUSH';
+    var ln=r.line!=null?(' '+(r.line>0?'+'+r.line:r.line)):'';
+    var pr=r.price!=null?' '+(r.price>0?'+'+r.price:''+r.price):'';
+    h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid '+col+'">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="flex:1;min-width:0"><span style="font-size:7px;color:var(--brass);border:1px solid var(--brass);border-radius:3px;padding:0 3px">'+esc(labels[r.type]||r.type)+'</span> <span style="font-size:11px;color:var(--txt)">'+esc(r.matchup||'')+'</span></div>';
+    h+='<div style="font-family:var(--M);font-size:10px;font-weight:700;color:'+col+';white-space:nowrap">'+ic+(r.pnl!=null?' '+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl):'')+'</div></div>';
+    h+='<div style="font-size:9px;color:var(--leather);margin-top:3px"><b>'+esc((r.side||'')+ln)+'</b>'+esc(pr)+(r.detail?' <span style="color:var(--dim)">· '+esc(r.detail)+'</span>':'')+'</div>';
+    h+='</div>';
+  });
+  if(!list.length)h+='<div class="card" style="text-align:center;font-size:9px;color:var(--muted);font-style:italic">None of this type graded yet.</div>';
   return h;
 }
 function renderRecentResults(bt){
