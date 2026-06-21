@@ -18,6 +18,19 @@ import { getGames, setIntel } from '../../store/index.js';
 const DAY = 86400_000;
 function ymd(d) { return d.toISOString().slice(0, 10); }
 
+// Static park factors (well-established run environments), keyed by the home
+// team name as The Odds API returns it. Pitcher parks support an Under lean
+// (our bias); hitter parks an Over. Unlisted parks are neutral.
+const PARK_FACTOR = {
+  'Colorado Rockies': 'hitter', 'Cincinnati Reds': 'hitter', 'Boston Red Sox': 'hitter',
+  'Baltimore Orioles': 'hitter', 'Arizona Diamondbacks': 'hitter', 'Philadelphia Phillies': 'hitter',
+  'Texas Rangers': 'hitter', 'Kansas City Royals': 'hitter',
+  'San Diego Padres': 'pitcher', 'San Francisco Giants': 'pitcher', 'Seattle Mariners': 'pitcher',
+  'Miami Marlins': 'pitcher', 'New York Mets': 'pitcher', 'Detroit Tigers': 'pitcher',
+  'Cleveland Guardians': 'pitcher', 'Tampa Bay Rays': 'pitcher', 'St. Louis Cardinals': 'pitcher',
+  'Pittsburgh Pirates': 'pitcher', 'Oakland Athletics': 'pitcher', 'Athletics': 'pitcher',
+};
+
 async function fetchSchedule(startStr, endStr) {
   const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${startStr}&endDate=${endStr}&hydrate=probablePitcher,team`;
   const res = await fetch(url);
@@ -69,13 +82,21 @@ async function run() {
     const homeFat = fatigueLabel(priorCounts[g.home] || 0);
     const awayFat = fatigueLabel(priorCounts[g.away] || 0);
     const p = probables[`${g.away}@${g.home}`] || {};
-    const lean = (homeFat === 'high' || awayFat === 'high') ? 'over' : 'neutral';
+    const pf = PARK_FACTOR[g.home] || 'neutral';
+    const tired = homeFat === 'high' || awayFat === 'high';
+    // Combine park factor + bullpen fatigue. Pitcher park → Under (unless a
+    // gassed pen cancels it); hitter park → Over; neutral park → Over only if a
+    // pen is gassed.
+    let lean;
+    if (pf === 'pitcher') lean = tired ? 'neutral' : 'under';
+    else if (pf === 'hitter') lean = 'over';
+    else lean = tired ? 'over' : 'neutral';
     return {
       game_id: g.game_id, home: g.home, away: g.away,
       ump_name: null, ump_ou_tendency: null, ump_k_tendency: null,
       home_bullpen_fatigue: homeFat, away_bullpen_fatigue: awayFat,
       total_lean: lean,
-      notes: `Probables: ${p.away || '?'} (away) vs ${p.home || '?'} (home); bullpen fatigue H:${homeFat} A:${awayFat}`,
+      notes: `Park: ${pf}; probables ${p.away || '?'} (a) vs ${p.home || '?'} (h); pen fatigue H:${homeFat} A:${awayFat}`,
       fetched_at: now,
     };
   });
@@ -84,10 +105,11 @@ async function run() {
     try { await db.insert('mlb_context', rows); } catch (e) { logger.warn('mlb-context', e.message); }
   }
   setIntel('mlbContext', rows.map((r) => ({ ...r, sport: 'MLB' })));
-  const tired = rows.filter((r) => r.total_lean === 'over').length;
+  const unders = rows.filter((r) => r.total_lean === 'under').length;
+  const overs = rows.filter((r) => r.total_lean === 'over').length;
   return {
-    summary: `${rows.length} MLB context rows (${tired} bullpen-fatigue leans) · free StatsAPI`,
-    data: { count: rows.length, tired },
+    summary: `${rows.length} MLB context rows (${unders} Under / ${overs} Over leans) · free StatsAPI`,
+    data: { count: rows.length, unders, overs },
   };
 }
 

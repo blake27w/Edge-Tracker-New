@@ -5,20 +5,26 @@
 // north-star metric the CLV Tracker measures; this engine decides what
 // to play and how big.
 //
-// SIGNAL TIERS
-//   Tier 1 (+20, primary edge): reverse line movement vs heavy public,
-//     steam moves, sharp-book leads, a key starter ruled OUT before the
-//     line adjusts, significant (15+ mph) unpriced wind.
+// SIGNAL TIERS (base 50; each tier adds points, capped at 95 — never 100)
+//   Tier 1 (+20, primary edge): RLM vs heavy public, steam (spreads/ml only),
+//     significant (15+ mph) DIRECTIONAL wind on totals.
 //   Tier 2 (+10, supporting): handle≫bets divergence, power-vs-line gap,
-//     park/bullpen spot, schedule spot.
-//   Tier 3 (+3, CONFIRMATION ONLY): raw Under/Over trends, season stats,
-//     H2H. Never a reason to play on its own.
+//     key starter OUT, park/bullpen spot, schedule spot.
+//   Tier 3 (+3, CONFIRMATION ONLY): structural Under trend, AND steam on
+//     TOTALS (demoted — it grades badly, can't qualify a totals play alone).
 //
-// QUALIFYING: score ≥ 70 AND (≥1 Tier 1 OR a Tier 2 sharp/public
-//   divergence). A play built only on Tier 3 never qualifies.
+// SCORING: diminishing returns on correlated (same-id) signals — first counts
+//   full, repeats decay ×0.6. Tier-1 count is DISTINCT ids (independent edges).
 //
-// UNDER BIAS: Over totals take a -10 penalty and need 2+ Tier 1 signals.
+// QUALIFYING: score ≥ 70 AND (≥1 Tier 1 OR a Tier-2 sharp/public divergence).
+//   A play built only on Tier 3 never qualifies.
+//
+// UNDER BIAS: Over totals take a -10 penalty and need 2+ independent Tier 1.
 //   Spreads / moneylines / props are exempt.
+//
+// TOTALS PROBATION (rules.totalsProbation): while on, totals are observational
+//   + reduced-stake (out of the headline record, still graded, no alerts) until
+//   a totals sub-signal proves positive CLV. Spreads/ml/props unaffected.
 // ══════════════════════════════════════════════════════════════
 import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
@@ -55,13 +61,14 @@ function collectSignals(game, market, side, intel, power) {
   }
   for (const s of intel.sharp) {
     const mk = isTotal ? 'totals' : (market === 'spread' ? 'spreads' : 'h2h');
-    if (s.market === mk && (!isTotal || s.side === side)) {
-      // Steam on TOTALS is the correlated line-move signal that grades badly
-      // (1-4-1, -51.5%) — demote to confirmation-only so it can't qualify a
-      // totals play on its own. On spreads/ml it stays a Tier-1 edge.
-      if (isTotal) add(3, 'steam', `${s.detail || 'steam move'} (totals — confirmation only)`);
-      else add(1, 'steam', s.detail || 'steam move');
-    }
+    // Require the steam to be on THIS side (not just this market) — otherwise a
+    // steam on the opposite side would wrongly credit a Tier-1 to this play.
+    if (s.market !== mk || s.side !== side) continue;
+    // Steam on TOTALS is the correlated line-move signal that grades badly
+    // (1-4-1, -51.5%) — demote to confirmation-only so it can't qualify a
+    // totals play on its own. On spreads/ml it stays a Tier-1 edge.
+    if (isTotal) add(3, 'steam', `${s.detail || 'steam move'} (totals — confirmation only)`);
+    else add(1, 'steam', s.detail || 'steam move');
   }
   if (isTotal && under) {
     for (const w of intel.weather) {
@@ -235,6 +242,7 @@ async function run() {
   setPlays(plays);
 
   for (const p of newAlerts) {
+    if (p.observational) continue; // probation totals are graded but not real-stake — don't push alerts
     const body = `🟢 ${p.sport} ${p.matchup} — ${p.side} ${p.line ?? ''} (${Math.round(p.score)} conf, ${p.tier}/$${p.unit_dollars}, ${p.t1_count} T1)`;
     try {
       const r = await notifyAll(`Edge Tracker play: ${p.sport} ${p.side}`, body);
