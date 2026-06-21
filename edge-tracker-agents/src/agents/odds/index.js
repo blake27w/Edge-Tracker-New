@@ -47,6 +47,13 @@ export function getOddsBudget() {
     perDay: dayOfMonth > 0 ? Math.round((used / dayOfMonth) * 10) / 10 : 0,
     projectedMonthly,
     pctUsed: cap ? Math.round((used / cap) * 1000) / 10 : 0,
+    // Burn-rate vs the month's progress: paceRatio > 1 = spending faster than
+    // linear (creep). monthPct = how much of the month has elapsed.
+    monthPct: daysInMonth > 0 ? Math.round((dayOfMonth / daysInMonth) * 1000) / 10 : 0,
+    paceRatio: (cap && dayOfMonth > 0) ? Math.round(((used / cap) / (dayOfMonth / daysInMonth)) * 100) / 100 : null,
+    // Reserve below which discretionary scanners (props/tennis/derivatives) pause.
+    reserve: config.rules.oddsReserve,
+    discretionaryActive: budget.remaining > config.rules.oddsReserve,
   };
 }
 

@@ -6491,6 +6491,18 @@ function renderCostWidget(b){
   h+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:5px"><span style="color:var(--muted)">'+(b.perDay||0)+'/day · day '+b.dayOfMonth+' of '+b.daysInMonth+'</span><span style="color:'+(over?'var(--wine)':'var(--muted)')+'">projected '+b.projectedMonthly+'/mo'+(over?' ⚠':'')+'</span></div>';
   if(over)h+='<div style="font-size:8px;color:var(--wine);margin-top:3px;font-style:italic">On pace to exceed the free tier — sports auto-throttle as caps are hit (no overage charge).</div>';
 
+  // Burn-rate / pace — are we spending faster than the month is elapsing?
+  if(b.paceRatio!=null){
+    var pr=b.paceRatio,pcol=pr>1.15?'var(--wine)':pr>1?'var(--brass)':'#34d399';
+    var pace=pr>1.15?'running hot':pr>1?'slightly ahead':'on track';
+    h+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:6px"><span style="color:var(--muted)">burn pace</span><span style="color:'+pcol+'"><b>'+pr+'×</b> '+pace+' <span style="color:var(--muted)">('+pct+'% used vs '+(b.monthPct||0)+'% of month)</span></span></div>';
+  }
+  // Reserve status — when discretionary scanners pause to protect core ingestion.
+  if(b.reserve!=null){
+    var paused=b.discretionaryActive===false;
+    h+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:4px"><span style="color:var(--muted)">scanners reserve</span><span style="color:'+(paused?'var(--wine)':'var(--muted)')+'">'+(paused?'⏸ PAUSED — &lt;'+b.reserve+' left (core only)':'active · floor '+b.reserve)+'</span></div>';
+  }
+
   // Top consumers
   var bs=b.bySport||{};var keys=Object.keys(bs).sort(function(x,y){return bs[y]-bs[x]}).slice(0,6);
   if(keys.length){
