@@ -33,6 +33,7 @@ const store = {
   nflTotals: null,    // NFL scoring-environment / totals model (offseason prep)
   fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
   clvReport: null,    // aggregated closing-line-value dashboard
+  bookEdges: null,    // per-book mispricing scorecard (Book Edges)
   combatDerivs: [],   // combat derivative plays (round totals etc., observational)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
@@ -79,6 +80,9 @@ export function getFadePlays() { return store.fadePlays; }
 
 export function setClvReport(r) { store.clvReport = r; }
 export function getClvReport() { return store.clvReport; }
+
+export function setBookEdges(r) { store.bookEdges = r; }
+export function getBookEdges() { return store.bookEdges; }
 
 export function setCombatDerivs(p) { store.combatDerivs = p || []; }
 export function getCombatDerivs() { return store.combatDerivs; }

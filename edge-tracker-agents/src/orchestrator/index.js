@@ -35,6 +35,7 @@ import digest from '../agents/digest/index.js';
 import keyNumber from '../agents/key-number/index.js';
 import fairLine from '../agents/fair-line/index.js';
 import oppGrading from '../agents/opp-grading/index.js';
+import bookEdges from '../agents/book-edges/index.js';
 import combatMarket from '../agents/combat-market/index.js';
 import combatWeighin from '../agents/combat-weighin/index.js';
 import combatSignal from '../agents/combat-signal/index.js';
@@ -54,7 +55,7 @@ const AGENTS = [
   mlbContext, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
-  oppGrading, combatMarket, combatWeighin, combatSignal, combatDerivatives,
+  oppGrading, bookEdges, combatMarket, combatWeighin, combatSignal, combatDerivatives,
   publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, watchdog, digest,
 ];
 

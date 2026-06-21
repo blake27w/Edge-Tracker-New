@@ -5743,6 +5743,7 @@ var AGENTS_META=[
   {name:'key-number',icon:'🔑',label:'Key-Number Analysis',cadence:'every 5 min'},
   {name:'fair-line',icon:'🧪',label:'Fair-Line Model (experimental)',cadence:'every 30 min'},
   {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
+  {name:'book-edges',icon:'📕',label:'Book Edges Scorecard',cadence:'every 30 min'},
   {name:'combat-market',icon:'🥋',label:'Combat Market (C1)',cadence:'every 10 min'},
   {name:'combat-weighin',icon:'⚖️',label:'Weigh-In News (C2)',cadence:'every 2h (fight wks)'},
   {name:'combat-signal',icon:'🥊',label:'Combat Signal (C3)',cadence:'every 5 min'},
@@ -5755,7 +5756,7 @@ var AGENTS_META=[
   {name:'nfl-totals',icon:'🏈',label:'NFL Scoring/Totals Model',cadence:'every 12h'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5850,7 +5851,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;}
-    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;}
+    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -5942,6 +5943,7 @@ function renderResultsContent(){
   } else if(V==='clv'){
     h+=renderClvDashboard();
   } else if(V==='opps'){
+    h+=renderBookEdges(bt);
     var oh=renderOppRubric(bt);
     if(oh){ h+=oh+renderOppDetail(bt); }
     else h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded opportunities yet. +EV / stale / divergence / key flags get graded after games end.</div>';
@@ -6495,6 +6497,64 @@ function renderOppRubric(bt){
     h+='</div>';
   });
   h+='</div>';
+  return h;
+}
+// Book Edges — per-book mispricing watchlist (which books to check first).
+function fmtWin(sec){ if(sec==null)return '—'; if(sec<90)return sec+'s'; if(sec<5400)return Math.round(sec/60)+'m'; return Math.round(sec/3600)+'h'; }
+function renderBookEdges(){
+  var be=state.agentsBookEdges;
+  var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 4px">📕 BOOK EDGES — WHO TO ATTACK FIRST</div>';
+  h+='<div style="font-size:8px;color:var(--muted);margin-bottom:8px">Which books are most often the off-market laggard, in which markets, how long the window stays open, and which edges are decaying. Graded on real ROI.</div>';
+  if(!be||!be.byBook||!be.byBook.length){ return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:8px">No book-edge episodes yet. Builds as the stale-line / divergence scanners flag and grade.</div>'; }
+  var min=be.minSample||15;
+  // Decay alerts first (actionable warnings)
+  if(be.decay&&be.decay.length){
+    h+='<div style="background:rgba(150,40,40,.12);border:1px solid var(--wine);border-radius:8px;padding:7px 10px;margin-bottom:8px"><div style="font-size:9px;color:var(--wine);font-weight:600">⚠ DECAYING — was profitable, cold last 7d</div>';
+    be.decay.slice(0,8).forEach(function(d){
+      h+='<div style="font-size:9px;color:var(--cream);margin-top:3px">'+esc(d.book)+' · '+esc(d.sport||'')+' '+esc(d.market||'')+' <span style="color:var(--muted)">— now '+(d.recentRoi>=0?'+':'')+d.recentRoi+'% ('+d.recentN+'), was '+(d.priorRoi!=null?(d.priorRoi>=0?'+':'')+d.priorRoi+'%':'+')+'</span></div>';
+    });
+    h+='</div>';
+  }
+  // Ranked watchlist by book
+  h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+  h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">RANKED BOOKS</div>';
+  be.byBook.slice(0,12).forEach(function(b){
+    var dim=b.small?';opacity:.5':'';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
+    h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(b.book)+'</span>'+(b.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+b.graded+' graded · win '+(b.avgWindowSec!=null?fmtWin(b.avgWindowSec)+' window':'—')+'</div></div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:52px;text-align:right">'+b.w+'-'+b.l+'</div>';
+    h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:40px;text-align:right">'+(b.hitPct!=null?b.hitPct+'%':'—')+'</div>';
+    h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+(b.roi==null?'var(--muted)':btColor(b.roi))+'">'+(b.roi!=null?(b.roi>=0?'+':'')+b.roi+'%':'—')+'</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  // Per book × market grid
+  if(be.grid&&be.grid.length){
+    h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+    h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">BOOK × MARKET — flags · hit · ROI · window · off-by</div>';
+    be.grid.filter(function(c){return c.graded>0||c.n>=3}).slice(0,40).forEach(function(c){
+      var dim=c.small?';opacity:.5':'';
+      var disc=c.avgPts!=null?(c.type==='divergence'?c.avgPts+'%':c.avgPts+'pt'):'';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
+      h+='<div style="flex:1;min-width:0"><span style="font-size:10px;color:var(--cream)">'+esc(c.book)+'</span> <span style="font-size:8px;color:var(--dim)">'+esc(c.sport||'')+' '+esc(c.market||'')+(c.type==='divergence'?' ·div':'')+'</span></div>';
+      h+='<div style="font-family:var(--M);font-size:8.5px;color:var(--muted);width:34px;text-align:right">'+c.n+'f</div>';
+      h+='<div style="font-family:var(--M);font-size:8.5px;color:var(--muted);width:36px;text-align:right">'+(c.hitPct!=null?c.hitPct+'%':'—')+'</div>';
+      h+='<div style="font-family:var(--M);font-size:10px;font-weight:700;width:46px;text-align:right;color:'+(c.roi==null?'var(--muted)':btColor(c.roi))+'">'+(c.roi!=null?(c.roi>=0?'+':'')+c.roi+'%':'—')+'</div>';
+      h+='<div style="font-family:var(--M);font-size:8px;color:var(--leather);width:38px;text-align:right">'+fmtWin(c.avgWindowSec)+'</div>';
+      h+='<div style="font-family:var(--M);font-size:8px;color:var(--dim);width:36px;text-align:right">'+disc+'</div>';
+      h+='</div>';
+    });
+    h+='<div style="font-size:7px;color:var(--muted);margin-top:5px">Greyed = under '+min+' graded (too small to trust). "window" = how long you typically had to act.</div>';
+    h+='</div>';
+  }
+  // Exposure
+  if(be.exposure&&be.exposure.length){
+    h+='<div class="card" style="padding:10px 13px;margin-bottom:8px"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">EXPOSURE (limit-risk awareness)</div>';
+    be.exposure.slice(0,10).forEach(function(e){
+      h+='<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:10px"><span style="color:var(--cream)">'+esc(e.book)+'</span><span style="font-family:var(--M);color:var(--muted)">'+e.graded+' bets · $'+e.staked+'</span></div>';
+    });
+    h+='</div>';
+  }
   return h;
 }
 // Per-opportunity breakdown: each graded flag, its trigger, and win/loss.

@@ -121,6 +121,7 @@ const AGENT_DEFS = {
   'key-number': { label: 'Key-Number Analysis', emoji: '🔑', min: 5 },
   'fair-line': { label: 'Fair-Line Model (experimental)', emoji: '🧪', min: 30 },
   'opp-grading': { label: 'Opportunity Grading', emoji: '🧮', min: 30 },
+  'book-edges': { label: 'Book Edges Scorecard', emoji: '📕', min: 30 },
   'combat-market': { label: 'Combat Market (C1)', emoji: '🥋', min: 10 },
   // Interval-based, but self-gates internally: UFC only fires Fri noon–3pm ET,
   // Boxing fires whenever a card is ≤48h out (throttled ~6h between Claude calls).
