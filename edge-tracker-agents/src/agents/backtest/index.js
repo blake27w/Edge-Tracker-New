@@ -88,6 +88,64 @@ function signalLabels(r) {
   return s.map((x) => x && (x.label || x.id)).filter(Boolean);
 }
 
+// Human labels for stable signal ids (the per-signal CLV scorecard groups by id).
+const SIG_LABELS = {
+  rlm: 'RLM vs public', steam: 'Steam / sharp move', wind: 'Wind (directional)',
+  divergence: 'Handle>bets divergence', injury_out: 'Key player OUT', schedule: 'Schedule spot',
+  bullpen: 'Bullpen/park Under', bullpen_over: 'Bullpen Over', power: 'Power-rating gap',
+  under_bias: 'Structural Under bias', weather_mild: 'Mild wind', ev: '+EV vs fair', weighin: 'Weigh-in news',
+};
+
+// PER-SIGNAL CLV SCORECARD — the key analytic: which signal TYPES actually beat
+// the close. Joins each qualifying play's signals to its (clean) CLV record and
+// attributes that play's CLV to every signal id on it. CLV is the leading
+// indicator, so this counts every play that has a CLV record, graded or not;
+// win/ROI are reported for the graded subset. Signals that consistently lose to
+// the close get flagged for removal.
+async function signalCard() {
+  let clvRows = [];
+  try { clvRows = await db.select('clv_records', 'game_id,bet_market,side,clv,beat_close', { match: { suspect: false }, limit: 8000 }); }
+  catch (_) { return []; }
+  if (!clvRows.length) return [];
+  const clvMap = new Map();
+  for (const c of clvRows) clvMap.set(`${c.game_id}|${c.bet_market}|${c.side}`, c);
+
+  let plays = [];
+  try { plays = await db.select('monitor_scores', 'game_id,market,side,signals,status,pnl,unit_dollars,observational', { match: { qualified: true }, order: { column: 'scored_at', ascending: false }, limit: 8000 }); }
+  catch (_) { return []; }
+
+  const agg = {};
+  for (const p of plays) {
+    if (p.observational) continue;                 // combat etc. stay out of the main scorecard
+    const c = clvMap.get(`${p.game_id}|${p.market}|${p.side}`);
+    if (!c) continue;
+    const ids = [...new Set((Array.isArray(p.signals) ? p.signals : []).map((s) => s && s.id).filter(Boolean))];
+    for (const id of ids) {
+      const a = (agg[id] ||= { n: 0, beat: 0, clvSum: 0, graded: 0, w: 0, l: 0, staked: 0, pnl: 0 });
+      a.n++; if (c.beat_close) a.beat++; a.clvSum += Number(c.clv) || 0;
+      if (p.status === 'win' || p.status === 'loss' || p.status === 'push') {
+        a.graded++; if (p.status === 'win') a.w++; else if (p.status === 'loss') a.l++;
+        a.staked += Number(p.unit_dollars) || 0; a.pnl += Number(p.pnl) || 0;
+      }
+    }
+  }
+  return Object.entries(agg)
+    .filter(([, a]) => a.n >= 3)
+    .map(([id, a]) => {
+      const decided = a.w + a.l;
+      return {
+        id, label: SIG_LABELS[id] || id, n: a.n,
+        beatPct: Math.round((a.beat / a.n) * 1000) / 10,
+        avgClv: Math.round((a.clvSum / a.n) * 100) / 100,
+        graded: a.graded,
+        winPct: decided ? Math.round((a.w / decided) * 1000) / 10 : null,
+        roi: a.staked ? Math.round((a.pnl / a.staked) * 1000) / 10 : null,
+        flag: a.n >= 20 && (a.beat / a.n) < 0.5,    // consistently loses to the close → review for removal
+      };
+    })
+    .sort((x, y) => y.n - x.n);
+}
+
 async function run() {
   if (!db.isConnected()) { setBacktest(null); return { summary: 'skipped — no DB' }; }
 
@@ -103,7 +161,7 @@ async function run() {
   if (!rows.length) {
     const clv0 = await clvSummary();
     const o0 = finalize(blank());
-    setBacktest({ updated: new Date().toISOString(), overall: o0, bySignal: [], bySport: [], byMarket: [], byTier: [], byConfidence: [], byT1: [], clv: clv0, verdict: verdict(o0, clv0) });
+    setBacktest({ updated: new Date().toISOString(), overall: o0, bySignal: [], bySport: [], byMarket: [], byTier: [], byConfidence: [], byT1: [], signalClv: await signalCard(), clv: clv0, verdict: verdict(o0, clv0) });
     return { summary: 'no graded plays yet' };
   }
 
@@ -135,6 +193,7 @@ async function run() {
   } catch (_) { report.research = finalize(blank()); }
 
   report.clv = await clvSummary();
+  report.signalClv = await signalCard();          // per-signal CLV scorecard (what actually beats the close)
   report.verdict = verdict(report.overall, report.clv);
 
   // Opportunity scanners — did the flags actually win? (graded by opp-grading)
