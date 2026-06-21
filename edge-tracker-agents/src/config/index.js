@@ -144,6 +144,7 @@ const AGENT_DEFS = {
   'nfl-line-move': { label: 'NFL Opener→Close Lines', emoji: '📐', min: 30 },
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
   'nfl-derivatives': { label: 'NFL Derivatives (team totals)', emoji: '🧩', min: 20 },
+  'nfl-pace': { label: 'NFL Coaching/Pace', emoji: '⏱️', min: 1440 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };
