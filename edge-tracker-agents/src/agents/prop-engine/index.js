@@ -27,6 +27,18 @@ const LINE_EDGE = { MLB: 1, NBA: 2.5, NHL: 1, NFL: 15 };
 const MAX_PER_RUN = num(process.env.PROP_MAX_GAMES_PER_RUN, 6);
 const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 40);
 
+// Classify a prop play by the trigger that surfaced it (tag from the real
+// source — never a guess). The underlying mechanism is always a cross-book
+// line discrepancy; the trigger is what made us look.
+function propSignalType(trigger, market, side, sport) {
+  if (trigger === 'injury') return 'injury_backup';
+  if (trigger === 'weather') {
+    if (sport === 'NFL' && market === 'player_pass_yds' && side === 'UNDER') return 'weather_passing_under';
+    return 'line_shop';
+  }
+  return 'line_shop';
+}
+
 const seenOut = new Set();          // game_id|player already alerted on
 const persisted = new Set();        // game_id|player|stat|side already in monitor_scores
 let day = today(), scansToday = 0;
@@ -124,6 +136,7 @@ async function run() {
         sport: g.sport, game_id: gameId, matchup: `${g.away} @ ${g.home}`, commence_time: g.commence_time, market: 'prop',
         side: `${e.player} ${e.side} ${e.line} ${e.market.replace(/_/g, ' ')}`, line: e.line,
         _player: e.player, _stat: e.market, _side: e.side.toUpperCase(),
+        _propType: propSignalType(trigger, e.market, e.side.toUpperCase(), g.sport),
         score: 75, confidence: 75, tier: '1u', unit_mult: 1, unit_dollars: config.rules.unitDollars, t1_count: 1,
         signals: [{ tier: 1, id: trigger, label: `${trigger} edge — best ${e.book} ${e.line} vs ${e.consensus} consensus` }],
         qualified: true, market_trigger: trigger, scored_at: now,
@@ -144,7 +157,7 @@ async function run() {
     persisted.add(key);
     gradeable.push({
       sport: p.sport, game_id: p.game_id, matchup: p.matchup, market: 'prop',
-      side: p._side, line: p.line, player: p._player, stat_type: p._stat,
+      side: p._side, line: p.line, player: p._player, stat_type: p._stat, prop_signal_type: p._propType,
       raw_score: p.score, score: p.score, confidence: p.confidence, tier: p.tier,
       unit_mult: p.unit_mult, unit_dollars: p.unit_dollars, t1_count: p.t1_count,
       signals: p.signals, qualified: true, status: 'pending', scored_at: now,

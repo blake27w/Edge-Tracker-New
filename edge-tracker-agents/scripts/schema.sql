@@ -258,6 +258,8 @@ alter table monitor_scores add column if not exists player text;
 alter table monitor_scores add column if not exists stat_type text;
 alter table monitor_scores add column if not exists anomaly text;
 alter table monitor_scores add column if not exists observational boolean default false;
+-- Prop sub-type: which trigger generated the prop play (injury_backup, line_shop, etc.).
+alter table monitor_scores add column if not exists prop_signal_type text;
 
 -- Combat (UFC/Boxing) market snapshots — open vs current per fighter, softest book.
 create table if not exists combat_markets (
