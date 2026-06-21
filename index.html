@@ -5752,9 +5752,10 @@ var AGENTS_META=[
   {name:'nfl-win-totals',icon:'🏈',label:'NFL Win-Totals Model',cadence:'every 12h'},
   {name:'nfl-schedule',icon:'🗓️',label:'NFL Schedule Spots',cadence:'daily'},
   {name:'nfl-props',icon:'📊',label:'NFL Prop Baselines',cadence:'daily'},
+  {name:'nfl-totals',icon:'🏈',label:'NFL Scoring/Totals Model',cadence:'every 12h'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5848,7 +5849,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
-    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];}
+    if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;}
     if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -6174,6 +6175,38 @@ function renderAgentsContent(){
     h+='<div style="text-align:right;font-family:var(--M)"><span style="font-size:13px;font-weight:700;color:var(--brass)">'+r.projected_pg+'</span><span style="font-size:8px;color:var(--muted)">/g (was '+r.last_pg+')</span></div>';
     h+='</div>';
   }); h+='<div style="height:8px"></div>'; }
+
+  // Scoring environment / totals model
+  var nt=state.agentsNflTotals;
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🏈 SCORING ENVIRONMENT'+(nt&&nt.leagueAvg?' <span style="color:var(--muted);font-size:8px">(lg avg '+nt.leagueAvg+'/tm)</span>':'')+'</div>';
+  if(!nt||!nt.teams||!nt.teams.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:14px">No scoring model yet (builds from prior-season finals).</div>'; }
+  else {
+    // Live totals leans first (in-season), then projected schedule, then team ratings.
+    if(nt.leans&&nt.leans.length){
+      h+='<div style="font-size:8px;color:var(--leather);margin:0 0 5px">Model vs posted total (live):</div>';
+      nt.leans.slice(0,12).forEach(function(l){
+        var col=l.side==='Under'?'var(--sage)':'var(--leather)';
+        h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid '+col+';display:flex;justify-content:space-between;align-items:center">';
+        h+='<div><div style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(l.matchup||'')+'</div><div style="font-size:9px;color:var(--leather);margin-top:1px">posted <b>'+l.posted+'</b> · model <b>'+l.proj+'</b></div></div>';
+        h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:'+col+'">'+esc(l.side)+'</span><div style="font-size:7.5px;color:var(--muted)">'+(l.diff>0?'+':'')+l.diff+'</div></div></div>';
+      });
+    }
+    if(nt.games&&nt.games.length){
+      h+='<div style="font-size:8px;color:var(--leather);margin:6px 0 5px">Projected game totals (upcoming):</div>';
+      nt.games.slice(0,16).forEach(function(gm){
+        h+='<div class="card" style="padding:6px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
+        h+='<div><span style="font-size:10px;color:var(--txt)">'+esc(gm.away||'')+' @ '+esc(gm.home||'')+'</span> <span style="font-size:8px;color:var(--dim)">Wk '+gm.week+'</span></div>';
+        h+='<span style="font-family:var(--M);font-size:12px;font-weight:700;color:var(--brass)">'+gm.proj_total+'</span></div>';
+      });
+    }
+    h+='<div style="font-size:8px;color:var(--leather);margin:6px 0 5px">Team scoring ratings (vs avg):</div>';
+    nt.teams.slice(0,32).forEach(function(t){
+      h+='<div class="card" style="padding:6px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><span style="font-size:10px;font-weight:600;color:var(--txt)">'+esc(t.team||'')+'</span></div>';
+      h+='<div style="font-family:var(--M);font-size:9px"><span style="color:'+(t.off_rating>=0?'var(--sage)':'var(--wine)')+'">O '+(t.off_rating>=0?'+':'')+t.off_rating+'</span> <span style="color:'+(t.def_rating<=0?'var(--sage)':'var(--wine)')+'">D '+(t.def_rating>=0?'+':'')+t.def_rating+'</span></div></div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
   } // end nfl
 
   if(pv==='ev'){

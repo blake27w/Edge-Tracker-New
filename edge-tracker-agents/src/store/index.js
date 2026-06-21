@@ -30,6 +30,7 @@ const store = {
   nflWinTotals: [],   // NFL season win-totals model vs posted (offseason prep)
   nflSchedule: [],    // NFL situational/schedule spots (offseason prep)
   nflProps: [],       // NFL prop workload baselines (offseason prep)
+  nflTotals: null,    // NFL scoring-environment / totals model (offseason prep)
   fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
   clvReport: null,    // aggregated closing-line-value dashboard
   combatDerivs: [],   // combat derivative plays (round totals etc., observational)
@@ -69,6 +70,9 @@ export function getNflSchedule() { return store.nflSchedule; }
 
 export function setNflProps(p) { store.nflProps = p || []; }
 export function getNflProps() { return store.nflProps; }
+
+export function setNflTotals(r) { store.nflTotals = r; }
+export function getNflTotals() { return store.nflTotals; }
 
 export function setFadePlays(p) { store.fadePlays = p || []; }
 export function getFadePlays() { return store.fadePlays; }

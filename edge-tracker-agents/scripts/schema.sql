@@ -604,3 +604,16 @@ delete from clv_records a using clv_records b
     and coalesce(a.bet_market, '') = coalesce(b.bet_market, '')
     and coalesce(a.side, '') = coalesce(b.side, '');
 create unique index if not exists ux_clv_play on clv_records (game_id, bet_market, side);
+
+-- ── NFL scoring-environment / totals model (offseason prep) ─────────
+create table if not exists nfl_scoring (
+  season      integer not null,
+  team        text not null,
+  off_pg      numeric,                   -- prior-season points scored / game
+  def_pg      numeric,                   -- prior-season points allowed / game
+  off_rating  numeric,                   -- regressed offense vs league avg (+ = scores more)
+  def_rating  numeric,                   -- regressed defense vs league avg (+ = allows more)
+  league_avg  numeric,
+  updated_at  timestamptz not null default now(),
+  primary key (season, team)
+);
