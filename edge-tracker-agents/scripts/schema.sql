@@ -617,3 +617,7 @@ create table if not exists nfl_scoring (
   updated_at  timestamptz not null default now(),
   primary key (season, team)
 );
+
+-- Opportunity result detail (the trigger "how we got there") + price.
+alter table opp_results add column if not exists detail text;
+alter table opp_results add column if not exists price integer;

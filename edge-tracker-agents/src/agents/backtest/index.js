@@ -197,12 +197,17 @@ async function run() {
   report.verdict = verdict(report.overall, report.clv);
 
   // Opportunity scanners — did the flags actually win? (graded by opp-grading)
+  // Aggregate by type AND surface each graded flag with its trigger detail.
   try {
-    const orows = await db.select('opp_results', 'type,status,pnl', { limit: 8000 });
+    const orows = await db.select('opp_results', '*', { order: { column: 'graded_at', ascending: false }, limit: 8000 });
     const m = {};
     for (const r of orows) { (m[r.type] ||= blank()); m[r.type].staked += config.rules.unitDollars; tally(m[r.type], { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
     report.opps = Object.entries(m).map(([k, a]) => ({ key: k, ...finalize(a) })).sort((x, y) => y.n - x.n);
-  } catch (_) { report.opps = []; }
+    report.oppsRecent = orows.slice(0, 80).map((r) => ({
+      type: r.type, sport: r.sport, matchup: r.matchup, market: r.market, side: r.side, line: r.line,
+      detail: r.detail, price: r.price, status: r.status, pnl: r.pnl, graded_at: r.graded_at,
+    }));
+  } catch (_) { report.opps = []; report.oppsRecent = []; }
 
   // Combat (observational, validation-gated — not in the main record yet).
   {
