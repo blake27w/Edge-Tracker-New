@@ -12,7 +12,7 @@ import { getGames, setIntel } from '../../store/index.js';
 // monitor sport → ESPN path. (Soccer/UFC/Tennis/Golf have no equivalent feed.)
 const ESPN_PATH = { MLB: 'baseball/mlb', NBA: 'basketball/nba', NHL: 'hockey/nhl', NFL: 'football/nfl' };
 
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+export const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
 
 function mapStatus(s) {
   const t = norm(s);
@@ -28,7 +28,7 @@ function impactOf(status) {
   return 'low';
 }
 
-async function fetchInjuries(sport) {
+export async function fetchInjuries(sport) {
   const path = ESPN_PATH[sport];
   if (!path) return new Map();
   const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries`;
@@ -55,7 +55,7 @@ async function fetchInjuries(sport) {
 }
 
 // Find a team's injuries allowing nickname-contains matching.
-function lookup(byTeam, oddsName) {
+export function lookup(byTeam, oddsName) {
   const key = norm(oddsName);
   if (byTeam.has(key)) return byTeam.get(key);
   for (const [name, list] of byTeam) {
