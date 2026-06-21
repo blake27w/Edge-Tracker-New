@@ -12,6 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setTennisGames, setIntel } from '../../store/index.js';
+import { hasOddsBudget } from '../odds/index.js';
 
 const { oddsApi, BOOKS, BOOK_LABELS } = config;
 const MAX_TOURNEYS = Number(process.env.TENNIS_MAX_TOURNEYS) || 8;
@@ -69,6 +70,7 @@ function normalize(key, ev, snapshots, movements, lsRows) {
 
 async function run() {
   if (!oddsApi.key) return { summary: 'skipped — no ODDS_API_KEY' };
+  if (!hasOddsBudget(config.rules.oddsReserve)) { setTennisGames([]); return { summary: 'skipped — protecting odds budget' }; }
   const keys = (await activeTennisKeys()).slice(0, MAX_TOURNEYS);
   if (!keys.length) { setTennisGames([]); return { summary: 'no active tennis tournaments' }; }
 

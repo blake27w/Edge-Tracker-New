@@ -12,6 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setPropPlays } from '../../store/index.js';
+import { hasOddsBudget } from '../odds/index.js';
 
 const { oddsApi, SPORTS, BOOKS } = config;
 
@@ -90,6 +91,7 @@ function flagEdges(data, sport, game) {
 
 async function run() {
   if (!oddsApi.key) { setPropPlays([]); return { summary: 'skipped — no ODDS_API_KEY' }; }
+  if (!hasOddsBudget(config.rules.oddsReserve)) { setPropPlays([]); return { summary: 'skipped — protecting odds budget' }; }
   if (today() !== day) { day = today(); scansToday = 0; }
 
   const games = getGames();

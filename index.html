@@ -5732,7 +5732,7 @@ var AGENTS_META=[
   {name:'clv',icon:'📉',label:'CLV Tracker',cadence:'every 15 min'},
   {name:'grading',icon:'✅',label:'Grading Agent',cadence:'every 30 min'},
   {name:'tennis-ingest',icon:'🎾',label:'Tennis Ingestion',cadence:'once a day'},
-  {name:'tennis-fatigue',icon:'🎾',label:'Tennis Fatigue & Schedule',cadence:'every 30 min'},
+  {name:'tennis-fatigue',icon:'🎾',label:'Tennis Fatigue & Schedule',cadence:'every 6h'},
   {name:'tennis-surface',icon:'🎾',label:'Tennis Surface & Style',cadence:'every 60 min'},
   {name:'tennis-signal',icon:'🎾',label:'Tennis Signal Engine',cadence:'every 5 min'},
   {name:'tennis-close',icon:'🎾',label:'Tennis Close-Capture',cadence:'off unless enabled'},
@@ -5760,7 +5760,7 @@ var AGENTS_META=[
   {name:'nfl-derivatives',icon:'🧩',label:'NFL Derivatives (team totals)',cadence:'off unless enabled'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':3600000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
