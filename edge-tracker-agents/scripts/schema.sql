@@ -638,3 +638,20 @@ create table if not exists book_edge_log (
 );
 create index if not exists book_edge_log_book_idx on book_edge_log (book, detected_at desc);
 create index if not exists book_edge_log_join_idx on book_edge_log (type, game_id, market, side);
+
+-- ── NFL inactives-speed (in-season; key skill players ruled OUT near kickoff) ──
+create table if not exists nfl_inactives (
+  id           uuid primary key default gen_random_uuid(),
+  game_id      text,
+  sport        text default 'NFL',
+  matchup      text,
+  team         text,
+  player       text,
+  pos          text,
+  market       text default 'total',
+  side         text default 'Under',
+  mins_to_kick integer,                     -- how early it was caught (higher = faster/better)
+  status       text,
+  detected_at  timestamptz not null default now()
+);
+create index if not exists nfl_inactives_idx on nfl_inactives (detected_at desc);

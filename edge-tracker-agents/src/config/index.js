@@ -135,6 +135,8 @@ const AGENT_DEFS = {
   'nfl-schedule': { label: 'NFL Schedule Spots', emoji: '🗓️', min: 1440 },
   'nfl-props': { label: 'NFL Prop Baselines', emoji: '📊', min: 1440 },
   'nfl-totals': { label: 'NFL Scoring/Totals Model', emoji: '🏈', min: 720 },
+  // Self-gates to NFL games near kickoff — dormant (cheap no-op) in the offseason.
+  'nfl-inactives': { label: 'NFL Inactives-Speed', emoji: '🚑', min: 10 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };
