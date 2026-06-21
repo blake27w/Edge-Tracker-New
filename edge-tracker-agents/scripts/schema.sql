@@ -106,12 +106,14 @@ create table if not exists game_weather (
   temp_f       numeric,
   wind_mph     numeric,
   wind_dir     text,
+  wind_effect  text,                                  -- in | out | across | unknown (MLB direction vs CF)
   precip       text,
   conditions   text,
   total_impact text,                                  -- under | over | neutral
   fetched_at   timestamptz not null default now()
 );
 create index if not exists game_weather_game_idx on game_weather (game_id, fetched_at desc);
+alter table game_weather add column if not exists wind_effect text;
 
 create table if not exists sharp_signals (
   id          uuid primary key default gen_random_uuid(),
