@@ -179,6 +179,7 @@ async function run() {
   const observational = rows.filter((r) => r.observational);
   const combatRows = observational.filter((r) => FIGHT.has(r.sport));
   const probTotals = observational.filter((r) => !FIGHT.has(r.sport) && r.market === 'total'); // totals on probation (keyed on market, so tennis/other can't leak in)
+  const tennisObs = observational.filter((r) => r.sport === 'TENNIS'); // tennis (observational until validated)
   rows = rows.filter((r) => !r.observational);
 
   const all = blank();
@@ -235,6 +236,12 @@ async function run() {
     const a = blank();
     for (const r of probTotals) tally(a, r);
     report.totals = { ...finalize(a), probation: config.rules.totalsProbation, bySignal: group(probTotals, signalIds, { min: 1 }) };
+  }
+  // Tennis (observational until it proves positive CLV) — by sub-signal.
+  {
+    const a = blank();
+    for (const r of tennisObs) tally(a, r);
+    report.tennis = { ...finalize(a), observational: config.rules.tennisObservational, bySignal: group(tennisObs, signalIds, { min: 1 }) };
   }
   report.recent = rows.slice(0, 50).map((r) => ({
     sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,

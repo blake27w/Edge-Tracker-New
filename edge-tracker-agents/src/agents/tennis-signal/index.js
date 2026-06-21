@@ -61,11 +61,14 @@ async function run() {
       raw = Math.min(95, raw);                       // ceiling 95 — never a certainty
       if (raw < rules.confidenceFloor) continue;
       const unit = halfUnit(raw);
+      // Observational until tennis proves positive CLV over a sample — kept out
+      // of the headline record (still graded), no alerts. Lift via env.
+      const obs = rules.tennisObservational;
       const row = {
         sport: 'TENNIS', game_id: g.game_id, matchup: `${g.p1} vs ${g.p2}`, commence_time: g.commence_time,
         market: 'ml', side: player, line: null, raw_score: raw, score: raw, confidence: raw,
-        tier: unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars, t1_count: t1,
-        signals: sigs, qualified: true, over_penalty_applied: false, status: 'pending', scored_at: now,
+        tier: obs ? `${unit.label} (obs)` : unit.label, unit_mult: unit.mult, unit_dollars: unit.dollars, t1_count: t1,
+        signals: sigs, qualified: true, observational: obs, over_penalty_applied: false, status: 'pending', scored_at: now,
       };
       plays.push(row);
       const key = `${g.game_id}|${player}`;
@@ -80,6 +83,7 @@ async function run() {
   setTennisPlays(plays);
 
   for (const p of newAlerts) {
+    if (p.observational) continue; // observational tennis grades but doesn't push alerts
     const body = `🎾 ${p.matchup} — ${p.side} ML (${p.score} conf, ${p.tier}/$${p.unit_dollars}, steam)`;
     try {
       const r = await notifyAll('Edge Tracker tennis play', body);
