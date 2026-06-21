@@ -11,7 +11,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, setIntel } from '../../store/index.js';
-import { VENUES, compass } from './venues.js';
+import { VENUES, compass, windEffect } from './venues.js';
 
 // Only sports we have venue coordinates for (and where weather matters).
 const WEATHER_SPORTS = new Set(['MLB', 'NFL']);
@@ -39,8 +39,18 @@ function nearestHour(times, commenceMs) {
   return best;
 }
 
-function lean({ dome, wind, temp }) {
+// Total impact lean. For MLB it's DIRECTION-aware: a strong wind only leans
+// Under when it's blowing IN; blowing OUT leans Over (a no-play for us, but we
+// record it so we never emit a false Under); across/unknown direction is
+// neutral. For NFL/other, high wind hurts passing + kicking regardless of
+// direction, so it stays speed-based.
+function lean({ dome, wind, temp, sport, effect }) {
   if (dome) return 'neutral';
+  if (sport === 'MLB') {
+    if (effect === 'in' && (wind >= 15 || (temp != null && temp <= 40 && wind >= 10))) return 'under';
+    if (effect === 'out' && wind >= 15) return 'over';
+    return 'neutral'; // across / unknown direction → no directional wind signal
+  }
   if (wind >= 15) return 'under';
   if (temp != null && temp <= 40 && wind >= 10) return 'under';
   return 'neutral';
@@ -65,7 +75,7 @@ async function run() {
 
     if (v.dome) {
       domes++;
-      rows.push({ ...base, dome: true, temp_f: null, wind_mph: null, wind_dir: null, precip: null, conditions: 'Dome / roof closed', total_impact: 'neutral' });
+      rows.push({ ...base, dome: true, temp_f: null, wind_mph: null, wind_dir: null, wind_effect: null, precip: null, conditions: 'Dome / roof closed', total_impact: 'neutral' });
       continue;
     }
 
@@ -76,15 +86,18 @@ async function run() {
       const idx = nearestHour(h.time || [], Date.parse(g.commence_time || now));
       const temp = num(h.temperature_2m?.[idx]);
       const wind = num(h.wind_speed_10m?.[idx]) ?? 0;
-      const dir = compass(num(h.wind_direction_10m?.[idx]));
+      const dirDeg = num(h.wind_direction_10m?.[idx]);
+      const dir = compass(dirDeg);
+      const effect = g.sport === 'MLB' ? windEffect(dirDeg, v.cf) : null; // in | out | across | unknown
       const precip = num(h.precipitation?.[idx]);
       const pop = num(h.precipitation_probability?.[idx]);
-      const impact = lean({ dome: false, wind, temp });
+      const impact = lean({ dome: false, wind, temp, sport: g.sport, effect });
       if (impact === 'under') windy++;
+      const effLabel = effect && effect !== 'unknown' ? ` (${effect})` : '';
       rows.push({
-        ...base, dome: false, temp_f: temp, wind_mph: wind, wind_dir: dir,
+        ...base, dome: false, temp_f: temp, wind_mph: wind, wind_dir: dir, wind_effect: effect,
         precip: precip != null ? `${precip}in (${pop ?? 0}%)` : null,
-        conditions: `${temp != null ? Math.round(temp) + '°F' : ''} wind ${Math.round(wind)}mph${dir ? ' ' + dir : ''}`.trim(),
+        conditions: `${temp != null ? Math.round(temp) + '°F' : ''} wind ${Math.round(wind)}mph${dir ? ' ' + dir : ''}${effLabel}`.trim(),
         total_impact: impact,
       });
     } catch (e) {

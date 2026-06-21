@@ -31,6 +31,8 @@ const FIGHT_SPORTS = new Set(['UFC', 'BOXING']);
 
 const { rules } = config;
 const TIER_POINTS = { 1: 20, 2: 10, 3: 3 };
+const CONF_CEILING = 95;   // nothing is ever a certainty — never let a play hit 100
+const STACK_DECAY = 0.6;   // correlated (same-id) signals decay: 1st full, then ×0.6, ×0.36 …
 
 // Plays we've already alerted on this process lifetime.
 const alerted = new Set();
@@ -57,7 +59,13 @@ function collectSignals(game, market, side, intel, power) {
   }
   if (isTotal && under) {
     for (const w of intel.weather) {
-      if (!w.dome && (w.wind_mph || 0) >= 15 && w.total_impact === 'under') add(1, 'wind', `Wind ${Math.round(w.wind_mph)}mph → Under`);
+      // total_impact === 'under' already requires a valid IN-blowing wind for MLB
+      // (direction-aware) or strong wind for NFL — so this never fires on a wind
+      // blowing OUT (which would be an Over indicator, i.e. a no-play).
+      if (!w.dome && (w.wind_mph || 0) >= 15 && w.total_impact === 'under') {
+        const dir = w.wind_effect === 'in' ? ' blowing in' : '';
+        add(1, 'wind', `Wind ${Math.round(w.wind_mph)}mph${dir} → Under`);
+      }
     }
   }
 
@@ -101,16 +109,30 @@ function collectSignals(game, market, side, intel, power) {
 }
 
 function score(sigs, side, market) {
+  // Base 50. Diminishing returns: the FIRST signal of each id counts at full
+  // tier weight; additional CORRELATED observations of the same id decay
+  // (×0.6, ×0.36 …) — e.g. several books moving the same line are one edge,
+  // not many. DIFFERENT ids are independent mechanisms (weather vs sharp) and
+  // each start fresh at full weight. Confidence is capped below 100 so the
+  // distribution keeps the spread the CLV analysis needs to learn from.
   let raw = 50;
-  for (const s of sigs) raw += TIER_POINTS[s.tier] || 0;
-  raw = Math.min(100, raw);
-  const t1 = sigs.filter((s) => s.tier === 1).length;
+  const seen = {};
+  for (const s of sigs) {
+    const pts = TIER_POINTS[s.tier] || 0;
+    const n = seen[s.id] || 0;
+    raw += pts * Math.pow(STACK_DECAY, n);
+    seen[s.id] = n + 1;
+  }
+  raw = Math.min(CONF_CEILING, Math.round(raw));
+  // Count DISTINCT Tier-1 ids (independent edges), not raw occurrences — so two
+  // correlated steam reads can't masquerade as two independent Tier-1 signals.
+  const t1 = new Set(sigs.filter((s) => s.tier === 1).map((s) => s.id)).size;
   const hasDivergence = sigs.some((s) => s.id === 'divergence');
 
   let finalScore = raw;
   let overPenalty = false;
   if (market === 'total' && side === 'Over') { finalScore -= rules.overTotalPenalty; overPenalty = true; }
-  finalScore = Math.max(0, Math.min(100, finalScore));
+  finalScore = Math.max(0, Math.min(CONF_CEILING, finalScore));
   return { raw, score: finalScore, t1, hasDivergence, overPenalty };
 }
 
