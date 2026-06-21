@@ -12,6 +12,7 @@ import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setDivergence } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { impliedProb, toAmerican, median, fmtOdds } from '../shared/odds-math.js';
+import { trackBookEdges } from '../shared/book-edge.js';
 
 const MIN_BOOKS = 4;
 const DIVERGE = Number(process.env.DIVERGE_PCT) || 0.03; // 3% implied-prob gap vs field
@@ -72,6 +73,15 @@ async function run() {
   // Steam-aligned soft prices first, then by size of the divergence.
   rows.sort((a, b) => (b.aligned - a.aligned) || (b.edgePct - a.edgePct));
   setDivergence(rows);
+
+  // Track each soft-price book as an episode for the Book Edges scorecard
+  // (market normalized to ml/total/spread to match the graded results).
+  try {
+    await trackBookEdges('divergence', rows.slice(0, 80).map((r) => ({
+      sport: r.sport, game_id: r.game_id, market: r.market, side: r.side, book: r.book,
+      consensus_line: null, outlier_line: null, pts: r.edgePct, price: r.price,
+    })));
+  } catch (_) { /* non-fatal */ }
 
   if (rows.length) {
     const now = new Date().toISOString();

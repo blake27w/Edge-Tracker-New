@@ -11,6 +11,7 @@ import { logger } from '../../utils/index.js';
 import { getGames, setStaleLines } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { fmtOdds } from '../shared/odds-math.js';
+import { trackBookEdges } from '../shared/book-edge.js';
 
 const STALE_PTS = Number(process.env.STALE_LINE_PTS) || 1.5; // min points off consensus
 
@@ -53,6 +54,14 @@ async function run() {
 
   rows.sort((a, b) => b.pts - a.pts);
   setStaleLines(rows);
+
+  // Track each stale book as an episode (open→correct) for the Book Edges scorecard.
+  try {
+    await trackBookEdges('stale', rows.slice(0, 80).map((r) => ({
+      sport: r.sport, game_id: r.game_id, market: r.market, side: r.side, book: r.book,
+      consensus_line: r.consensus, outlier_line: r.line, pts: r.pts, price: r.price,
+    })));
+  } catch (_) { /* non-fatal */ }
 
   if (rows.length) {
     const now = new Date().toISOString();

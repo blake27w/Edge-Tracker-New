@@ -618,3 +618,23 @@ create table if not exists nfl_scoring (
 -- Opportunity result detail (the trigger "how we got there") + price.
 alter table opp_results add column if not exists detail text;
 alter table opp_results add column if not exists price integer;
+
+-- ── Book-edge episodes (per-book mispricing windows for the Book Edges view) ──
+create table if not exists book_edge_log (
+  id             uuid primary key default gen_random_uuid(),
+  type           text,                       -- stale | divergence
+  sport          text,
+  game_id        text,
+  market         text,                       -- ml | total | spread
+  side           text,
+  book           text,
+  consensus_line numeric,                    -- field line (stale) — null for price-only divergence
+  outlier_line   numeric,                    -- the off-market book's line (stale)
+  pts            numeric,                     -- discrepancy: points (stale) or implied-% gap (divergence)
+  price          integer,
+  detected_at    timestamptz not null default now(),
+  corrected_at   timestamptz,                -- when the book fell back in line (null = still open / lost to restart)
+  window_sec     integer                     -- corrected_at - detected_at, the time you had to act
+);
+create index if not exists book_edge_log_book_idx on book_edge_log (book, detected_at desc);
+create index if not exists book_edge_log_join_idx on book_edge_log (type, game_id, market, side);
