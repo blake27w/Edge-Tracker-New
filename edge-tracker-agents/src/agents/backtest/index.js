@@ -178,7 +178,7 @@ async function run() {
   const FIGHT = new Set(['UFC', 'BOXING']);
   const observational = rows.filter((r) => r.observational);
   const combatRows = observational.filter((r) => FIGHT.has(r.sport));
-  const probTotals = observational.filter((r) => !FIGHT.has(r.sport)); // totals on probation
+  const probTotals = observational.filter((r) => !FIGHT.has(r.sport) && r.market === 'total'); // totals on probation (keyed on market, so tennis/other can't leak in)
   rows = rows.filter((r) => !r.observational);
 
   const all = blank();

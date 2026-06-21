@@ -49,14 +49,16 @@ async function run() {
       const sigs = [];
       let raw = 50;
       const books = steam.get(`${g.game_id}|${player}`) || 0;
-      if (books >= 2) { sigs.push({ tier: 1, id: 'steam', label: `Steam: ${books} books shortened ${player}` }); raw += 20 + (books - 2) * 5; }
+      // Steam: Tier-1 + a small, BOUNDED bonus for extra books (diminishing,
+      // not the old unbounded +5/book). Consistent with the team engine.
+      if (books >= 2) { sigs.push({ tier: 1, id: 'steam', label: `Steam: ${books} books shortened ${player}` }); raw += 20 + Math.min(10, (books - 2) * 5); }
       const fat = fatigue.get(`${g.game_id}|${player}`);
       if (fat) { sigs.push({ tier: 1, id: 'fatigue', label: `Rest edge — ${fat.detail}` }); raw += 20; }
       const surf = surface.get(`${g.game_id}|${player}`);
       if (surf) { sigs.push({ tier: 2, id: 'surface', label: surf.detail }); raw += 10; }
-      const t1 = sigs.filter((s) => s.tier === 1).length;
+      const t1 = new Set(sigs.filter((s) => s.tier === 1).map((s) => s.id)).size; // distinct T1 edges
       if (t1 < 1) continue;                         // need a Tier-1 (no Under bias; CLV-first)
-      raw = Math.min(100, raw);
+      raw = Math.min(95, raw);                       // ceiling 95 — never a certainty
       if (raw < rules.confidenceFloor) continue;
       const unit = halfUnit(raw);
       const row = {
