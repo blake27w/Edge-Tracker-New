@@ -5796,9 +5796,10 @@ var AGENTS_META=[
   {name:'nfl-line-move',icon:'📐',label:'NFL Opener→Close Lines',cadence:'30m (in-season)'},
   {name:'nfl-derivatives',icon:'🧩',label:'NFL Derivatives (team totals)',cadence:'off unless enabled'},
   {name:'nfl-pace',icon:'⏱️',label:'NFL Coaching/Pace',cadence:'daily'},
+  {name:'pred-market',icon:'🔮',label:'Prediction Markets (Poly/Kalshi)',cadence:'every 10m (if enabled)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'pred-market':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5895,7 +5896,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];state.agentsNflPace=bag.bePlays.nflPrep.pace||null;}
-    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;}
+    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsPredMarket=bag.bePlays.predMarket||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -6080,7 +6081,7 @@ function renderAgentsContent(){
   if(onPlays){
   if(!state.playView)state.playView='action';
   var pv=state.playView;
-  var pviews=[['action','▶ Now'],['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
+  var pviews=[['action','▶ Now'],['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['exch','🔮 Exch'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
   pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
@@ -6115,6 +6116,22 @@ function renderAgentsContent(){
   });
   h+='<div style="font-size:8px;color:var(--muted);text-align:center;margin:4px 0 14px">'+items.length+' live edge'+(items.length===1?'':'s')+' · refresh for the latest</div>'; }
   } // end action
+
+  if(pv==='exch'){
+  // ── Prediction-market reference (Polymarket / Kalshi) ──
+  var pm=state.agentsPredMarket;
+  h+='<div style="background:rgba(230,187,70,.08);border:1px solid var(--leather);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🔮 EXCHANGE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Where a sportsbook underprices a side vs the sharp prediction-market probability (Polymarket / Kalshi, near-zero vig). Observational reference until validated.</div></div>';
+  if(!pm){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Prediction markets are off. Enable with PREDICTION_MARKETS=true on the backend.</div>'; }
+  else if(!pm.edges||!pm.edges.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No exchange edges right now ('+(pm.sources?('poly '+pm.sources.polymarket+' · kalshi '+pm.sources.kalshi):'')+' markets scanned).</div>'; }
+  else { pm.edges.slice(0,30).forEach(function(e){
+    var pr=e.price>0?'+'+e.price:''+e.price;
+    h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid var(--brass)">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center"><div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(e.matchup||'')+'</div><div style="font-size:9px;color:var(--leather);margin-top:1px">'+esc((e.sport||'')+' · ML · ')+'<b>'+esc(e.side||'')+'</b> '+pr+'</div></div>';
+    h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:14px;font-weight:700;color:var(--brass)">+'+e.edge_pct+'%</span><div style="font-size:7px;color:var(--muted)">edge</div></div></div>';
+    h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:4px">exch <b>'+e.exch_prob+'%</b> vs book '+e.book_prob+'% <span style="color:var(--dim)">· '+esc(e.source||'')+(e.vol?' · vol '+e.vol:'')+'</span></div>';
+    h+='</div>';
+  }); h+='<div style="height:8px"></div>'; }
+  } // end exch
 
   if(pv==='bets'){
   // ── Qualifying Plays Queue ──

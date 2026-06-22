@@ -145,6 +145,8 @@ const AGENT_DEFS = {
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
   'nfl-derivatives': { label: 'NFL Derivatives (team totals)', emoji: '🧩', min: 20 },
   'nfl-pace': { label: 'NFL Coaching/Pace', emoji: '⏱️', min: 1440 },
+  // Prediction-market reference — disabled unless PREDICTION_MARKETS=true.
+  'pred-market': { label: 'Prediction Markets (Poly/Kalshi)', emoji: '🔮', min: 10 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
   digest: { label: 'Daily Digest', emoji: '📰', times: ['09:00'] },
 };
@@ -177,6 +179,11 @@ const config = {
   // Tennis close-capture: fetch a near-start price for imminent matches so CLV
   // has a distinct close point. OFF by default to honor "ingest once a day".
   tennisCloseCapture: bool(env.TENNIS_CLOSE_CAPTURE, false),
+
+  // Prediction-market reference (Polymarket + Kalshi) — sharp fair-value +
+  // book-vs-exchange divergence signal. OFF by default (public API shapes
+  // unverified here); enable with PREDICTION_MARKETS=true. Data is free.
+  predictionMarkets: bool(env.PREDICTION_MARKETS, false),
 
   supabase: {
     url: clean(env.SUPABASE_URL),

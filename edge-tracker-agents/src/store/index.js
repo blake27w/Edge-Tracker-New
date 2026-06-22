@@ -35,6 +35,7 @@ const store = {
   nflLineMove: null,  // NFL opener→close line-movement tracker (in-season; dormant offseason)
   nflDerivs: [],      // NFL derivative edges (team totals; off unless enabled)
   nflPace: null,      // NFL coaching/pace tempo map + totals leans (reference)
+  predMarket: null,   // prediction-market (Polymarket/Kalshi) reference + exchange edges
   fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
   clvReport: null,    // aggregated closing-line-value dashboard
   bookEdges: null,    // per-book mispricing scorecard (Book Edges)
@@ -90,6 +91,9 @@ export function getNflDerivs() { return store.nflDerivs; }
 
 export function setNflPace(r) { store.nflPace = r; }
 export function getNflPace() { return store.nflPace; }
+
+export function setPredMarket(r) { store.predMarket = r; }
+export function getPredMarket() { return store.predMarket; }
 
 export function setFadePlays(p) { store.fadePlays = p || []; }
 export function getFadePlays() { return store.fadePlays; }
