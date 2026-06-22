@@ -186,6 +186,31 @@ async function buildSignalDetail(url) {
   return { plays: out };
 }
 
+// Graded plays behind one "What Works" breakdown bucket (dim+key), e.g.
+// dim=confidence key="80–89", dim=sport key="NBA", dim=signal key=<label>.
+async function buildPlaysDetail(url) {
+  const dim = url.searchParams.get('dim'), key = url.searchParams.get('key');
+  if (!dim || key == null) return { error: 'dim and key required' };
+  let rows = [];
+  try { rows = await db.select('monitor_scores', 'sport,matchup,market,side,line,player,score,t1_count,tier,signals,status,pnl,graded_at,observational', { in: { status: ['win', 'loss', 'push'] }, order: { column: 'graded_at', ascending: false }, limit: 5000 }); }
+  catch (e) { return { error: e.message }; }
+  rows = rows.filter((r) => !r.observational);
+  const confB = (r) => { const s = Number(r.score) || 0; return s >= 90 ? '90+' : s >= 80 ? '80–89' : s >= 70 ? '70–79' : '<70'; };
+  const t1B = (r) => { const t = Number(r.t1_count) || 0; return t >= 3 ? '3+ T1' : `${t} T1`; };
+  const sigL = (r) => (Array.isArray(r.signals) ? r.signals.map((x) => x && (x.label || x.id)).filter(Boolean) : []);
+  const match = (r) => {
+    if (dim === 'sport') return r.sport === key;
+    if (dim === 'market') return r.market === key;
+    if (dim === 'tier') return r.tier === key;
+    if (dim === 'confidence') return confB(r) === key;
+    if (dim === 't1') return t1B(r) === key;
+    if (dim === 'signal') return sigL(r).includes(key);
+    return false;
+  };
+  const plays = rows.filter(match).slice(0, 80).map((r) => ({ sport: r.sport, matchup: r.matchup, market: r.market, side: r.side, line: r.line, player: r.player, score: r.score, status: r.status, pnl: r.pnl, graded_at: r.graded_at }));
+  return { plays };
+}
+
 function systemHealth() {
   const m = getMetrics();
   let oddsBudget;
@@ -270,6 +295,9 @@ const server = http.createServer(async (req, res) => {
     case '/signal-detail':
       try { return json(res, 200, await buildSignalDetail(url)); }
       catch (e) { logger.error('signal-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
+    case '/plays-detail':
+      try { return json(res, 200, await buildPlaysDetail(url)); }
+      catch (e) { logger.error('plays-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');

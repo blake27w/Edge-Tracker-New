@@ -6038,12 +6038,41 @@ function renderAgentsContent(){
   } // end !onPlays (watchdog + cost)
 
   if(onPlays){
-  if(!state.playView)state.playView='bets';
+  if(!state.playView)state.playView='action';
   var pv=state.playView;
-  var pviews=[['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
+  var pviews=[['action','▶ Now'],['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
   pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
+  if(pv==='action'){
+  // ── ACTION BOARD — exactly what to bet right now (proven edges only) ──
+  var stale=state.agentsStale||[],ev=state.agentsEv||[],arb=state.agentsArb||[],div=state.agentsDivergence||[],keyn=state.agentsKey||[];
+  var items=[];
+  var fp=function(v){return v==null?'':(v>0?'+'+v:''+v)};
+  arb.forEach(function(a){ items.push({prio:0,kind:'ARB',tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
+    bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
+  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus,matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,
+    bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
+  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,
+    bet:e.side+' '+fp(e.price)+' @ '+e.book}); });
+  keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),
+    bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
+  div.forEach(function(dv){ if(!dv.aligned)return; items.push({prio:4,kind:'DIVERGE',tag:'+'+dv.edgePct+'% vs field'+(dv.aligned?' · sharp side':''),matchup:dv.matchup,sport:dv.sport,edge:(dv.edgePct||0),
+    bet:dv.side+' '+fp(dv.price)+' @ '+dv.book}); });
+  items.sort(function(a,b){return a.prio-b.prio||b.edge-a.edge});
+  h+='<div style="background:rgba(52,211,153,.08);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">▶ BET NOW — LIVE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Proven scanner edges that are live right now: open the book, bet the number, act fast. Flat stake. Model picks are excluded until validated.</div></div>';
+  if(!items.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Nothing actionable right now. Stale lines, +EV, and arbs appear here the moment a book is off-market.</div>'; }
+  else { items.slice(0,40).forEach(function(it){
+    var kc=it.kind.charAt(0)==='A'||it.kind.indexOf('MIDDLE')>=0?'var(--brass)':it.kind==='STALE'?'var(--sage)':it.kind==='+EV'?'#34d399':'var(--leather)';
+    h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+kc+'">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+'</span></div>';
+    h+='<div style="font-family:var(--M);font-size:12px;font-weight:700;color:var(--cream);line-height:1.4">'+esc(it.bet)+'</div>';
+    h+='<div style="font-size:8.5px;color:var(--leather);margin-top:2px">'+esc(it.tag)+'</div>';
+    h+='</div>';
+  });
+  h+='<div style="font-size:8px;color:var(--muted);text-align:center;margin:4px 0 14px">'+items.length+' live edge'+(items.length===1?'':'s')+' · refresh for the latest</div>'; }
+  } // end action
+
   if(pv==='bets'){
   // ── Qualifying Plays Queue ──
   var plays=(state.agentsPlays||[]);
@@ -6572,19 +6601,57 @@ function renderSubRows(arr,minN,labels){
   });
   return h;
 }
-function renderBtRows(title,arr){
+function renderBtRows(title,arr,dim){
   if(!arr||!arr.length)return '';
-  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">'+title+'</div>';
+  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:11px 0 4px">'+title+(dim?' <span style="color:var(--muted);font-size:7px">tap a row</span>':'')+'</div>';
   arr.forEach(function(x){
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
-    h+='<div style="font-size:11px;color:var(--cream);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.key)+'</div>';
+    var open=dim&&state.btOpen&&state.btOpen[dim+'|'+x.key];
+    h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+(dim?';cursor:pointer':'')+'"'+(dim?' onclick="btToggle(\''+dim+'\',\''+encodeURIComponent(x.key)+'\')"':'')+'>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="font-size:11px;color:var(--cream);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(dim?(open?'▾ ':'▸ '):'')+esc(x.key)+'</div>';
     h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:62px;text-align:right">'+x.w+'-'+x.l+(x.p?'-'+x.p:'')+'</div>';
     h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+x.winPct+'%</div>';
     h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:54px;text-align:right;color:'+btColor(x.roi)+'">'+(x.roi>=0?'+':'')+x.roi+'%</div>';
     h+='</div>';
+    if(open)h+=renderBtPlays(dim,x.key);
+    h+='</div>';
   });
   return h;
 }
+// Graded games behind one breakdown bucket (lazy-loaded from /plays-detail).
+function renderBtPlays(dim,key){
+  var ck=dim+'|'+key, d=state.btDetail&&state.btDetail[ck];
+  if(state.btLoading&&state.btLoading[ck])return '<div style="font-size:9px;color:var(--muted);margin-top:5px;font-style:italic" onclick="event.stopPropagation()">Loading games…</div>';
+  if(!d)return '';
+  if(d.error)return '<div style="font-size:9px;color:var(--wine);margin-top:5px" onclick="event.stopPropagation()">'+esc(d.error)+'</div>';
+  if(!d.plays||!d.plays.length)return '<div style="font-size:9px;color:var(--muted);margin-top:5px;font-style:italic" onclick="event.stopPropagation()">No games found.</div>';
+  var h='<div style="margin-top:5px;padding-top:5px;border-top:1px dashed rgba(255,255,255,.08)" onclick="event.stopPropagation()">';
+  d.plays.slice(0,50).forEach(function(p){
+    var rc=p.status==='win'?'var(--sage)':p.status==='loss'?'var(--wine)':'var(--dim)';
+    var ri=p.status==='win'?'✓':p.status==='loss'?'✗':'–';
+    var ln=p.line!=null?(' '+(p.line>0?'+'+p.line:p.line)):'';
+    var who=p.player?p.player+' ':'';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:9px">';
+    h+='<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream)">'+esc((p.sport||'')+' '+(p.matchup||'')+' · '+who+(p.side||'')+ln)+'</div>';
+    h+='<div style="white-space:nowrap;color:'+rc+';font-family:var(--M)">'+(p.score!=null?'<span style="color:var(--muted)">'+Math.round(p.score)+'</span> ':'')+ri+(p.pnl!=null?' '+(p.pnl>=0?'+$':'-$')+Math.abs(p.pnl):'')+'</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+function btToggle(dim,encKey){
+  var key=decodeURIComponent(encKey),ck=dim+'|'+key;
+  state.btOpen=state.btOpen||{}; state.btDetail=state.btDetail||{}; state.btLoading=state.btLoading||{};
+  state.btOpen[ck]=!state.btOpen[ck];
+  if(state.btOpen[ck]&&!state.btDetail[ck]&&!state.btLoading[ck]){
+    var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+    if(api){ state.btLoading[ck]=true;
+      fetch(api+'/plays-detail?dim='+encodeURIComponent(dim)+'&key='+encodeURIComponent(key)).then(function(r){return r.json()}).then(function(j){state.btDetail[ck]=j||{};state.btLoading[ck]=false;render()}).catch(function(){state.btDetail[ck]={error:'Could not load games (backend offline?)'};state.btLoading[ck]=false;render()});
+    } else state.btDetail[ck]={error:'Set the backend URL to load games.'};
+  }
+  render();
+}
+window.btToggle=btToggle;
 function renderOppRubric(bt){
   if(!bt||!bt.opps||!bt.opps.length)return '';
   var labels={ev:'+EV / Boosts',stale:'Stale lines',divergence:'Book divergence',key:'Key numbers',middle:'Middles'};
@@ -6884,11 +6951,11 @@ function renderBtBreakdowns(bt){
   if(!bt||!bt.overall||!bt.overall.n)return renderSignalClv(bt)+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet — win/ROI breakdowns appear once plays settle. (Signal CLV above builds sooner.)</div>';
   var h=renderSignalClv(bt);
   h+='<div class="card" style="padding:13px 14px;margin-bottom:8px">';
-  h+=renderBtRows('BY SIGNAL — what actually wins',bt.bySignal);
-  h+=renderBtRows('BY SPORT',bt.bySport);
-  h+=renderBtRows('BY MARKET',bt.byMarket);
-  h+=renderBtRows('BY TIER',bt.byTier);
-  h+=renderBtRows('BY CONFIDENCE',bt.byConfidence);
+  h+=renderBtRows('BY SIGNAL — what actually wins',bt.bySignal,'signal');
+  h+=renderBtRows('BY SPORT',bt.bySport,'sport');
+  h+=renderBtRows('BY MARKET',bt.byMarket,'market');
+  h+=renderBtRows('BY TIER',bt.byTier,'tier');
+  h+=renderBtRows('BY CONFIDENCE',bt.byConfidence,'confidence');
   h+='</div>';
   // Props by sub-type (learn which prop trigger is the real edge).
   if(bt.propBySub&&bt.propBySub.length){
