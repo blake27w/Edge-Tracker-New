@@ -6676,16 +6676,71 @@ function renderOppDetail(bt){
     var ic=r.status==='win'?'✓ WIN':r.status==='loss'?'✗ LOSS':'– PUSH';
     var ln=r.line!=null?(' '+(r.line>0?'+'+r.line:r.line)):'';
     var pr=r.price!=null?' '+(r.price>0?'+'+r.price:''+r.price):'';
-    h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid '+col+'">';
+    var key=[r.type,r.game_id,r.market,r.side].join('|');
+    var open=state.oppOpen&&state.oppOpen[key];
+    h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;border-left:3px solid '+col+';cursor:pointer" onclick="oppToggle(\''+encodeURIComponent(key)+'\')">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-    h+='<div style="flex:1;min-width:0"><span style="font-size:7px;color:var(--brass);border:1px solid var(--brass);border-radius:3px;padding:0 3px">'+esc(labels[r.type]||r.type)+'</span> <span style="font-size:11px;color:var(--txt)">'+esc(r.matchup||'')+'</span></div>';
+    h+='<div style="flex:1;min-width:0"><span style="font-size:7px;color:var(--brass);border:1px solid var(--brass);border-radius:3px;padding:0 3px">'+esc(labels[r.type]||r.type)+'</span> <span style="font-size:11px;color:var(--txt)">'+esc(r.matchup||'')+'</span> <span style="font-size:8px;color:var(--muted)">'+(open?'▾':'▸')+'</span></div>';
     h+='<div style="font-family:var(--M);font-size:10px;font-weight:700;color:'+col+';white-space:nowrap">'+ic+(r.pnl!=null?' '+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl):'')+'</div></div>';
     h+='<div style="font-size:9px;color:var(--leather);margin-top:3px"><b>'+esc((r.side||'')+ln)+'</b>'+esc(pr)+(r.detail?' <span style="color:var(--dim)">· '+esc(r.detail)+'</span>':'')+'</div>';
+    if(open)h+=renderOppDossier(key,r);
     h+='</div>';
   });
   if(!list.length)h+='<div class="card" style="text-align:center;font-size:9px;color:var(--muted);font-style:italic">None of this type graded yet.</div>';
   return h;
 }
+// Expanded detail for one graded opportunity (lazy-loaded from /opportunity).
+function renderOppDossier(key,r){
+  var d=state.oppDetail&&state.oppDetail[key];
+  if(state.oppLoading&&state.oppLoading[key])return '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-style:italic">Loading the move…</div>';
+  if(!d)return '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-style:italic">Tap again if this stays empty.</div>';
+  if(d.error)return '<div style="font-size:9px;color:var(--wine);margin-top:8px">'+esc(d.error)+'</div>';
+  var h='<div style="margin-top:9px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px" onclick="event.stopPropagation()">';
+  // Result
+  var res=d.result;
+  if(res){
+    h+='<div style="font-size:8px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">RESULT</div>';
+    h+='<div style="font-size:9px;color:var(--cream);margin-bottom:7px">'+esc((res.status||'').toUpperCase())+(res.result_score?' · '+esc(res.result_score):'')+(res.pnl!=null?' · '+(res.pnl>=0?'+$':'-$')+Math.abs(res.pnl):'')+(res.graded_at?' · '+(function(){try{return new Date(res.graded_at).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}catch(e){return ''}})():'')+'</div>';
+  }
+  // Books that were off (book_edge_log episodes)
+  if(d.edges&&d.edges.length){
+    h+='<div style="font-size:8px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">BOOKS OFF-MARKET ('+d.edges.length+')</div>';
+    d.edges.slice(0,12).forEach(function(e){
+      var disc=e.pts!=null?(e.type==='divergence'?e.pts+'%':e.pts+'pt'):'';
+      var win=e.window_sec!=null?fmtWin(e.window_sec)+' open':(e.corrected_at?'':'still open');
+      h+='<div style="font-size:9px;color:var(--cream);display:flex;justify-content:space-between;padding:2px 0"><span><b>'+esc(e.book||'')+'</b> '+(e.outlier_line!=null?e.outlier_line:'')+(e.consensus_line!=null?' vs field '+e.consensus_line:'')+' '+(disc?'('+disc+')':'')+'</span><span style="color:var(--muted)">'+esc(win)+'</span></div>';
+    });
+    h+='<div style="height:6px"></div>';
+  }
+  // Line history open→close
+  if(d.history&&d.history.length){
+    var hist=d.history,first=hist[0],last=hist[hist.length-1];
+    h+='<div style="font-size:8px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">LINE OPEN → CLOSE ('+hist.length+' pts)</div>';
+    var fmtPt=function(p){return (p.line!=null?p.line:'')+(p.price!=null?(p.line!=null?' / ':'')+(p.price>0?'+'+p.price:p.price):'')};
+    h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream)">'+fmtPt(first)+' <span style="color:var(--dim)">→</span> '+fmtPt(last)+'</div>';
+    // compact inline path
+    h+='<div style="font-family:var(--M);font-size:7.5px;color:var(--muted);margin-top:3px;line-height:1.5;word-break:break-word">'+hist.map(function(p){return fmtPt(p)}).join(' · ')+'</div>';
+  }
+  if((!d.edges||!d.edges.length)&&(!d.history||!d.history.length))h+='<div style="font-size:9px;color:var(--muted);font-style:italic">No stored line history for this game (older play or pre-capture).</div>';
+  h+='</div>';
+  return h;
+}
+function oppToggle(encKey){
+  var key=decodeURIComponent(encKey);
+  state.oppOpen=state.oppOpen||{}; state.oppDetail=state.oppDetail||{}; state.oppLoading=state.oppLoading||{};
+  state.oppOpen[key]=!state.oppOpen[key];
+  if(state.oppOpen[key]&&!state.oppDetail[key]&&!state.oppLoading[key]){
+    var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+    var parts=key.split('|'); // type|game_id|market|side
+    if(api&&parts[1]){
+      state.oppLoading[key]=true;
+      var u=api+'/opportunity?type='+encodeURIComponent(parts[0])+'&game_id='+encodeURIComponent(parts[1])+'&market='+encodeURIComponent(parts[2])+'&side='+encodeURIComponent(parts[3]||'');
+      fetch(u).then(function(r){return r.json()}).then(function(j){state.oppDetail[key]=j||{};state.oppLoading[key]=false;render()}).catch(function(){state.oppDetail[key]={error:'Could not load detail (backend offline?)'};state.oppLoading[key]=false;render()});
+    } else { state.oppDetail[key]={error:'Set the backend URL to load move detail.'}; }
+  }
+  render();
+}
+window.oppToggle=oppToggle;
 function renderRecentResults(bt){
   if(!bt||!bt.recent||!bt.recent.length)return '';
   var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 4px">RECENT RESULTS</div>';

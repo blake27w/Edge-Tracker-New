@@ -219,7 +219,7 @@ async function run() {
     for (const r of orows) { (m[r.type] ||= blank()); m[r.type].staked += config.rules.unitDollars; tally(m[r.type], { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
     report.opps = Object.entries(m).map(([k, a]) => ({ key: k, ...finalize(a) })).sort((x, y) => y.n - x.n);
     report.oppsRecent = orows.slice(0, 80).map((r) => ({
-      type: r.type, sport: r.sport, matchup: r.matchup, market: r.market, side: r.side, line: r.line,
+      type: r.type, sport: r.sport, game_id: r.game_id, matchup: r.matchup, market: r.market, side: r.side, line: r.line,
       detail: r.detail, price: r.price, status: r.status, pnl: r.pnl, graded_at: r.graded_at,
     }));
   } catch (_) { report.opps = []; report.oppsRecent = []; }

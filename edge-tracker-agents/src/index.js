@@ -13,6 +13,7 @@ import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook } from './export/index.js';
 import { buildGames } from './games/index.js';
 import { listResearch, addResearch, deleteResearch } from './research/index.js';
+import { median } from './agents/shared/odds-math.js';
 
 // ── CORS ────────────────────────────────────────────────────────
 // Allow the configured origins (CORS_ORIGINS env, default GitHub Pages) plus
@@ -100,6 +101,36 @@ async function handleMcp(req, res, url) {
   }
 }
 
+// Full dossier for one graded opportunity: the result, every book that was off
+// (with its mispricing window), the open→close line history, and the play row.
+async function buildOpportunity(url) {
+  const q = (k) => url.searchParams.get(k) || undefined;
+  const game_id = q('game_id'), market = q('market'), side = q('side'), type = q('type');
+  if (!game_id || !market) return { error: 'game_id and market required' };
+  const eq = (m) => { const o = { game_id, market }; if (side) o.side = side; if (m && type) o.type = type; return o; };
+
+  const result = (await db.select('opp_results', '*', { match: eq(true), order: { column: 'graded_at', ascending: false }, limit: 1 }))[0] || null;
+  let edges = [];
+  try { edges = await db.select('book_edge_log', '*', { match: eq(true), order: { column: 'detected_at', ascending: true }, limit: 60 }); } catch (_) { /* none */ }
+  const play = (await db.select('monitor_scores', '*', { match: eq(false), limit: 1 }))[0] || null;
+
+  // Open→close consensus line/price history from snapshots for this game/market/side.
+  const snapMarket = market === 'ml' ? 'h2h' : market === 'total' ? 'totals' : market === 'spread' ? 'spreads' : market;
+  let snaps = [];
+  try { snaps = await db.select('line_snapshots', 'book,line,price,fetched_at', { match: { game_id, market: snapMarket, ...(side ? { side } : {}) }, order: { column: 'fetched_at', ascending: true }, limit: 1000 }); } catch (_) { /* none */ }
+  const byTs = new Map();
+  for (const s of snaps) { (byTs.get(s.fetched_at) || byTs.set(s.fetched_at, []).get(s.fetched_at)).push(s); }
+  let history = [...byTs.keys()].sort().map((t) => {
+    const rows = byTs.get(t);
+    const lines = rows.map((r) => Number(r.line)).filter(Number.isFinite);
+    const prices = rows.map((r) => Number(r.price)).filter(Number.isFinite);
+    return { at: t, line: lines.length ? median(lines) : null, price: prices.length ? Math.round(median(prices)) : null, books: rows.length };
+  });
+  if (history.length > 24) { const step = Math.ceil(history.length / 24); const out = []; for (let i = 0; i < history.length; i += step) out.push(history[i]); if (out[out.length - 1] !== history[history.length - 1]) out.push(history[history.length - 1]); history = out; }
+
+  return { result, edges, play, history };
+}
+
 function systemHealth() {
   const m = getMetrics();
   let oddsBudget;
@@ -175,6 +206,9 @@ const server = http.createServer(async (req, res) => {
       });
     case '/plays':
       return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs(), pace: getNflPace() }, watchdog: getWatchdog() });
+    case '/opportunity':
+      try { return json(res, 200, await buildOpportunity(url)); }
+      catch (e) { logger.error('opportunity', e.message); return json(res, 500, { error: 'opportunity failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');
