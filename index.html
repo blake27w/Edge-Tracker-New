@@ -6637,13 +6637,18 @@ function renderBookEdges(){
     be.grid.filter(function(c){return c.graded>0||c.n>=3}).slice(0,40).forEach(function(c){
       var dim=c.small?';opacity:.5':'';
       var disc=c.avgPts!=null?(c.type==='divergence'?c.avgPts+'%':c.avgPts+'pt'):'';
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
-      h+='<div style="flex:1;min-width:0"><span style="font-size:10px;color:var(--cream)">'+esc(c.book)+'</span> <span style="font-size:8px;color:var(--dim)">'+esc(c.sport||'')+' '+esc(c.market||'')+(c.type==='divergence'?' ·div':'')+'</span></div>';
+      var bkey=[c.book,c.sport||'',c.market||'',c.type||''].join('|');
+      var bopen=state.beOpen&&state.beOpen[bkey];
+      h+='<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+';cursor:pointer" onclick="bookEdgeToggle(\''+encodeURIComponent(bkey)+'\')">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div style="flex:1;min-width:0"><span style="font-size:10px;color:var(--cream)">'+esc(c.book)+'</span> <span style="font-size:8px;color:var(--dim)">'+esc(c.sport||'')+' '+esc(c.market||'')+(c.type==='divergence'?' ·div':'')+' '+(bopen?'▾':'▸')+'</span></div>';
       h+='<div style="font-family:var(--M);font-size:8.5px;color:var(--muted);width:34px;text-align:right">'+c.n+'f</div>';
       h+='<div style="font-family:var(--M);font-size:8.5px;color:var(--muted);width:36px;text-align:right">'+(c.hitPct!=null?c.hitPct+'%':'—')+'</div>';
       h+='<div style="font-family:var(--M);font-size:10px;font-weight:700;width:46px;text-align:right;color:'+(c.roi==null?'var(--muted)':btColor(c.roi))+'">'+(c.roi!=null?(c.roi>=0?'+':'')+c.roi+'%':'—')+'</div>';
       h+='<div style="font-family:var(--M);font-size:8px;color:var(--leather);width:38px;text-align:right">'+fmtWin(c.avgWindowSec)+'</div>';
       h+='<div style="font-family:var(--M);font-size:8px;color:var(--dim);width:36px;text-align:right">'+disc+'</div>';
+      h+='</div>';
+      if(bopen)h+=renderBookEdgeDetail(bkey);
       h+='</div>';
     });
     h+='<div style="font-size:7px;color:var(--muted);margin-top:5px">Greyed = under '+min+' graded (too small to trust). "window" = how long you typically had to act.</div>';
@@ -6659,6 +6664,42 @@ function renderBookEdges(){
   }
   return h;
 }
+// Episodes behind one Book-Edges cell (lazy-loaded from /book-edges-detail).
+function renderBookEdgeDetail(key){
+  var d=state.beDetail&&state.beDetail[key];
+  if(state.beLoading&&state.beLoading[key])return '<div style="font-size:9px;color:var(--muted);margin-top:6px;font-style:italic" onclick="event.stopPropagation()">Loading episodes…</div>';
+  if(!d)return '';
+  if(d.error)return '<div style="font-size:9px;color:var(--wine);margin-top:6px" onclick="event.stopPropagation()">'+esc(d.error)+'</div>';
+  if(!d.episodes||!d.episodes.length)return '<div style="font-size:9px;color:var(--muted);margin-top:6px;font-style:italic" onclick="event.stopPropagation()">No stored episodes.</div>';
+  var h='<div style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,.08)" onclick="event.stopPropagation()">';
+  d.episodes.slice(0,40).forEach(function(e){
+    var rc=e.status==='win'?'var(--sage)':e.status==='loss'?'var(--wine)':'var(--dim)';
+    var ri=e.status==='win'?'✓':e.status==='loss'?'✗':e.status==='push'?'–':'·';
+    var disc=e.pts!=null?(e.type==='divergence'?e.pts+'%':e.pts+'pt'):'';
+    var win=e.window_sec!=null?fmtWin(e.window_sec):(e.corrected_at?'':'open');
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:9px">';
+    h+='<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream)">'+esc((e.matchup||e.game_id||'')+' · '+(e.side||''))+' <span style="color:var(--dim)">'+(e.outlier_line!=null?e.outlier_line:'')+(e.consensus_line!=null?'/'+e.consensus_line:'')+' '+disc+'</span></div>';
+    h+='<div style="white-space:nowrap"><span style="color:var(--leather)">'+esc(win)+'</span> <span style="color:'+rc+';font-family:var(--M)">'+ri+(e.pnl!=null?' '+(e.pnl>=0?'+$':'-$')+Math.abs(e.pnl):'')+'</span></div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+function bookEdgeToggle(encKey){
+  var key=decodeURIComponent(encKey);
+  state.beOpen=state.beOpen||{}; state.beDetail=state.beDetail||{}; state.beLoading=state.beLoading||{};
+  state.beOpen[key]=!state.beOpen[key];
+  if(state.beOpen[key]&&!state.beDetail[key]&&!state.beLoading[key]){
+    var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+    var p=key.split('|'); // book|sport|market|type
+    if(api&&p[0]){ state.beLoading[key]=true;
+      var u=api+'/book-edges-detail?book='+encodeURIComponent(p[0])+'&sport='+encodeURIComponent(p[1]||'')+'&market='+encodeURIComponent(p[2]||'')+'&type='+encodeURIComponent(p[3]||'');
+      fetch(u).then(function(r){return r.json()}).then(function(j){state.beDetail[key]=j||{};state.beLoading[key]=false;render()}).catch(function(){state.beDetail[key]={error:'Could not load episodes (backend offline?)'};state.beLoading[key]=false;render()});
+    } else state.beDetail[key]={error:'Set the backend URL to load detail.'};
+  }
+  render();
+}
+window.bookEdgeToggle=bookEdgeToggle;
 // Per-opportunity breakdown: each graded flag, its trigger, and win/loss.
 function renderOppDetail(bt){
   var rows=bt&&bt.oppsRecent; if(!rows||!rows.length)return '';
@@ -6781,14 +6822,51 @@ function renderSignalClv(bt){
   h+='<div style="font-size:8px;color:var(--muted);margin-bottom:7px">CLV is the honest test. Beat % &gt;50 and +avg CLV = a real edge; consistently &lt;50 = flagged for removal.</div>';
   rows.forEach(function(s){
     var col=s.beatPct>=55?'var(--sage)':s.beatPct>=50?'var(--brass)':'var(--wine)';
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">';
-    h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(s.label||'')+'</span>'+(s.flag?' <span style="font-size:7px;color:var(--wine);border:1px solid var(--wine);border-radius:3px;padding:0 3px">⚠ REVIEW</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+s.n+' plays'+(s.graded?' · '+s.graded+' graded'+(s.roi!=null?' · '+(s.roi>=0?'+':'')+s.roi+'% ROI':''):'')+'</div></div>';
+    var open=state.sigOpen&&state.sigOpen[s.id];
+    h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer" onclick="signalToggle(\''+encodeURIComponent(s.id)+'\')">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(s.label||'')+'</span> <span style="font-size:8px;color:var(--muted)">'+(open?'▾':'▸')+'</span>'+(s.flag?' <span style="font-size:7px;color:var(--wine);border:1px solid var(--wine);border-radius:3px;padding:0 3px">⚠ REVIEW</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+s.n+' plays'+(s.graded?' · '+s.graded+' graded'+(s.roi!=null?' · '+(s.roi>=0?'+':'')+s.roi+'% ROI':''):'')+'</div></div>';
     h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:'+col+'">'+s.beatPct+'%</span><div style="font-size:7.5px;color:var(--muted)">'+(s.avgClv>=0?'+':'')+s.avgClv+' avg CLV</div></div>';
+    h+='</div>';
+    if(open)h+=renderSignalDetail(s.id);
     h+='</div>';
   });
   h+='</div>';
   return h;
 }
+// Plays behind one signal id (lazy-loaded from /signal-detail).
+function renderSignalDetail(id){
+  var d=state.sigDetail&&state.sigDetail[id];
+  if(state.sigLoading&&state.sigLoading[id])return '<div style="font-size:9px;color:var(--muted);margin-top:6px;font-style:italic" onclick="event.stopPropagation()">Loading plays…</div>';
+  if(!d)return '';
+  if(d.error)return '<div style="font-size:9px;color:var(--wine);margin-top:6px" onclick="event.stopPropagation()">'+esc(d.error)+'</div>';
+  if(!d.plays||!d.plays.length)return '<div style="font-size:9px;color:var(--muted);margin-top:6px;font-style:italic" onclick="event.stopPropagation()">No plays found for this signal.</div>';
+  var h='<div style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,.08)" onclick="event.stopPropagation()">';
+  d.plays.slice(0,40).forEach(function(p){
+    var rc=p.status==='win'?'var(--sage)':p.status==='loss'?'var(--wine)':'var(--dim)';
+    var ri=p.status==='win'?'✓':p.status==='loss'?'✗':p.status==='push'?'–':'·';
+    var clvc=p.clv==null?'var(--muted)':p.clv>0?'var(--sage)':'var(--wine)';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:9px">';
+    h+='<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream)">'+esc((p.sport||'')+' '+(p.matchup||'')+' · '+(p.side||''))+'</div>';
+    h+='<div style="white-space:nowrap"><span style="color:'+clvc+'">'+(p.clv!=null?(p.clv>0?'+':'')+p.clv+(p.beat_close?'✓':''):'—')+'</span> <span style="color:'+rc+';font-family:var(--M)">'+ri+(p.pnl!=null?' '+(p.pnl>=0?'+$':'-$')+Math.abs(p.pnl):'')+'</span></div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+function signalToggle(encId){
+  var id=decodeURIComponent(encId);
+  state.sigOpen=state.sigOpen||{}; state.sigDetail=state.sigDetail||{}; state.sigLoading=state.sigLoading||{};
+  state.sigOpen[id]=!state.sigOpen[id];
+  if(state.sigOpen[id]&&!state.sigDetail[id]&&!state.sigLoading[id]){
+    var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+    if(api){ state.sigLoading[id]=true;
+      fetch(api+'/signal-detail?id='+encodeURIComponent(id)).then(function(r){return r.json()}).then(function(j){state.sigDetail[id]=j||{};state.sigLoading[id]=false;render()}).catch(function(){state.sigDetail[id]={error:'Could not load plays (backend offline?)'};state.sigLoading[id]=false;render()});
+    } else state.sigDetail[id]={error:'Set the backend URL to load detail.'};
+  }
+  render();
+}
+window.signalToggle=signalToggle;
 function renderBtBreakdowns(bt){
   if(!bt||!bt.overall||!bt.overall.n)return renderSignalClv(bt)+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet — win/ROI breakdowns appear once plays settle. (Signal CLV above builds sooner.)</div>';
   var h=renderSignalClv(bt);

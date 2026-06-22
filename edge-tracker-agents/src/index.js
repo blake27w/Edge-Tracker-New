@@ -131,6 +131,48 @@ async function buildOpportunity(url) {
   return { result, edges, play, history };
 }
 
+// Individual episodes behind one Book-Edges cell (book × sport × market × type),
+// each joined to its graded result.
+async function buildBookEdgeDetail(url) {
+  const book = url.searchParams.get('book') || undefined;
+  if (!book) return { error: 'book required' };
+  const match = { book };
+  for (const k of ['sport', 'market', 'type']) { const v = url.searchParams.get(k); if (v) match[k] = v; }
+  let eps = [];
+  try { eps = await db.select('book_edge_log', '*', { match, order: { column: 'detected_at', ascending: false }, limit: 60 }); } catch (_) { /* none */ }
+  let res = [];
+  try { res = await db.select('opp_results', 'type,game_id,market,side,matchup,status,pnl', { limit: 8000 }); } catch (_) { /* none */ }
+  const rmap = new Map();
+  for (const r of res) rmap.set(`${r.type}|${r.game_id}|${r.market}|${r.side}`, r);
+  return { episodes: eps.map((e) => {
+    const r = rmap.get(`${e.type}|${e.game_id}|${e.market}|${e.side}`);
+    return { game_id: e.game_id, matchup: r ? r.matchup : null, sport: e.sport, market: e.market, side: e.side, book: e.book, type: e.type, outlier_line: e.outlier_line, consensus_line: e.consensus_line, pts: e.pts, window_sec: e.window_sec, detected_at: e.detected_at, corrected_at: e.corrected_at, status: r ? r.status : null, pnl: r ? r.pnl : null };
+  }) };
+}
+
+// Individual plays that carried one signal id, each with its CLV + result.
+async function buildSignalDetail(url) {
+  const id = url.searchParams.get('id') || undefined;
+  if (!id) return { error: 'id required' };
+  let clvRows = [];
+  try { clvRows = await db.select('clv_records', 'game_id,bet_market,side,clv,beat_close', { match: { suspect: false }, limit: 8000 }); } catch (_) { /* none */ }
+  const clvMap = new Map();
+  for (const c of clvRows) clvMap.set(`${c.game_id}|${c.bet_market}|${c.side}`, c);
+  let plays = [];
+  try { plays = await db.select('monitor_scores', 'sport,game_id,matchup,market,side,line,signals,status,pnl,score,scored_at,observational', { match: { qualified: true }, order: { column: 'scored_at', ascending: false }, limit: 8000 }); } catch (_) { /* none */ }
+  const FIGHT = new Set(['UFC', 'BOXING']);
+  const out = [];
+  for (const p of plays) {
+    if (p.observational && FIGHT.has(p.sport)) continue;
+    const ids = Array.isArray(p.signals) ? p.signals.map((s) => s && s.id) : [];
+    if (!ids.includes(id)) continue;
+    const c = clvMap.get(`${p.game_id}|${p.market}|${p.side}`);
+    out.push({ sport: p.sport, matchup: p.matchup, market: p.market, side: p.side, line: p.line, score: p.score, status: p.status, pnl: p.pnl, scored_at: p.scored_at, clv: c ? c.clv : null, beat_close: c ? c.beat_close : null });
+    if (out.length >= 60) break;
+  }
+  return { plays: out };
+}
+
 function systemHealth() {
   const m = getMetrics();
   let oddsBudget;
@@ -209,6 +251,12 @@ const server = http.createServer(async (req, res) => {
     case '/opportunity':
       try { return json(res, 200, await buildOpportunity(url)); }
       catch (e) { logger.error('opportunity', e.message); return json(res, 500, { error: 'opportunity failed', detail: e.message }); }
+    case '/book-edges-detail':
+      try { return json(res, 200, await buildBookEdgeDetail(url)); }
+      catch (e) { logger.error('book-edges-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
+    case '/signal-detail':
+      try { return json(res, 200, await buildSignalDetail(url)); }
+      catch (e) { logger.error('signal-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');
