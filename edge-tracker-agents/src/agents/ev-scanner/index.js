@@ -39,7 +39,8 @@ function fairProbs(aPrices, bPrices) {
   return { a: a / t, b: b / t };
 }
 
-// Best +EV book for one side given its fair prob.
+// Best +EV book for one side given its fair prob. (Heavy-juice gating is done
+// in consider() so corroborated heavy chalk can still pass.)
 function bestEv(sideOutcomes, fair) {
   let best = null;
   for (const o of sideOutcomes) {

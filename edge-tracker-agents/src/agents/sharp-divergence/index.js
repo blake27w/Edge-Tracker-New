@@ -7,6 +7,7 @@
 // the strongest case — a soft price sitting on the side steam money
 // is moving toward (a slow book on the sharp side). $0.
 // ══════════════════════════════════════════════════════════════
+import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setDivergence } from '../../store/index.js';
