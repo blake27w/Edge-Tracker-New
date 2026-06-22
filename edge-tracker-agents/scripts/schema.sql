@@ -705,3 +705,21 @@ create table if not exists nfl_pace (
 -- silently without commence_time) + the corroboration note.
 alter table ev_opportunities add column if not exists commence_time timestamptz;
 alter table ev_opportunities add column if not exists note text;
+
+-- ── Prediction-market (Polymarket/Kalshi) book-vs-exchange edges (observational) ──
+create table if not exists pred_market_edges (
+  id          uuid primary key default gen_random_uuid(),
+  sport       text,
+  game_id     text,
+  matchup     text,
+  market      text default 'ml',
+  side        text,
+  price       integer,
+  exch_prob   numeric,
+  book_prob   numeric,
+  edge_pct    numeric,
+  source      text,
+  vol         numeric,
+  detected_at timestamptz not null default now()
+);
+create index if not exists pred_market_edges_idx on pred_market_edges (detected_at desc);
