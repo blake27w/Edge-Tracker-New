@@ -6108,7 +6108,7 @@ function renderAgentsContent(){
     var key=it.gid?('|'+it.gid+'|'+it.mk+'|'+it.sd):null;
     var open=key&&state.oppOpen&&state.oppOpen[key];
     h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+kc+(key?';cursor:pointer':'')+'"'+(key?(' onclick="oppToggle(\''+encodeURIComponent(key)+'\')"'):'')+'>';
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+(key?' '+(open?'▾':'▸'):'')+'</span></div>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+exchBadge(it.gid,it.sd,it.mk)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+(key?' '+(open?'▾':'▸'):'')+'</span></div>';
     h+='<div style="font-family:var(--M);font-size:12px;font-weight:700;color:var(--cream);line-height:1.4">'+esc(it.bet)+'</div>';
     h+='<div style="font-size:8.5px;color:var(--leather);margin-top:2px">'+esc(it.tag)+'</div>';
     if(open)h+=renderOppDossier(key);
@@ -6150,7 +6150,7 @@ function renderAgentsContent(){
       var gtime=p.commence_time?(function(){try{return new Date(p.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}catch(e){return ''}})():'';
       h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+esc(p.matchup||p.game_id||'')+'</div>';
       if(gtime)h+='<div style="font-family:var(--M);font-size:9px;color:var(--brass);margin-top:2px">🕒 '+esc(gtime)+'</div>';
-      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+' · '+esc(p.market||'')+' · <b>'+esc(p.side||'')+'</b>'+(p.line!=null?(' '+p.line):'')+'</div></div>';
+      h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+' · '+esc(p.market||'')+' · <b>'+esc(p.side||'')+'</b>'+(p.line!=null?(' '+p.line):'')+exchBadge(p.game_id,p.side,p.market)+'</div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:16px;font-weight:700;color:var(--pine)">'+conf+'</div><div style="font-size:7px;color:var(--muted)">CONF</div></div>';
       h+='</div>';
       h+='<div style="font-size:8px;color:var(--muted);margin-top:5px">'+(tier?(tier+' / $'+ud):'')+(p.t1_count!=null?(' · '+p.t1_count+' T1'):'')+(p.over_penalty_applied?' · ⚠ Over penalty':'')+'</div>';
@@ -6889,6 +6889,28 @@ function renderOppDetail(bt){
   return h;
 }
 // Expanded detail for one graded opportunity (lazy-loaded from /opportunity).
+// Prediction-market corroboration: does Polymarket/Kalshi also say this
+// game+side is underpriced? Returns the best matching exchange edge or null.
+// ML-only (the exchange prices game winners); side text matched leniently.
+function exchAgree(gid,side,market){
+  if(market&&!/^(ml|h2h|moneyline)/i.test(String(market)))return null;
+  if(!gid||!side)return null;
+  var pm=state.agentsPredMarket,edges=(pm&&pm.edges)||[];
+  var ns=String(side).toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(!ns)return null;
+  var found=null;
+  edges.forEach(function(e){
+    if(String(e.game_id)!==String(gid))return;
+    var es=String(e.side||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    if(!es)return;
+    if(es===ns||es.indexOf(ns)>=0||ns.indexOf(es)>=0){ if(!found||e.edge_pct>found.edge_pct)found=e; }
+  });
+  return found;
+}
+function exchBadge(gid,side,market){
+  var e=exchAgree(gid,side,market); if(!e)return '';
+  return '<span title="Polymarket/Kalshi also prices this side as underpriced (+'+e.edge_pct+'% vs book)" style="font-size:7px;letter-spacing:.5px;color:var(--brass);border:1px solid var(--leather);border-radius:3px;padding:1px 4px;margin-left:5px;white-space:nowrap">🔮 +'+e.edge_pct+'%</span>';
+}
 function renderOppDossier(key,r){
   var d=state.oppDetail&&state.oppDetail[key];
   if(state.oppLoading&&state.oppLoading[key])return '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-style:italic">Loading the move…</div>';
