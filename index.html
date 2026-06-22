@@ -38,8 +38,16 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .logo{font-family:var(--H);font-size:18px;font-weight:500;color:var(--cream);letter-spacing:8px;text-align:center;text-transform:uppercase}
 .gear-btn{background:none;border:none;font-size:18px;cursor:pointer;padding:4px;position:absolute;right:18px;top:50%;transform:translateY(-50%);opacity:.7;transition:.2s}
 .gear-btn:active{opacity:1}
+.back-btn{background:none;border:none;font-size:30px;line-height:1;cursor:pointer;padding:0 6px;position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--cream);opacity:.85}
+.back-btn:active{opacity:1}
+/* Home launcher: 6 big square tiles instead of a bottom tab bar */
+.launch-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px;padding:8px 2px 4px}
+.launch-btn{aspect-ratio:1/1;border:none;border-radius:18px;background:var(--bone);box-shadow:var(--shadow-md);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+.launch-btn:active{transform:scale(.97)}
+.launch-btn .li{font-size:42px;line-height:1}
+.launch-btn .ll{font-family:var(--H);font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--cream);font-weight:600}
 
-#main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 16px 28px}
+#main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 16px calc(28px + env(safe-area-inset-bottom))}
 
 #tabs{background:var(--saddle);display:flex;flex-shrink:0;padding-bottom:max(8px,env(safe-area-inset-bottom));border-top:1px solid rgba(0,0,0,.25)}
 .tab{flex:1;padding:8px 0 6px;min-width:0;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-family:var(--H);position:relative;transition:.15s}
@@ -57,7 +65,7 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .sp-btn .sp-ic{font-size:20px}.sp-btn .sp-nm{font-family:var(--H);font-size:9px;font-weight:500;color:var(--dim);letter-spacing:1px;margin-top:2px}
 .sp-btn.on .sp-nm{color:var(--txt);font-weight:600}
 
-.home-wrap{display:flex;flex-direction:column;height:calc(100dvh - 84px - 56px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:-16px -16px -28px;padding:12px 16px 16px}
+.home-wrap{display:flex;flex-direction:column;height:calc(100dvh - 84px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:-16px -16px -28px;padding:12px 16px calc(16px + env(safe-area-inset-bottom))}
 .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0;overflow-y:auto;align-content:start;grid-auto-rows:62px;-webkit-overflow-scrolling:touch}
 .home-btn{border-radius:16px;border:none;background:var(--bone);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:.2s;font-family:var(--H);position:relative;overflow:hidden;min-height:0;box-shadow:var(--shadow-md)}
 .home-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.12) 0%,transparent 50%);pointer-events:none}
@@ -195,7 +203,8 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 
 <!-- HEADER -->
 <div id="hdr">
-  <div class="logo">EDGE TRACKER</div>
+  <button class="back-btn" id="backBtn" onclick="goMenu()" style="display:none">‹</button>
+  <div class="logo" onclick="goMenu()" style="cursor:pointer">EDGE TRACKER</div>
   <button class="gear-btn" onclick="toggleSettings()">⚙️</button>
 </div>
 
@@ -424,7 +433,7 @@ var state = {
   // Filters
   filter:'a', nFilter:'a', uFilter:'a', recFilter:'a',
   homeScreen: true,
-  homeTab: 'dash',
+  homeTab: 'menu',
   // Custom signals
   customSigs: ls('et_custom_sigs',[]),
   homeHistFilter: 'a',
@@ -3213,6 +3222,8 @@ function gStats(){
 function render(){
   // Stop the Agents-tab poll whenever we render anything other than that view.
   if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')))stopAgentsPoll();
+  // The header back button only applies on the home launcher; sport views hide it.
+  if(!state.homeScreen){var _bb=$('backBtn');if(_bb)_bb.style.display='none';}
   if(state.homeScreen){
     renderHomeScreen();
     return;
@@ -3307,33 +3318,42 @@ function renderMyBetsList(){
   return h;
 }
 
+// The 6 home destinations (rendered as a launcher grid, not a bottom bar).
+var HOME_TABS=[
+  {id:'dash',icon:'🏟️',label:'Sports'},
+  {id:'plays',icon:'🎯',label:'Plays'},
+  {id:'rec',icon:'📊',label:'Stats'},
+  {id:'stats',icon:'📈',label:'My Stats'},
+  {id:'log',icon:'➕',label:'Log'},
+  {id:'agents',icon:'🤖',label:'Agents'}
+];
+function goMenu(){ state.homeTab='menu'; if(!state.homeScreen){ goHome(); return; } render(); }
+window.goMenu=goMenu;
+
+function renderLauncher(){
+  var h='<div class="launch-grid">';
+  HOME_TABS.forEach(function(t){
+    h+='<button class="launch-btn" onclick="state.homeTab=\''+t.id+'\';render()"><span class="li">'+t.icon+'</span><span class="ll">'+t.label+'</span></button>';
+  });
+  h+='</div>';
+  $('sport-selector').innerHTML=h;
+}
+
 function renderHomeScreen(){
   SPORTS.forEach(function(s){var el=$('mod-'+s.id);if(el)el.classList.add('hid')});
   $('sport-selector').className='';
+  $('tabs').innerHTML='';   // no bottom tab bar — navigation is the launcher
 
-  // Home tab bar
-  var HOME_TABS=[
-    {id:'dash',icon:'🏠',label:'Dashboard'},
-    {id:'log',icon:'➕',label:'Log'},
-    {id:'plays',icon:'🎯',label:'Plays'},
-    {id:'rec',icon:'📊',label:'Stats'},
-    {id:'stats',icon:'📈',label:'My Stats'},
-    {id:'agents',icon:'🤖',label:'Agents'}
-  ];
-  var th='';
-  HOME_TABS.forEach(function(t){
-    var on=state.homeTab===t.id;
-    th+='<button class="tab'+(on?' on':'')+'" onclick="state.homeTab=\''+t.id+'\';render()">';
-    th+='<div class="tln"></div><span class="ti">'+t.icon+'</span><span class="tl">'+t.label+'</span></button>';
-  });
-  $('tabs').innerHTML=th;
+  var inSection=state.homeTab&&state.homeTab!=='menu';
+  var bb=$('backBtn'); if(bb)bb.style.display=inSection?'block':'none';
 
+  if(!inSection){ renderLauncher(); return; }
   if(state.homeTab==='dash')renderHomeDash();
   else if(state.homeTab==='log')renderHomeLog();
   else if(state.homeTab==='rec')renderResultsView();
   else if(state.homeTab==='agents'||state.homeTab==='plays')renderAgentsView();
   else if(state.homeTab==='stats')renderHomeStats();
-  else renderHomeDash();
+  else renderLauncher();
 }
 
 function renderHomeDash(){
