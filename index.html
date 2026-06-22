@@ -6836,11 +6836,14 @@ function renderOppDossier(key,r){
   // Line history open→close
   if(d.history&&d.history.length){
     var hist=d.history,first=hist[0],last=hist[hist.length-1];
-    h+='<div style="font-size:8px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">LINE OPEN → CLOSE ('+hist.length+' pts)</div>';
+    h+='<div style="font-size:8px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">LINE OPEN → CLOSE ('+hist.length+' pts · median across books)</div>';
     var fmtPt=function(p){return (p.line!=null?p.line:'')+(p.price!=null?(p.line!=null?' / ':'')+(p.price>0?'+'+p.price:p.price):'')};
-    h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream)">'+fmtPt(first)+' <span style="color:var(--dim)">→</span> '+fmtPt(last)+'</div>';
+    var bk=function(p){return p.books!=null?' <span style="color:var(--dim)">('+p.books+'bk)</span>':''};
+    h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream)">'+fmtPt(first)+bk(first)+' <span style="color:var(--dim)">→</span> '+fmtPt(last)+bk(last)+'</div>';
     // compact inline path
     h+='<div style="font-family:var(--M);font-size:7.5px;color:var(--muted);margin-top:3px;line-height:1.5;word-break:break-word">'+hist.map(function(p){return fmtPt(p)}).join(' · ')+'</div>';
+    // thin-sample warning
+    if(last.books!=null&&last.books<3)h+='<div style="font-size:8px;color:var(--brass);margin-top:3px;font-style:italic">⚠ Close median from only '+last.books+' book'+(last.books===1?'':'s')+' — thin sample.</div>';
   }
   if((!d.books||!d.books.length)&&(!d.edges||!d.edges.length)&&(!d.history||!d.history.length))h+='<div style="font-size:9px;color:var(--muted);font-style:italic">No stored line history for this game (older play or pre-capture).</div>';
   h+='</div>';
