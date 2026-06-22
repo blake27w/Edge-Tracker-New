@@ -181,9 +181,9 @@ const config = {
   tennisCloseCapture: bool(env.TENNIS_CLOSE_CAPTURE, false),
 
   // Prediction-market reference (Polymarket + Kalshi) — sharp fair-value +
-  // book-vs-exchange divergence signal. OFF by default (public API shapes
-  // unverified here); enable with PREDICTION_MARKETS=true. Data is free.
-  predictionMarkets: bool(env.PREDICTION_MARKETS, false),
+  // book-vs-exchange divergence signal. ON by default; data is free ($0).
+  // Force off with PREDICTION_MARKETS=false if a public API shape drifts.
+  predictionMarkets: bool(env.PREDICTION_MARKETS, true),
 
   supabase: {
     url: clean(env.SUPABASE_URL),
