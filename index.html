@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Edge Tracker">
 <meta name="theme-color" content="#0b1422">
 <title>Edge Tracker</title>
@@ -30,7 +30,7 @@
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{height:-webkit-fill-available}
-body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh;height:-webkit-fill-available;
+body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh;height:-webkit-fill-available;height:100dvh;
   display:flex;flex-direction:column;overflow:hidden;
   background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.6' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='.025'/%3E%3C/svg%3E")}
 
@@ -41,8 +41,8 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 
 #main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 16px 28px}
 
-#tabs{background:var(--saddle);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom)}
-.tab{flex:1;padding:9px 0 7px;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-family:var(--H);position:relative;transition:.15s}
+#tabs{background:var(--saddle);display:flex;flex-shrink:0;padding-bottom:max(8px,env(safe-area-inset-bottom));border-top:1px solid rgba(0,0,0,.25)}
+.tab{flex:1;padding:8px 0 6px;min-width:0;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-family:var(--H);position:relative;transition:.15s}
 .tab .ti{font-size:18px;opacity:.65;transition:.15s}.tab .tl{font-size:10px;color:var(--cream);font-weight:600;letter-spacing:.2px;opacity:.72;white-space:nowrap;transition:.15s}
 .tab.on{background:rgba(0,0,0,.16)}
 .tab.on .tl{opacity:1;font-weight:700;color:var(--brass)}
@@ -57,7 +57,7 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .sp-btn .sp-ic{font-size:20px}.sp-btn .sp-nm{font-family:var(--H);font-size:9px;font-weight:500;color:var(--dim);letter-spacing:1px;margin-top:2px}
 .sp-btn.on .sp-nm{color:var(--txt);font-weight:600}
 
-.home-wrap{display:flex;flex-direction:column;height:calc(100vh - 84px - 50px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:-16px -16px -28px;padding:12px 16px 16px}
+.home-wrap{display:flex;flex-direction:column;height:calc(100dvh - 84px - 56px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:-16px -16px -28px;padding:12px 16px 16px}
 .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0;overflow-y:auto;align-content:start;grid-auto-rows:62px;-webkit-overflow-scrolling:touch}
 .home-btn{border-radius:16px;border:none;background:var(--bone);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:.2s;font-family:var(--H);position:relative;overflow:hidden;min-height:0;box-shadow:var(--shadow-md)}
 .home-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.12) 0%,transparent 50%);pointer-events:none}
@@ -7273,6 +7273,22 @@ autoGradeCheck();
 document.addEventListener('visibilitychange',function(){
   if(!document.hidden)autoGradeCheck();
 });
+
+// One-time tip: iOS Safari users can install to home screen to lose the URL bar.
+(function(){
+  try{
+    var ua=navigator.userAgent||'';
+    var iOS=/iphone|ipad|ipod/i.test(ua)&&!window.MSStream;
+    var standalone=(window.navigator.standalone===true)||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
+    if(!iOS||standalone)return;
+    if(localStorage.getItem('et_a2hs_dismissed'))return;
+    var b=document.createElement('div');
+    b.style.cssText='position:fixed;left:10px;right:10px;bottom:14px;z-index:99999;background:#13233b;border:1px solid #e6bb46;border-radius:12px;padding:11px 13px;box-shadow:0 6px 24px rgba(0,0,0,.5);display:flex;align-items:center;gap:10px;font-family:system-ui,-apple-system,sans-serif';
+    b.innerHTML='<div style="flex:1;font-size:12px;color:#f3ead6;line-height:1.4">📲 <b>Go fullscreen</b> — tap <b>Share</b> then <b>Add to Home Screen</b> to run Edge Tracker with no address bar.</div><button style="background:#e6bb46;color:#13233b;border:none;border-radius:7px;font-size:11px;font-weight:700;padding:7px 10px;cursor:pointer">Got it</button>';
+    b.querySelector('button').onclick=function(){try{localStorage.setItem('et_a2hs_dismissed','1')}catch(e){}; b.remove();};
+    document.body.appendChild(b);
+  }catch(e){}
+})();
 
 })();
 </script>
