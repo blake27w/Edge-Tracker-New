@@ -14,6 +14,7 @@ import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getTennisGames, setEvPlays } from '../../store/index.js';
 
 const MIN_BOOKS = 4;                 // need a real consensus to trust "fair"
+const MAX_JUICE = config.rules.maxOppJuice;                 // skip flags priced worse than this (heavy chalk)
 const SHOW_EV = Number(process.env.EV_SHOW_PCT) || 0.03;   // flag at +3%
 const ALERT_EV = Number(process.env.EV_ALERT_PCT) || 0.10; // text/email at +10%
 
@@ -37,10 +38,12 @@ function fairProbs(aPrices, bPrices) {
   return { a: a / t, b: b / t };
 }
 
-// Best +EV book for one side given its fair prob.
+// Best +EV book for one side given its fair prob. Skip brutally-juiced prices
+// (a real edge on heavy chalk still isn't worth laying the number).
 function bestEv(sideOutcomes, fair) {
   let best = null;
   for (const o of sideOutcomes) {
+    if (o.price < MAX_JUICE) continue;
     const ev = fair * toDecimal(o.price) - 1;
     if (ev >= SHOW_EV && (!best || ev > best.ev)) best = { book: o.book, price: o.price, ev };
   }

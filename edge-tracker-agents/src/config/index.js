@@ -247,6 +247,10 @@ const config = {
     // Tennis is observational until it proves positive CLV over a sample (kept
     // out of the headline record, still graded). Lift with TENNIS_OBSERVATIONAL=false.
     tennisObservational: bool(env.TENNIS_OBSERVATIONAL, true),
+    // Max juice we'll surface as an opportunity (American). Even a real edge on
+    // a heavy favorite means laying a brutal price — skip prices worse than this.
+    // Default -400 (only kills egregious chalk); tighten via MAX_OPP_JUICE=-250.
+    maxOppJuice: num(env.MAX_OPP_JUICE, -400),
     // Budget protection: discretionary Odds-API consumers (props, tennis,
     // derivatives) stand down when fewer than this many monthly credits remain,
     // reserving them for core odds ingestion. Set ODDS_BUDGET_RESERVE.

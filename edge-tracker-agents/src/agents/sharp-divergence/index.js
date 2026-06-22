@@ -59,6 +59,7 @@ async function run() {
         const lineEq = M.mkt === 'spreads' ? (side === g.home ? M.line : M.awayLine) : M.line;
         const a = analyze(gather(g, key, lineEq));
         if (!a || a.gap < DIVERGE) continue;
+        if (a.price < config.rules.maxOppJuice) continue; // heavy chalk — too expensive to surface
         rows.push({
           sport: g.sport, game_id: g.game_id, commence_time: g.commence_time,
           matchup: `${g.away} @ ${g.home}`, market: M.mkt, side,
