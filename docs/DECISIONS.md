@@ -53,3 +53,22 @@ converge on the preferred tool, so the direction is to bring Alpha Radar
   device loads data with zero setup (PR #57).
 - Vercel hosting setup: `vercel.json` + `.vercelignore`; backend CORS now
   allows `*.vercel.app` origins (PR #58).
+
+---
+
+## 2026-06-22 — P3 (fractional-Kelly sizing) deferred until data matures
+
+**Decision:** Do NOT build Kelly/edge-based stake sizing yet. Sizing off a
+thin or unproven per-signal CLV sample is just fitting noise — we'd be
+assigning precise stake multipliers to signals we don't yet know work.
+Stay on flat/observational sizing until the evidence is in.
+
+**Revisit when:** the per-signal CLV scorecard has an adequate sample
+(rule of thumb: ≥ ~30–50 graded per signal you'd size on) and clearly
+shows which signals beat the close. The infrastructure to judge this is
+already live: Stats → What Works (per-signal CLV scorecard, with
+drill-down), Book Edges, and the totals/tennis observational buckets.
+
+**Then build:** fractional (¼–½) Kelly off measured edge + per-signal CLV
+(not raw confidence), with single-play and daily/slate exposure caps, plus
+bankroll/drawdown analytics.
