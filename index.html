@@ -5970,7 +5970,7 @@ function renderResultsContent(){
   if(!bt){h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">Loading… (set the backend URL on the Agents tab if this stays empty)</div>';$('sport-selector').innerHTML=h;return;}
   // Sub-tabs keep this organized instead of one long scroll.
   if(!state.recView)state.recView='overview';
-  var views=[['overview','Overview'],['breakdown','What Works'],['clv','CLV'],['opps','Opportunities'],['recent','Recent']];
+  var views=[['overview','Overview'],['breakdown','What Works'],['clv','CLV'],['opps','Opportunities'],['recent','Record']];
   h+='<div style="display:flex;gap:4px;margin-bottom:12px">';
   views.forEach(function(v){var on=state.recView===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.recView=\''+v[0]+'\';render()" style="flex:1;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
@@ -6915,30 +6915,41 @@ function oppToggle(encKey){
 window.oppToggle=oppToggle;
 function renderRecentResults(bt){
   if(!bt||!bt.recent||!bt.recent.length)return '';
-  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 4px">RECENT RESULTS</div>';
+  var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 4px">RECORD — EVERY GRADED PLAY ('+bt.recent.length+')</div>';
   var lastDay='';
-  bt.recent.slice(0,40).forEach(function(r){
+  bt.recent.forEach(function(r){
     var day=r.graded_at?(function(){try{return new Date(r.graded_at).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})}catch(e){return ''}})():'';
     if(day&&day!==lastDay){lastDay=day;h+='<div style="font-size:8px;color:var(--muted);margin:8px 0 3px;letter-spacing:.5px">'+esc(day)+'</div>';}
     var col=r.status==='win'?'#34d399':r.status==='loss'?'var(--wine)':'var(--muted)';
     var badge=r.status==='win'?'W':r.status==='loss'?'L':'P';
     var label=(r.player?esc(r.player)+' ':'')+esc(r.side||'')+(r.line!=null?' '+r.line:'');
     var anom=r.anomaly?(' · <span style="color:var(--brass)">🎲 '+(r.anomaly==='overtime'?'OT':r.anomaly==='hook'?'hook':'close')+'</span>'):'';
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
-    h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.matchup||'')+'</div>';
+    var key='|'+(r.game_id||'')+'|'+(r.market||'')+'|'+(r.side||'');
+    var open=r.game_id&&state.oppOpen&&state.oppOpen[key];
+    h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+(r.game_id?';cursor:pointer':'')+'"'+(r.game_id?' onclick="oppToggle(\''+encodeURIComponent(key)+'\')"':'')+'>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(r.game_id?(open?'▾ ':'▸ '):'')+esc(r.matchup||'')+'</div>';
     h+='<div style="font-size:9px;color:var(--leather);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.sport||'')+' · '+esc(r.market||'')+' · '+label+(r.result_score?' · '+esc(r.result_score):'')+anom+'</div></div>';
     h+='<div style="text-align:right;margin-left:8px"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+badge+'</span>';
     if(r.pnl!=null)h+='<div style="font-size:8px;color:'+(r.pnl>=0?'#34d399':'var(--wine)')+'">'+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl)+'</div>';
     h+='</div></div>';
+    if(open){
+      h+='<div style="margin-top:6px" onclick="event.stopPropagation()">';
+      h+='<div style="font-size:9px;color:var(--cream)">'+esc((r.status||'').toUpperCase())+(r.result_score?' · '+esc(r.result_score):'')+(r.pnl!=null?' · '+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl):'')+(r.score!=null?' · '+Math.round(r.score)+' conf':'')+(r.tier?' · '+esc(r.tier):'')+'</div>';
+      if(r.signals&&r.signals.length)h+='<div style="margin-top:4px;font-size:8.5px;color:var(--dim)">'+r.signals.map(function(s){return '• <span style="color:var(--muted)">T'+(s.tier||'?')+'</span> '+esc(s.label||s.id||'')}).join('<br>')+'</div>';
+      h+='</div>';
+      h+=renderOppDossier(key);
+    }
+    h+='</div>';
   });
   return h;
 }
 function renderBtOverall(bt){
   var o=bt&&bt.overall;
   if(!o||!o.n)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No graded plays yet. As plays settle, the record, win % and ROI fill in here.</div>';
-  var h='<div class="card" style="padding:15px 16px;margin-bottom:8px">';
+  var h='<div class="card" style="padding:15px 16px;margin-bottom:8px;cursor:pointer" onclick="state.recView=\'recent\';render()">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-  h+='<div><div style="font-family:var(--M);font-size:24px;font-weight:700;color:var(--txt)">'+o.w+'-'+o.l+(o.p?'-'+o.p:'')+'</div><div style="font-size:8px;color:var(--muted)">'+o.n+' graded · '+o.winPct+'% win</div></div>';
+  h+='<div><div style="font-family:var(--M);font-size:24px;font-weight:700;color:var(--txt)">'+o.w+'-'+o.l+(o.p?'-'+o.p:'')+'</div><div style="font-size:8px;color:var(--muted)">'+o.n+' graded · '+o.winPct+'% win · tap for every play ▸</div></div>';
   h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:24px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:8px;color:var(--muted)">ROI · '+(o.pnl>=0?'+$':'-$')+Math.abs(o.pnl)+'</div></div>';
   h+='</div></div>';
   if(bt.research&&bt.research.n){var rr=bt.research;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">📝 RESEARCH PICKS</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+rr.w+'-'+rr.l+(rr.p?'-'+rr.p:'')+' · '+rr.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(rr.roi)+'">'+(rr.roi>=0?'+':'')+rr.roi+'%</div></div></div>';}

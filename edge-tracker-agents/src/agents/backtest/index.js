@@ -243,8 +243,9 @@ async function run() {
     for (const r of tennisObs) tally(a, r);
     report.tennis = { ...finalize(a), observational: config.rules.tennisObservational, bySignal: group(tennisObs, signalIds, { min: 1 }) };
   }
-  report.recent = rows.slice(0, 50).map((r) => ({
-    sport: r.sport, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
+  report.recent = rows.slice(0, 100).map((r) => ({
+    sport: r.sport, game_id: r.game_id, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
+    score: r.score, tier: r.tier, t1_count: r.t1_count, signals: r.signals,
     status: r.status, pnl: r.pnl, result_score: r.result_score, anomaly: r.anomaly, graded_at: r.graded_at,
   }));
   // Variance losses — how many losses were bad beats (OT / hook / close) vs bad reads.
