@@ -6088,23 +6088,26 @@ function renderAgentsContent(){
   var fp=function(v){return v==null?'':(v>0?'+'+v:''+v)};
   arb.forEach(function(a){ items.push({prio:0,kind:'ARB',tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
     bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
-  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus,matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,
+  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus,matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
     bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
-  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:''),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,
+  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:''),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,gid:e.game_id,mk:(/^total/.test(e.market||'')?'total':'ml'),sd:e.side,
     bet:e.side+' '+fp(e.price)+' @ '+e.book}); });
-  keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),
+  keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),gid:k.game_id,mk:'spread',sd:k.side,
     bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
-  div.forEach(function(dv){ if(!dv.aligned)return; items.push({prio:4,kind:'DIVERGE',tag:'+'+dv.edgePct+'% vs field'+(dv.aligned?' · sharp side':''),matchup:dv.matchup,sport:dv.sport,edge:(dv.edgePct||0),
+  div.forEach(function(dv){ if(!dv.aligned)return; items.push({prio:4,kind:'DIVERGE',tag:'+'+dv.edgePct+'% vs field'+(dv.aligned?' · sharp side':''),matchup:dv.matchup,sport:dv.sport,edge:(dv.edgePct||0),gid:dv.game_id,mk:(dv.market==='h2h'?'ml':dv.market==='totals'?'total':'spread'),sd:dv.side,
     bet:dv.side+' '+fp(dv.price)+' @ '+dv.book}); });
   items.sort(function(a,b){return a.prio-b.prio||b.edge-a.edge});
   h+='<div style="background:rgba(52,211,153,.08);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">▶ BET NOW — LIVE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Proven scanner edges that are live right now: open the book, bet the number, act fast. Flat stake. Model picks are excluded until validated.</div></div>';
   if(!items.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Nothing actionable right now. Stale lines, +EV, and arbs appear here the moment a book is off-market.</div>'; }
   else { items.slice(0,40).forEach(function(it){
     var kc=it.kind.charAt(0)==='A'||it.kind.indexOf('MIDDLE')>=0?'var(--brass)':it.kind==='STALE'?'var(--sage)':it.kind==='+EV'?'#34d399':'var(--leather)';
-    h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+kc+'">';
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+'</span></div>';
+    var key=it.gid?('|'+it.gid+'|'+it.mk+'|'+it.sd):null;
+    var open=key&&state.oppOpen&&state.oppOpen[key];
+    h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+kc+(key?';cursor:pointer':'')+'"'+(key?(' onclick="oppToggle(\''+encodeURIComponent(key)+'\')"'):'')+'>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+(key?' '+(open?'▾':'▸'):'')+'</span></div>';
     h+='<div style="font-family:var(--M);font-size:12px;font-weight:700;color:var(--cream);line-height:1.4">'+esc(it.bet)+'</div>';
     h+='<div style="font-size:8.5px;color:var(--leather);margin-top:2px">'+esc(it.tag)+'</div>';
+    if(open)h+=renderOppDossier(key);
     h+='</div>';
   });
   h+='<div style="font-size:8px;color:var(--muted);text-align:center;margin:4px 0 14px">'+items.length+' live edge'+(items.length===1?'':'s')+' · refresh for the latest</div>'; }
@@ -6136,6 +6139,14 @@ function renderAgentsContent(){
         h+='<div style="font-size:8px;color:var(--dim);margin-top:4px">';
         h+=p.signals.slice(0,4).map(function(s){return '• '+esc(s.label||s.id||'')}).join('<br>');
         h+='</div>';
+      }
+      // how we got there — full signals + line history
+      var bkey='|'+(p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'');
+      var bopen=state.oppOpen&&state.oppOpen[bkey];
+      h+='<div onclick="oppToggle(\''+encodeURIComponent(bkey)+'\')" style="font-size:8px;color:var(--brass);margin-top:6px;cursor:pointer">'+(bopen?'▾ hide detail':'▸ how we got there')+'</div>';
+      if(bopen){
+        if(p.signals&&p.signals.length)h+='<div style="margin-top:5px;font-size:8.5px;color:var(--cream)">'+p.signals.map(function(s){return '• <span style="color:var(--muted)">T'+(s.tier||'?')+'</span> '+esc(s.label||s.id||'')}).join('<br>')+'</div>';
+        h+=renderOppDossier(bkey);
       }
       h+='<div style="display:flex;gap:6px;margin-top:9px">';
       h+='<button class="btn-primary" style="flex:1;padding:7px;font-size:10px" onclick="agentLogPlay('+i+')">✓ Quick-Log</button>';
