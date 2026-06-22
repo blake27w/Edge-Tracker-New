@@ -46,6 +46,9 @@ body{font-family:var(--B);background:var(--canvas);color:var(--ink);height:100vh
 .launch-btn:active{transform:scale(.97)}
 .launch-btn .li{font-size:42px;line-height:1}
 .launch-btn .ll{font-family:var(--H);font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--cream);font-weight:600}
+#pagedots{position:fixed;left:0;right:0;bottom:calc(8px + env(safe-area-inset-bottom));display:flex;justify-content:center;gap:7px;pointer-events:none;z-index:50}
+#pagedots .pd{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.22);transition:.15s}
+#pagedots .pd.on{background:var(--brass);width:7px;height:7px}
 
 #main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 16px calc(28px + env(safe-area-inset-bottom))}
 
@@ -204,7 +207,7 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 <!-- HEADER -->
 <div id="hdr">
   <button class="back-btn" id="backBtn" onclick="goMenu()" style="display:none">‹</button>
-  <div class="logo" onclick="goMenu()" style="cursor:pointer">EDGE TRACKER</div>
+  <div class="logo" id="logo" onclick="goMenu()" style="cursor:pointer">EDGE TRACKER</div>
   <button class="gear-btn" onclick="toggleSettings()">⚙️</button>
 </div>
 
@@ -333,6 +336,8 @@ details summary{cursor:pointer;font-family:var(--H);font-size:12px;color:var(--m
 
 <!-- TAB BAR -->
 <div id="tabs"></div>
+<!-- swipe page dots -->
+<div id="pagedots" style="display:none"></div>
 
 <script>
 (function(){
@@ -3224,6 +3229,22 @@ function render(){
   if(!(state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')))stopAgentsPoll();
   // The header back button only applies on the home launcher; sport views hide it.
   if(!state.homeScreen){var _bb=$('backBtn');if(_bb)_bb.style.display='none';}
+  // Header title: "EDGE TRACKER" on the launcher, otherwise the section/sport name.
+  var _lg=$('logo');
+  if(_lg){
+    var _ti='EDGE TRACKER';
+    if(state.homeScreen){ if(state.homeTab&&state.homeTab!=='menu'){ var _t=HOME_TABS.find(function(x){return x.id===state.homeTab}); _ti=_t?_t.label:'EDGE TRACKER'; } }
+    else { var _sp=SPORTS.find(function(s){return s.id===state.sport}); _ti=_sp?_sp.label:'EDGE TRACKER'; }
+    _lg.textContent=_ti;
+  }
+  // Page dots: show position among the 6 home sections (hidden on launcher/sport views).
+  var _pd=$('pagedots');
+  if(_pd){
+    var _ord=['dash','plays','rec','stats','log','agents'];
+    var _i=state.homeScreen?_ord.indexOf(state.homeTab):-1;
+    if(_i>=0){ _pd.innerHTML=_ord.map(function(_,k){return '<span class="pd'+(k===_i?' on':'')+'"></span>'}).join(''); _pd.style.display='flex'; }
+    else _pd.style.display='none';
+  }
   if(state.homeScreen){
     renderHomeScreen();
     return;
