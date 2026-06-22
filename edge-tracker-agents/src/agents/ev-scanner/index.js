@@ -12,6 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getTennisGames, setEvPlays } from '../../store/index.js';
+import { corroboration } from '../shared/corroborate.js';
 
 const MIN_BOOKS = 4;                 // need a real consensus to trust "fair"
 const MAX_JUICE = config.rules.maxOppJuice;                 // skip flags priced worse than this (heavy chalk)
@@ -38,16 +39,26 @@ function fairProbs(aPrices, bPrices) {
   return { a: a / t, b: b / t };
 }
 
-// Best +EV book for one side given its fair prob. Skip brutally-juiced prices
-// (a real edge on heavy chalk still isn't worth laying the number).
+// Best +EV book for one side given its fair prob.
 function bestEv(sideOutcomes, fair) {
   let best = null;
   for (const o of sideOutcomes) {
-    if (o.price < MAX_JUICE) continue;
     const ev = fair * toDecimal(o.price) - 1;
     if (ev >= SHOW_EV && (!best || ev > best.ev)) best = { book: o.book, price: o.price, ev };
   }
   return best;
+}
+
+// Push a +EV play, but on heavily-juiced prices require a corroborating signal
+// (sharp/RLM/public) on that side — otherwise skip it.
+function consider(rows, game, displayMarket, corrMarket, side, best, fair) {
+  if (!best) return;
+  let note = null;
+  if (best.price < MAX_JUICE) {
+    note = corroboration(game.game_id, corrMarket, side);
+    if (!note) return;                 // heavy chalk with no backing signal → not an edge
+  }
+  pushEv(rows, game, displayMarket, side, best, fair, note);
 }
 
 // Collect per-book prices for a market:side from a game's books.
@@ -64,13 +75,13 @@ function gather(game, makeKey) {
   return out;
 }
 
-function pushEv(rows, game, market, side, best, fair) {
+function pushEv(rows, game, market, side, best, fair, note) {
   rows.push({
     sport: game.sport, game_id: game.game_id,
     matchup: game.p1 ? `${game.p1} vs ${game.p2}` : `${game.away} @ ${game.home}`,
     commence_time: game.commence_time, market, side,
     book: best.book, price: best.price, fair_price: toAmerican(fair),
-    ev_pct: Math.round(best.ev * 1000) / 10,
+    ev_pct: Math.round(best.ev * 1000) / 10, note: note || null,
   });
 }
 
@@ -87,8 +98,8 @@ async function run() {
     const o = gather(g, { A: `h2h:${sideA}`, B: `h2h:${sideB}` });
     const fp = fairProbs((o.A || []).map((x) => x.price), (o.B || []).map((x) => x.price));
     if (!fp) continue;
-    const ba = bestEv(o.A, fp.a); if (ba) pushEv(rows, g, 'ml', sideA, ba, fp.a);
-    const bb = bestEv(o.B, fp.b); if (bb) pushEv(rows, g, 'ml', sideB, bb, fp.b);
+    consider(rows, g, 'ml', 'ml', sideA, bestEv(o.A, fp.a), fp.a);
+    consider(rows, g, 'ml', 'ml', sideB, bestEv(o.B, fp.b), fp.b);
   }
 
   // Totals (team sports, at the consensus line)
@@ -103,8 +114,8 @@ async function run() {
     }
     const fp = fairProbs(o.Over.map((x) => x.price), o.Under.map((x) => x.price));
     if (!fp) continue;
-    const bo = bestEv(o.Over, fp.a); if (bo) pushEv(rows, g, `total ${g.consensusTotal}`, 'Over', bo, fp.a);
-    const bu = bestEv(o.Under, fp.b); if (bu) pushEv(rows, g, `total ${g.consensusTotal}`, 'Under', bu, fp.b);
+    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Over', bestEv(o.Over, fp.a), fp.a);
+    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Under', bestEv(o.Under, fp.b), fp.b);
   }
 
   rows.sort((a, b) => b.ev_pct - a.ev_pct);
