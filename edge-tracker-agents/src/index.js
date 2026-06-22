@@ -128,7 +128,20 @@ async function buildOpportunity(url) {
   });
   if (history.length > 24) { const step = Math.ceil(history.length / 24); const out = []; for (let i = 0; i < history.length; i += step) out.push(history[i]); if (out[out.length - 1] !== history[history.length - 1]) out.push(history[history.length - 1]); history = out; }
 
-  return { result, edges, play, history };
+  // Per-book breakdown — each book's LAST line/price for this side, best-for-the-
+  // bettor first (so the stale/off-market book is on top), with its gap vs the
+  // closing consensus. Always available from snapshots even when book_edge_log
+  // has no episode for this (older) play.
+  const lastByBook = new Map();
+  for (const s of snaps) lastByBook.set(s.book, s); // snaps are asc by time → last wins
+  const close = history.length ? history[history.length - 1] : null;
+  const books = [...lastByBook.values()].map((s) => ({
+    book: s.book, line: s.line, price: s.price,
+    line_gap: (close && close.line != null && s.line != null) ? Math.round((s.line - close.line) * 10) / 10 : null,
+    price_gap: (close && close.price != null && s.price != null) ? s.price - close.price : null,
+  })).sort((a, b) => ((b.line ?? -1e9) - (a.line ?? -1e9)) || ((b.price ?? -1e9) - (a.price ?? -1e9)));
+
+  return { result, edges, books, play, history };
 }
 
 // Individual episodes behind one Book-Edges cell (book × sport × market × type),
