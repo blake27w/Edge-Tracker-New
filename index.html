@@ -6090,7 +6090,7 @@ function renderAgentsContent(){
     bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
   stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus,matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,
     bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
-  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,
+  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:''),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,
     bet:e.side+' '+fp(e.price)+' @ '+e.book}); });
   keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),
     bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
@@ -6366,7 +6366,7 @@ function renderAgentsContent(){
       h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(e.matchup||'')+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(e.sport||'')+' · '+esc(e.market||'')+' · <b>'+esc(e.side||'')+'</b></div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--brass)">+'+e.ev_pct+'%</div><div style="font-size:7px;color:var(--muted)">EV</div></div></div>';
-      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span>'+(e.note?' <span style="color:var(--sage)">· '+esc(e.note)+'</span>':'')+'</div>';
       h+='</div>';
     });
     h+='<div style="height:8px"></div>';

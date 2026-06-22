@@ -700,3 +700,8 @@ create table if not exists nfl_pace (
   updated_at timestamptz not null default now(),
   primary key (season, team)
 );
+
+-- ev_opportunities: columns the scanner/grader already use (insert was failing
+-- silently without commence_time) + the corroboration note.
+alter table ev_opportunities add column if not exists commence_time timestamptz;
+alter table ev_opportunities add column if not exists note text;

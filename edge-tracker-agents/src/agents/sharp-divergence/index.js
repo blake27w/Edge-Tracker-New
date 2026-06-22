@@ -7,12 +7,14 @@
 // the strongest case — a soft price sitting on the side steam money
 // is moving toward (a slow book on the sharp side). $0.
 // ══════════════════════════════════════════════════════════════
+import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setDivergence } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { impliedProb, toAmerican, median, fmtOdds } from '../shared/odds-math.js';
 import { trackBookEdges } from '../shared/book-edge.js';
+import { corroboration } from '../shared/corroborate.js';
 
 const MIN_BOOKS = 4;
 const DIVERGE = Number(process.env.DIVERGE_PCT) || 0.03; // 3% implied-prob gap vs field
@@ -59,7 +61,11 @@ async function run() {
         const lineEq = M.mkt === 'spreads' ? (side === g.home ? M.line : M.awayLine) : M.line;
         const a = analyze(gather(g, key, lineEq));
         if (!a || a.gap < DIVERGE) continue;
-        if (a.price < config.rules.maxOppJuice) continue; // heavy chalk — too expensive to surface
+        // Heavy chalk: only surface if a signal (sharp/RLM/public) backs this side.
+        if (a.price < config.rules.maxOppJuice) {
+          const corrMk = M.mkt === 'h2h' ? 'ml' : M.mkt === 'totals' ? 'total' : 'spread';
+          if (!corroboration(g.game_id, corrMk, side)) continue;
+        }
         rows.push({
           sport: g.sport, game_id: g.game_id, commence_time: g.commence_time,
           matchup: `${g.away} @ ${g.home}`, market: M.mkt, side,
