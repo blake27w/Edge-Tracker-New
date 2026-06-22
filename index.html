@@ -5847,6 +5847,7 @@ function loadAgentsData(){
     tasks.push(fetch(api+'/plays').then(function(r){return r.json()}).then(function(j){return {bePlays:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/data-health').then(function(r){return r.json()}).then(function(j){return {beDataHealth:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/research').then(function(r){return r.json()}).then(function(j){return {beResearch:j}}).catch(function(){return {}}));
   }
   if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())rerender();return}
@@ -5888,6 +5889,7 @@ function loadAgentsData(){
     else if(bag.plays){state.agentsPlays=bag.plays||[]}
     if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];state.agentsWatchdog=bag.bePlays.watchdog||null;}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
+    if(bag.beDataHealth)state.agentsDataHealth=bag.beDataHealth;
     if(bag.beResearch&&bag.beResearch.research)state.agentsResearch=bag.beResearch.research;
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
@@ -6072,6 +6074,7 @@ function renderAgentsContent(){
 
   // ── Cost & Credits ──
   h+=renderCostWidget(state.agentsBudget);
+  h+=renderDataHealth(state.agentsDataHealth);
   } // end !onPlays (watchdog + cost)
 
   if(onPlays){
@@ -6557,6 +6560,29 @@ function gbChip(txt){return '<span style="font-size:9px;background:var(--panel2)
 function gbOdds(p){if(p==null)return '';return p>0?'+'+p:''+p;}
 
 var TIER_COST={free:0,starter:30,pro:99};
+// Data-health panel: is data actually being written? per-table rows today/total.
+function renderDataHealth(d){
+  if(!d||!d.tables)return '';
+  var LBL={line_snapshots:'Odds snapshots',monitor_scores:'Plays scored',clv_records:'CLV records',opp_results:'Opps graded',ev_opportunities:'+EV flags',line_signals:'Stale/key/div',book_edge_log:'Book edges',sharp_signals:'Steam signals',injury_updates:'Injuries',game_weather:'Weather',public_splits:'Public splits'};
+  var h='<div class="card" style="padding:13px 14px;margin-bottom:6px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim)">🩺 DATA HEALTH</div>';
+  if(!d.dbConnected)h+='<span style="font-size:8px;color:var(--wine)">DB not connected</span>';
+  else if(d.errorsToday)h+='<span style="font-size:8px;color:var(--wine)">'+d.errorsToday+' agent error'+(d.errorsToday===1?'':'s')+' today</span>';
+  else h+='<span style="font-size:8px;color:var(--sage)">no errors today</span>';
+  h+='</div>';
+  h+='<div style="font-size:7.5px;color:var(--muted);margin-bottom:6px">Rows written today / total. "0 today" on an in-season feed = not flowing.</div>';
+  d.tables.forEach(function(t){
+    var today=t.today==null?'—':t.today;
+    var zero=t.today===0;
+    h+='<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
+    h+='<span style="font-size:10px;color:'+(zero?'var(--muted)':'var(--cream)')+'">'+esc(LBL[t.table]||t.table)+'</span>';
+    h+='<span style="font-family:var(--M);font-size:9px"><span style="color:'+(zero?'var(--muted)':'var(--sage)')+'">'+today+' today</span> <span style="color:var(--muted)">/ '+(t.total==null?'—':t.total)+'</span></span>';
+    h+='</div>';
+  });
+  h+='<div style="font-size:7px;color:var(--muted);text-align:right;margin-top:5px">'+(d.generated?'as of '+(function(){try{return new Date(d.generated).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}catch(e){return ''}})():'')+'</div>';
+  h+='</div>';
+  return h;
+}
 function renderCostWidget(b){
   var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:8px">💵 COST & CREDITS</div>';
   if(!b||b.budget==null){

@@ -211,6 +211,29 @@ async function buildPlaysDetail(url) {
   return { plays };
 }
 
+// Data-health: per-table rows written today + total, and agent errors today.
+// A "today: 0" on an in-season table is the at-a-glance "data isn't flowing" tell.
+async function buildDataHealth() {
+  const day = new Date(); day.setUTCHours(0, 0, 0, 0);
+  const since = day.toISOString();
+  const specs = [
+    ['line_snapshots', 'fetched_at'], ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'],
+    ['opp_results', 'graded_at'], ['ev_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
+    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['injury_updates', 'fetched_at'],
+    ['game_weather', 'fetched_at'], ['public_splits', 'fetched_at'],
+  ];
+  const tables = [];
+  for (const [t, ts] of specs) {
+    let today = null, total = null;
+    try { today = await db.count(t, { gte: { [ts]: since } }); } catch (_) { /* table optional */ }
+    try { total = await db.count(t); } catch (_) { /* table optional */ }
+    tables.push({ table: t, today, total });
+  }
+  let errorsToday = null;
+  try { errorsToday = await db.count('scan_runs', { match: { status: 'error' }, gte: { started_at: since } }); } catch (_) { /* none */ }
+  return { tables, errorsToday, dbConnected: db.isConnected(), since, generated: new Date().toISOString() };
+}
+
 function systemHealth() {
   const m = getMetrics();
   let oddsBudget;
@@ -298,6 +321,9 @@ const server = http.createServer(async (req, res) => {
     case '/plays-detail':
       try { return json(res, 200, await buildPlaysDetail(url)); }
       catch (e) { logger.error('plays-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
+    case '/data-health':
+      try { return json(res, 200, await buildDataHealth()); }
+      catch (e) { logger.error('data-health', e.message); return json(res, 500, { error: 'data-health failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');

@@ -83,4 +83,15 @@ export async function select(table, columns = '*', opts = {}) {
   return data || [];
 }
 
-export default { isConnected, insert, upsert, update, del, select };
+// Count rows (no row data fetched). opts: { match (equality), gte }
+export async function count(table, opts = {}) {
+  if (!client) return null;
+  let q = ensure().from(table).select('*', { count: 'exact', head: true });
+  if (opts.match) for (const [k, v] of Object.entries(opts.match)) q = q.eq(k, v);
+  if (opts.gte) for (const [k, v] of Object.entries(opts.gte)) q = q.gte(k, v);
+  const { count: c, error } = await q;
+  if (error) throw new Error(`count ${table}: ${error.message}`);
+  return c;
+}
+
+export default { isConnected, insert, upsert, update, del, select, count };
