@@ -7310,6 +7310,32 @@ document.addEventListener('visibilitychange',function(){
   }catch(e){}
 })();
 
+// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents).
+(function(){
+  var order=['dash','plays','rec','stats','log','agents'];
+  var sx=0,sy=0,track=false;
+  var main=document.getElementById('main');
+  if(!main)return;
+  main.addEventListener('touchstart',function(e){
+    if(e.touches.length!==1){track=false;return;}
+    var t=e.touches[0];
+    // ignore swipes starting at the screen edges (OS back-swipe / scrollbars)
+    if(t.clientX<24||t.clientX>window.innerWidth-24){track=false;return;}
+    sx=t.clientX;sy=t.clientY;track=true;
+  },{passive:true});
+  main.addEventListener('touchend',function(e){
+    if(!track)return;track=false;
+    if(!state.homeScreen)return;
+    var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+    if(Math.abs(dx)<60||Math.abs(dx)<Math.abs(dy)*1.5)return; // must be a clear horizontal swipe
+    var cur=state.homeTab;
+    if(cur==='menu'){ if(dx<0){state.homeTab=order[0];render();} return; } // swipe left off the launcher → first section
+    var i=order.indexOf(cur); if(i<0)return;
+    if(dx<0){ if(i<order.length-1){state.homeTab=order[i+1];render();} }       // left → next
+    else { state.homeTab=(i>0?order[i-1]:'menu'); render(); }                  // right → prev, or back to launcher
+  },{passive:true});
+})();
+
 })();
 </script>
 </body>
