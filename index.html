@@ -6798,7 +6798,7 @@ function renderBookEdges(){
   }
   // Ranked watchlist by book
   h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
-  h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">RANKED BOOKS</div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather)">RANKED BOOKS</span><span style="font-size:7px;color:var(--brass);border:1px solid var(--leather);border-radius:3px;padding:1px 4px">ROI = paper · upper bound</span></div>';
   be.byBook.slice(0,12).forEach(function(b){
     var dim=b.small?';opacity:.5':'';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
@@ -6830,7 +6830,7 @@ function renderBookEdges(){
       if(bopen)h+=renderBookEdgeDetail(bkey);
       h+='</div>';
     });
-    h+='<div style="font-size:7px;color:var(--muted);margin-top:5px">Greyed = under '+min+' graded (too small to trust). "window" = how long you typically had to act.</div>';
+    h+='<div style="font-size:7px;color:var(--muted);margin-top:5px">Greyed = under '+min+' graded (too small to trust). "window" = how long you typically had to act. ROI is <b>paper-graded</b> — it assumes you got the flagged number at that price, so read it as an upper bound, not a live win rate.</div>';
     h+='</div>';
   }
   // Exposure

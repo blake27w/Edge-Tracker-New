@@ -15,6 +15,10 @@ import { trackBookEdges } from '../shared/book-edge.js';
 import { corroboration } from '../shared/corroborate.js';
 
 const STALE_PTS = Number(process.env.STALE_LINE_PTS) || 1.5; // min points off consensus
+// Fixed run/puck-line sports: the spread is structurally ±1.5, so a line-based
+// "points off field" reading is an artifact (sign flip / alt line), not an
+// attackable stale spread. Price shopping there is handled by sharp-divergence.
+const FIXED_RUNLINE = new Set(['MLB', 'NHL']);
 
 function push(rows, g, market, side, o, consensus, note) {
   rows.push({
@@ -51,8 +55,9 @@ async function run() {
           if (note) push(rows, g, `total`, 'Over', { book: label, line: ov.line, price: ov.price, ts: ov.ts }, consT, note);
         }
       }
-      // Spreads: a more generous number than consensus on either side.
-      if (consH != null) {
+      // Spreads: a more generous number than consensus on either side. Skipped
+      // for fixed run/puck-line sports where a big "off-field" gap is an artifact.
+      if (consH != null && !FIXED_RUNLINE.has(g.sport)) {
         const sh = mk[`spreads:${g.home}`], sa = mk[`spreads:${g.away}`];
         if (sh && sh.line != null && sh.line - consH >= STALE_PTS) push(rows, g, `spread`, g.home, { book: label, line: sh.line, price: sh.price, ts: sh.ts }, consH);
         if (sa && sa.line != null && sa.line - (-consH) >= STALE_PTS) push(rows, g, `spread`, g.away, { book: label, line: sa.line, price: sa.price, ts: sa.ts }, -consH);
