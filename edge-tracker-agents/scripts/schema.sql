@@ -723,3 +723,9 @@ create table if not exists pred_market_edges (
   detected_at timestamptz not null default now()
 );
 create index if not exists pred_market_edges_idx on pred_market_edges (detected_at desc);
+
+-- ── Quote freshness (Odds API per-book last_update) ─────────────────
+-- Each book's last CHANGED timestamp, so scanners can see quote age and ignore
+-- dead/suspended markets. quote_age_min = minutes since the flagged book moved.
+alter table line_snapshots add column if not exists last_update timestamptz;
+alter table ev_opportunities add column if not exists quote_age_min integer;

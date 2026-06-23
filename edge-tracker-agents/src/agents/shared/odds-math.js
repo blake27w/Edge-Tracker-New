@@ -13,3 +13,17 @@ export function median(nums) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 export const fmtOdds = (p) => (p > 0 ? '+' + p : '' + p);
+
+// Quote freshness: minutes since a book last changed this price (from the
+// Odds API per-market last_update). null when we have no timestamp. An old age
+// means the book hasn't MOVED the line — it does NOT mean the quote is gone —
+// so only EXTREME ages (a likely dead/suspended market) are acted on.
+export function ageMin(ts, now = Date.now()) {
+  if (!ts) return null;
+  const t = new Date(ts).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((now - t) / 60000));
+}
+// Default: a quote unchanged for 90+ min while inside the 36h window is treated
+// as a likely dead market (tunable via ODDS_STALE_MIN).
+export const STALE_MIN = Number(process.env.ODDS_STALE_MIN) || 90;

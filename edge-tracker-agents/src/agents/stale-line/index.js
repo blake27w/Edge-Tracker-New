@@ -10,7 +10,7 @@ import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, setStaleLines } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
-import { fmtOdds } from '../shared/odds-math.js';
+import { fmtOdds, ageMin } from '../shared/odds-math.js';
 import { trackBookEdges } from '../shared/book-edge.js';
 import { corroboration } from '../shared/corroborate.js';
 
@@ -21,7 +21,8 @@ function push(rows, g, market, side, o, consensus, note) {
     sport: g.sport, game_id: g.game_id, commence_time: g.commence_time,
     matchup: `${g.away} @ ${g.home}`, market, side,
     book: o.book, line: o.line, consensus,
-    pts: Math.round(Math.abs(o.line - consensus) * 10) / 10, price: o.price, note: note || null,
+    pts: Math.round(Math.abs(o.line - consensus) * 10) / 10, price: o.price,
+    note: note || null, quote_age_min: ageMin(o.ts),
   });
 }
 
@@ -44,17 +45,17 @@ async function run() {
       // real edge (sharp/RLM/handle) overrides the bias.
       if (consT != null) {
         const ov = mk['totals:Over'], un = mk['totals:Under'];
-        if (un && un.line != null && un.line - consT >= STALE_PTS) push(rows, g, `total`, 'Under', { book: label, line: un.line, price: un.price }, consT);
+        if (un && un.line != null && un.line - consT >= STALE_PTS) push(rows, g, `total`, 'Under', { book: label, line: un.line, price: un.price, ts: un.ts }, consT);
         if (ov && ov.line != null && consT - ov.line >= STALE_PTS) {
           const note = corroboration(g.game_id, 'total', 'Over');
-          if (note) push(rows, g, `total`, 'Over', { book: label, line: ov.line, price: ov.price }, consT, note);
+          if (note) push(rows, g, `total`, 'Over', { book: label, line: ov.line, price: ov.price, ts: ov.ts }, consT, note);
         }
       }
       // Spreads: a more generous number than consensus on either side.
       if (consH != null) {
         const sh = mk[`spreads:${g.home}`], sa = mk[`spreads:${g.away}`];
-        if (sh && sh.line != null && sh.line - consH >= STALE_PTS) push(rows, g, `spread`, g.home, { book: label, line: sh.line, price: sh.price }, consH);
-        if (sa && sa.line != null && sa.line - (-consH) >= STALE_PTS) push(rows, g, `spread`, g.away, { book: label, line: sa.line, price: sa.price }, -consH);
+        if (sh && sh.line != null && sh.line - consH >= STALE_PTS) push(rows, g, `spread`, g.home, { book: label, line: sh.line, price: sh.price, ts: sh.ts }, consH);
+        if (sa && sa.line != null && sa.line - (-consH) >= STALE_PTS) push(rows, g, `spread`, g.away, { book: label, line: sa.line, price: sa.price, ts: sa.ts }, -consH);
       }
     }
   }

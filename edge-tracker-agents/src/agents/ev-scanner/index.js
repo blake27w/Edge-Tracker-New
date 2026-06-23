@@ -13,11 +13,19 @@ import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getTennisGames, setEvPlays } from '../../store/index.js';
 import { corroboration } from '../shared/corroborate.js';
+import { ageMin, STALE_MIN } from '../shared/odds-math.js';
 
 const MIN_BOOKS = 4;                 // need a real consensus to trust "fair"
 const MAX_JUICE = config.rules.maxOppJuice;                 // skip flags priced worse than this (heavy chalk)
 const SHOW_EV = Number(process.env.EV_SHOW_PCT) || 0.03;   // flag at +3%
 const ALERT_EV = Number(process.env.EV_ALERT_PCT) || 0.10; // text/email at +10%
+
+// Drop quotes a book hasn't changed in STALE_MIN+ minutes — a likely dead /
+// suspended market whose generous-looking price is a phantom, not a live edge.
+// Quotes with no timestamp are kept (don't penalize missing data).
+function fresh(outs, now) {
+  return (outs || []).filter((o) => { const a = ageMin(o.ts, now); return a == null || a <= STALE_MIN; });
+}
 
 const alerted = new Set();
 
@@ -41,12 +49,13 @@ function fairProbs(aPrices, bPrices) {
 
 // Best +EV book for one side given its fair prob. (Heavy-juice gating is done
 // in consider() so corroborated heavy chalk can still pass.)
-function bestEv(sideOutcomes, fair) {
+function bestEv(sideOutcomes, fair, now) {
   let best = null;
   for (const o of sideOutcomes) {
     const ev = fair * toDecimal(o.price) - 1;
-    if (ev >= SHOW_EV && (!best || ev > best.ev)) best = { book: o.book, price: o.price, ev };
+    if (ev >= SHOW_EV && (!best || ev > best.ev)) best = { book: o.book, price: o.price, ev, ts: o.ts };
   }
+  if (best) best.age = ageMin(best.ts, now);
   return best;
 }
 
@@ -73,7 +82,7 @@ function gather(game, makeKey) {
     const mk = b.markets || {};
     for (const [side, key] of Object.entries(makeKey)) {
       const o = mk[key];
-      if (o && o.price != null) (out[side] ||= []).push({ book: label, price: o.price });
+      if (o && o.price != null) (out[side] ||= []).push({ book: label, price: o.price, ts: o.ts });
     }
   }
   return out;
@@ -85,7 +94,7 @@ function pushEv(rows, game, market, side, best, fair, note) {
     matchup: game.p1 ? `${game.p1} vs ${game.p2}` : `${game.away} @ ${game.home}`,
     commence_time: game.commence_time, market, side,
     book: best.book, price: best.price, fair_price: toAmerican(fair),
-    ev_pct: Math.round(best.ev * 1000) / 10, note: note || null,
+    ev_pct: Math.round(best.ev * 1000) / 10, note: note || null, quote_age_min: best.age ?? null,
   });
 }
 
@@ -95,15 +104,18 @@ async function run() {
   if (!team.length && !tennis.length) { setEvPlays([]); return { summary: 'no games to scan' }; }
 
   const rows = [];
+  const now = Date.now();
 
-  // Moneyline (all sports)
+  // Moneyline (all sports). Drop dead-market (stale) quotes before computing fair
+  // and picking the best book, so a suspended price can't create a phantom edge.
   for (const g of [...team, ...tennis]) {
     const sideA = g.p1 || g.home, sideB = g.p2 || g.away;
     const o = gather(g, { A: `h2h:${sideA}`, B: `h2h:${sideB}` });
-    const fp = fairProbs((o.A || []).map((x) => x.price), (o.B || []).map((x) => x.price));
+    const A = fresh(o.A, now), B = fresh(o.B, now);
+    const fp = fairProbs(A.map((x) => x.price), B.map((x) => x.price));
     if (!fp) continue;
-    consider(rows, g, 'ml', 'ml', sideA, bestEv(o.A, fp.a), fp.a);
-    consider(rows, g, 'ml', 'ml', sideB, bestEv(o.B, fp.b), fp.b);
+    consider(rows, g, 'ml', 'ml', sideA, bestEv(A, fp.a, now), fp.a);
+    consider(rows, g, 'ml', 'ml', sideB, bestEv(B, fp.b, now), fp.b);
   }
 
   // Totals (team sports, at the consensus line)
@@ -113,13 +125,14 @@ async function run() {
     for (const [bk, b] of Object.entries(g.books || {})) {
       const label = b.label || bk; const mk = b.markets || {};
       const ov = mk['totals:Over'], un = mk['totals:Under'];
-      if (ov && ov.price != null && ov.line === g.consensusTotal) o.Over.push({ book: label, price: ov.price });
-      if (un && un.price != null && un.line === g.consensusTotal) o.Under.push({ book: label, price: un.price });
+      if (ov && ov.price != null && ov.line === g.consensusTotal) o.Over.push({ book: label, price: ov.price, ts: ov.ts });
+      if (un && un.price != null && un.line === g.consensusTotal) o.Under.push({ book: label, price: un.price, ts: un.ts });
     }
-    const fp = fairProbs(o.Over.map((x) => x.price), o.Under.map((x) => x.price));
+    const over = fresh(o.Over, now), under = fresh(o.Under, now);
+    const fp = fairProbs(over.map((x) => x.price), under.map((x) => x.price));
     if (!fp) continue;
-    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Over', bestEv(o.Over, fp.a), fp.a);
-    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Under', bestEv(o.Under, fp.b), fp.b);
+    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Over', bestEv(over, fp.a, now), fp.a);
+    consider(rows, g, `total ${g.consensusTotal}`, 'total', 'Under', bestEv(under, fp.b, now), fp.b);
   }
 
   rows.sort((a, b) => b.ev_pct - a.ev_pct);

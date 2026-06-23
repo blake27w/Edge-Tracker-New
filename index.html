@@ -6092,9 +6092,9 @@ function renderAgentsContent(){
   var fp=function(v){return v==null?'':(v>0?'+'+v:''+v)};
   arb.forEach(function(a){ items.push({prio:0,kind:'ARB',tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
     bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
-  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus+(s.note?' · '+s.note:''),matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
+  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus+(s.note?' · '+s.note:'')+qAge(s.quote_age_min),matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
     bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
-  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:''),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,gid:e.game_id,mk:(/^total/.test(e.market||'')?'total':'ml'),sd:e.side,
+  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:'')+qAge(e.quote_age_min),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,gid:e.game_id,mk:(/^total/.test(e.market||'')?'total':'ml'),sd:e.side,
     bet:e.side+' '+fp(e.price)+' @ '+e.book}); });
   keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),gid:k.game_id,mk:'spread',sd:k.side,
     bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
@@ -6397,7 +6397,7 @@ function renderAgentsContent(){
       h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(e.matchup||'')+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(e.sport||'')+' · '+esc(e.market||'')+' · <b>'+esc(e.side||'')+'</b></div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--brass)">+'+e.ev_pct+'%</div><div style="font-size:7px;color:var(--muted)">EV</div></div></div>';
-      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+'</span>'+(e.note?' <span style="color:var(--sage)">· '+esc(e.note)+'</span>':'')+'</div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+pr+' @ <b>'+esc(e.book)+'</b> <span style="color:var(--dim)">vs fair '+fp+qAge(e.quote_age_min)+'</span>'+(e.note?' <span style="color:var(--sage)">· '+esc(e.note)+'</span>':'')+'</div>';
       h+='</div>';
     });
     h+='<div style="height:8px"></div>';
@@ -6422,7 +6422,7 @@ function renderAgentsContent(){
       h+='</div>';
       (a.legs||[]).forEach(function(l){
         var pr=l.price>0?'+'+l.price:''+l.price;var ln=(l.line!=null)?' '+(l.line>0?'+'+l.line:l.line):'';
-        h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+esc(l.side||'')+ln+' &nbsp;'+pr+' @ <b>'+esc(l.book)+'</b>'+(l.stake!=null?' <span style="color:var(--dim)">· stake '+l.stake+'%</span>':'')+'</div>';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:5px">'+esc(l.side||'')+ln+' &nbsp;'+pr+' @ <b>'+esc(l.book)+'</b>'+(l.stake!=null?' <span style="color:var(--dim)">· stake '+l.stake+'%</span>':'')+'<span style="color:var(--dim)">'+qAge(l.age)+'</span></div>';
       });
       h+='</div>';
     });
@@ -6453,7 +6453,7 @@ function renderAgentsContent(){
       h+='<div><div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">🐢 '+esc(s.matchup||'')+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(s.sport||'')+' · '+esc(s.market||'')+' · <b>'+esc(s.side||'')+'</b></div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:14px;font-weight:700;color:var(--cream)">'+s.pts+'pt</div><div style="font-size:7px;color:var(--muted)">off field</div></div></div>';
-      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+s.line+' @ <b>'+esc(s.book)+'</b> <span style="color:var(--dim)">vs field '+s.consensus+(pr?' · '+pr:'')+'</span></div></div>';
+      h+='<div style="font-family:var(--M);font-size:10px;color:var(--cream);margin-top:4px">'+s.line+' @ <b>'+esc(s.book)+'</b> <span style="color:var(--dim)">vs field '+s.consensus+(pr?' · '+pr:'')+qAge(s.quote_age_min)+'</span></div></div>';
     });
     kn.slice(0,16).forEach(function(k){
       var ln=k.line>0?'+'+k.line:''+k.line;var fld=k.consensus>0?'+'+k.consensus:''+k.consensus;var hi=k.importance==='high';
@@ -6910,6 +6910,12 @@ function exchAgree(gid,side,market){
 function exchBadge(gid,side,market){
   var e=exchAgree(gid,side,market); if(!e)return '';
   return '<span title="Polymarket/Kalshi also prices this side as underpriced (+'+e.edge_pct+'% vs book)" style="font-size:7px;letter-spacing:.5px;color:var(--brass);border:1px solid var(--leather);border-radius:3px;padding:1px 4px;margin-left:5px;white-space:nowrap">🔮 +'+e.edge_pct+'%</span>';
+}
+// Quote freshness label: minutes since the book last moved this price. ⚠ marks
+// a quote getting old (dead-market quotes >90m are already dropped server-side).
+function qAge(m){
+  if(m==null)return '';
+  return ' · quote '+m+'m'+(m>=45?' ⚠':'');
 }
 function renderOppDossier(key,r){
   var d=state.oppDetail&&state.oppDetail[key];
