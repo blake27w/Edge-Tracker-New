@@ -6765,6 +6765,27 @@ function renderBookEdges(){
   var be=state.agentsBookEdges;
   var h='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 4px">📕 BOOK EDGES — WHO TO ATTACK FIRST</div>';
   h+='<div style="font-size:8px;color:var(--muted);margin-bottom:8px">Which books are most often the off-market laggard, in which markets, how long the window stays open, and which edges are decaying. Graded on real ROI.</div>';
+  // Plain-English "what this means / how to act" explainer (collapsible).
+  var hlp=state.beHelp;
+  h+='<div onclick="state.beHelp=!state.beHelp;render()" style="cursor:pointer;background:rgba(230,187,70,.07);border:1px solid var(--leather);border-radius:8px;padding:8px 11px;margin-bottom:9px">';
+  h+='<div style="font-size:9px;color:var(--brass);font-weight:600">ⓘ How to read this & profit from it '+(hlp?'▾':'▸')+'</div>';
+  if(hlp){
+    h+='<div style="font-size:9px;color:var(--cream);line-height:1.55;margin-top:6px">';
+    h+='<b>What it is.</b> Every time a book hangs a number off the rest of the market, we log it and check how the play would have graded. This ranks the books worth attacking first.<br><br>';
+    h+='<b>Reading a row</b> — e.g. <span style="font-family:var(--M);color:var(--brass)">Caesars 162-11 · 93.6% · +45.9% · 173 graded · win 3m window</span>:<br>';
+    h+='• <b>162-11</b> = wins-losses of the mispriced side<br>';
+    h+='• <b>93.6%</b> = hit rate &nbsp;•&nbsp; <b>+45.9%</b> = ROI at flat stakes<br>';
+    h+='• <b>173 graded</b> = sample size &nbsp;•&nbsp; <b>3m window</b> = how long the stale line stayed open before the book fixed it (your time to act)<br>';
+    h+='• in the grid: <b>280f</b> = times flagged &nbsp;•&nbsp; <b>2.9pt</b> = how far off the field the line was<br><br>';
+    h+='<b>How to profit.</b><br>';
+    h+='1. Fund an account at the top-ranked book (it\'s your #1 target).<br>';
+    h+='2. Watch live flags in <b>Plays → Lines (🐢)</b> and the <b>▶ Now</b> board — that\'s where a stale line shows up in real time.<br>';
+    h+='3. When that book is named, bet the flagged side <b>at that book</b> before the window closes (check the "quote Xm" age).<br>';
+    h+='4. Flat stakes — that\'s what the ROI assumes.<br><br>';
+    h+='<b>Reality check.</b> These are <i>paper-graded</i> results, so live hit rates run lower (you won\'t always catch the number in time). And books limit accounts that beat stale lines — spread your action across books so you don\'t get capped.';
+    h+='</div>';
+  }
+  h+='</div>';
   if(!be||!be.byBook||!be.byBook.length){ return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:8px">No book-edge episodes yet. Builds as the stale-line / divergence scanners flag and grade.</div>'; }
   var min=be.minSample||15;
   // Decay alerts first (actionable warnings)
