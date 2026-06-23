@@ -57,6 +57,34 @@ async function clvSummary() {
   return { n: rows.length, avg: Math.round(avg * 10) / 10, beatPct: Math.round((beat / rows.length) * 100) };
 }
 
+// CLV grouped by market (clean records only) — the leading-indicator half of the
+// market-validation panel: avg CLV + how often we beat the close, per market.
+async function clvByMarket() {
+  let rows = [];
+  try { rows = await db.select('clv_records', 'bet_market,clv,beat_close', { match: { suspect: false }, limit: 8000 }); } catch (_) { return {}; }
+  const m = {};
+  for (const r of rows) {
+    const k = r.bet_market || 'other';
+    const a = (m[k] ||= { n: 0, sum: 0, beat: 0 });
+    a.n++; a.sum += Number(r.clv) || 0; if (r.beat_close) a.beat++;
+  }
+  const out = {};
+  for (const [k, a] of Object.entries(m)) out[k] = { n: a.n, avgClv: Math.round((a.sum / a.n) * 100) / 100, beatPct: Math.round((a.beat / a.n) * 1000) / 10 };
+  return out;
+}
+
+// Per-market validation verdict: combines settled ROI with CLV. CLV is the
+// leading indicator, so it decides — ROI without CLV backing is treated as
+// unproven (likely variance). validated → safe to bet; losing → stop; unproven
+// → not enough clean CLV yet.
+function marketVerdict(res, clv) {
+  const decided = (res.w || 0) + (res.l || 0);
+  if (clv && clv.n >= 20 && (clv.beatPct < 45 || clv.avgClv < 0)) return 'losing';
+  if (decided >= 40 && res.roi < -3) return 'losing';
+  if (clv && clv.n >= 25 && clv.beatPct > 50 && clv.avgClv > 0) return 'validated';
+  return 'unproven';
+}
+
 // One honest "are we winning?" read — weights CLV early, ROI once the sample is real.
 function verdict(o, clv) {
   const n = o.n || 0, roi = o.roi || 0;
@@ -176,6 +204,7 @@ async function run() {
   // combat (validation-gated) and totals on probation. Separate them so each
   // gets its own scorecard.
   const FIGHT = new Set(['UFC', 'BOXING']);
+  const allGraded = rows.slice(); // full set (incl observational) for the per-market validation panel
   const observational = rows.filter((r) => r.observational);
   const combatRows = observational.filter((r) => FIGHT.has(r.sport));
   const probTotals = observational.filter((r) => !FIGHT.has(r.sport) && r.market === 'total'); // totals on probation (keyed on market, so tennis/other can't leak in)
@@ -210,6 +239,22 @@ async function run() {
   report.clv = await clvSummary();
   report.signalClv = await signalCard();          // per-signal CLV scorecard (what actually beats the close)
   report.verdict = verdict(report.overall, report.clv);
+
+  // Per-market validation: settled record + ROI joined to CLV, with a verdict.
+  // Uses the FULL graded set (incl observational totals) so it mirrors the raw
+  // by-market truth, and is the live version of the "is this real?" SQL check.
+  {
+    const clvM = await clvByMarket();
+    const byM = group(allGraded, (r) => r.market, { min: 1, top: 20 });
+    report.marketValidation = byM.map((r) => {
+      const c = clvM[r.key] || null;
+      return {
+        market: r.key, n: r.n, w: r.w, l: r.l, p: r.p, winPct: r.winPct, roi: r.roi,
+        clvN: c ? c.n : 0, avgClv: c ? c.avgClv : null, beatPct: c ? c.beatPct : null,
+        verdict: marketVerdict(r, c),
+      };
+    });
+  }
 
   // Opportunity scanners — did the flags actually win? (graded by opp-grading)
   // Aggregate by type AND surface each graded flag with its trigger detail.
