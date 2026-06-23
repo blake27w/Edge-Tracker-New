@@ -30,7 +30,7 @@
 import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
-import { getGames, getPower, signalsForGame, setPlays } from '../../store/index.js';
+import { getGames, getPower, signalsForGame, setPlays, getPredMarket, getBacktest } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 
 // Fight sports are excluded from the team engine until they get a dedicated model.
@@ -45,9 +45,19 @@ const STACK_DECAY = 0.6;   // correlated (same-id) signals decay: 1st full, then
 const alerted = new Set();
 
 const isPitcher = (pos) => /\b(P|SP|RP|LHP|RHP)\b/i.test(String(pos || ''));
+const sideEq = (a, b) => { const x = String(a || '').toLowerCase(), y = String(b || '').toLowerCase(); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+
+// Has the exchange (Polymarket/Kalshi) edge proven positive CLV? Read from the
+// backtest's per-signal CLV scorecard. Until it has, the signal is recorded on
+// plays but adds 0 points; once it beats the close over a real sample, it
+// auto-promotes to a Tier-2 supporting signal.
+function exchangeValidated() {
+  const card = (getBacktest()?.signalClv || []).find((s) => s.id === 'exchange');
+  return !!card && card.n >= rules.exchangeMinSample && card.beatPct > 50 && card.avgClv > 0;
+}
 
 // Assemble the tiered signals for one market+side from the intel store.
-function collectSignals(game, market, side, intel, power) {
+function collectSignals(game, market, side, intel, power, exchange) {
   const sigs = [];
   const add = (tier, id, label) => sigs.push({ tier, id, label });
   const isTotal = market === 'total';
@@ -133,6 +143,13 @@ function collectSignals(game, market, side, intel, power) {
   // ── Tier 3: confirmation only ──
   if (isTotal && under) add(3, 'under_bias', 'Structural Under edge (public over-bets Overs)');
 
+  // Exchange (Polymarket/Kalshi) edge — ML only, supporting. Recorded always so
+  // its CLV accrues; adds points (Tier 2) ONLY once it's proven to beat the
+  // close (tier 0 = recorded, 0 points, until validated).
+  if (market === 'ml' && exchange && exchange.edge) {
+    add(exchange.validated ? 2 : 0, 'exchange', `Exchange underprices ${exchange.edge.edge_pct}% (${exchange.edge.source})`);
+  }
+
   return sigs;
 }
 
@@ -189,6 +206,10 @@ async function run() {
   const plays = [];
   const newAlerts = [];
 
+  // Exchange (Polymarket/Kalshi) edges + whether they've earned scoring weight.
+  const exEdges = getPredMarket()?.edges || [];
+  const exValidated = exchangeValidated();
+
   for (const g of games) {
     // Fight sports (UFC, Boxing) have no play model yet — they're handled
     // separately and must never run through the team engine / Under bias.
@@ -218,7 +239,8 @@ async function run() {
       // (worse than maxOppJuice) unless the play has extreme confidence.
       const ml = computeMarkets(g).ml;
       const mlPrice = sideMl === g.home ? ml.consensusHome : ml.consensusAway;
-      candidates.push({ market: 'ml', side: sideMl, line: null, price: mlPrice, sigs: collectSignals(g, 'ml', sideMl, intel, power) });
+      const exEdge = exEdges.find((e) => e.game_id === g.game_id && sideEq(e.side, sideMl)) || null;
+      candidates.push({ market: 'ml', side: sideMl, line: null, price: mlPrice, sigs: collectSignals(g, 'ml', sideMl, intel, power, { edge: exEdge, validated: exValidated }) });
     }
 
     for (const c of candidates) {
