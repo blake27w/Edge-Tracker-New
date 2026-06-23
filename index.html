@@ -6095,11 +6095,11 @@ function renderAgentsContent(){
   var stale=state.agentsStale||[],ev=state.agentsEv||[],arb=state.agentsArb||[],div=state.agentsDivergence||[],keyn=state.agentsKey||[];
   var items=[];
   var fp=function(v){return v==null?'':(v>0?'+'+v:''+v)};
-  arb.forEach(function(a){ items.push({prio:0,kind:'ARB',tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
+  arb.forEach(function(a){ items.push({prio:0,kind:'ARB',ct:a.commence_time,tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
     bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
-  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',tag:s.pts+'pt vs field '+s.consensus+(s.note?' · '+s.note:'')+qAge(s.quote_age_min),matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
+  stale.forEach(function(s){ items.push({prio:1,kind:'STALE',ct:s.commence_time,tag:s.pts+'pt vs field '+s.consensus+(s.note?' · '+s.note:'')+qAge(s.quote_age_min),matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
     bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
-  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:'')+qAge(e.quote_age_min),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,gid:e.game_id,mk:(/^total/.test(e.market||'')?'total':'ml'),sd:e.side,
+  ev.forEach(function(e){ items.push({prio:2,kind:'+EV',ct:e.commence_time,tag:'+'+e.ev_pct+'% vs fair '+fp(e.fair_price)+(e.note?' · '+e.note:'')+qAge(e.quote_age_min),matchup:e.matchup,sport:e.sport,edge:(e.ev_pct||0)*10,gid:e.game_id,mk:(/^total/.test(e.market||'')?'total':'ml'),sd:e.side,
     bet:e.side+' '+fp(e.price)+' @ '+e.book}); });
   keyn.forEach(function(k){ items.push({prio:3,kind:'KEY '+k.key,tag:'crosses key '+k.key+(k.importance==='high'?' ★':''),matchup:k.matchup,sport:k.sport,edge:(k.importance==='high'?50:30),gid:k.game_id,mk:'spread',sd:k.side,
     bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
@@ -6114,7 +6114,8 @@ function renderAgentsContent(){
     var key=it.gid?('|'+it.gid+'|'+it.mk+'|'+it.sd):null;
     var open=key&&state.oppOpen&&state.oppOpen[key];
     h+='<div class="card" style="padding:10px 13px;margin:0 0 7px;border-left:3px solid '+kc+(key?';cursor:pointer':'')+'"'+(key?(' onclick="oppToggle(\''+encodeURIComponent(key)+'\')"'):'')+'>';
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+exchBadge(it.gid,it.sd,it.mk)+'</span><span style="font-size:8px;color:var(--muted)">'+esc((it.sport||'')+' · '+(it.matchup||''))+(key?' '+(open?'▾':'▸'):'')+'</span></div>';
+    var itLive=isLivePlay({commence_time:it.ct});
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px"><span style="font-size:7px;letter-spacing:1px;color:'+kc+';border:1px solid '+kc+';border-radius:3px;padding:1px 4px">'+esc(it.kind)+'</span><span style="font-size:8px;color:var(--muted)">'+(itLive?liveTag()+' ':'')+esc((it.sport||'')+' · '+(it.matchup||''))+exchBadge(it.gid,it.sd,it.mk)+(key?' '+(open?'▾':'▸'):'')+'</span></div>';
     h+='<div style="font-family:var(--M);font-size:12px;font-weight:700;color:var(--cream);line-height:1.4">'+esc(it.bet)+'</div>';
     h+='<div style="font-size:8.5px;color:var(--leather);margin-top:2px">'+esc(it.tag)+'</div>';
     if(open)h+=renderOppDossier(key);
@@ -6151,11 +6152,14 @@ function renderAgentsContent(){
     plays.forEach(function(p,i){
       var conf=Math.round(p.score!=null?p.score:(p.confidence||0));
       var tier=p.tier||'';var ud=p.unit_dollars!=null?p.unit_dollars:'';
-      h+='<div class="card green" style="padding:12px;margin:0 0 8px">';
+      var _plive=isLivePlay(p);
+      h+='<div class="card green" style="padding:12px;margin:0 0 8px'+(_plive?';border-left:3px solid var(--wine)':'')+'">';
       h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
       var gtime=p.commence_time?(function(){try{return new Date(p.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}catch(e){return ''}})():'';
-      h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+esc(p.matchup||p.game_id||'')+'</div>';
-      if(gtime)h+='<div style="font-family:var(--M);font-size:9px;color:var(--brass);margin-top:2px">🕒 '+esc(gtime)+'</div>';
+      var plive=isLivePlay(p);
+      h+='<div><div style="font-family:var(--H);font-size:13px;font-weight:600;color:var(--txt)">'+esc(p.matchup||p.game_id||'')+(plive?liveTag():'')+'</div>';
+      if(plive)h+='<div style="font-family:var(--M);font-size:9px;color:var(--wine);margin-top:2px;font-weight:700">● in-game play</div>';
+      else if(gtime)h+='<div style="font-family:var(--M);font-size:9px;color:var(--brass);margin-top:2px">🕒 '+esc(gtime)+'</div>';
       h+='<div style="font-size:10px;color:var(--leather);margin-top:2px">'+esc(p.sport||'')+' · '+esc(p.market||'')+' · <b>'+esc(p.side||'')+'</b>'+(p.line!=null?(' '+p.line):'')+exchBadge(p.game_id,p.side,p.market)+'</div></div>';
       h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:16px;font-weight:700;color:var(--pine)">'+conf+'</div><div style="font-size:7px;color:var(--muted)">CONF</div></div>';
       h+='</div>';
@@ -6938,6 +6942,11 @@ function exchBadge(gid,side,market){
   var e=exchAgree(gid,side,market); if(!e)return '';
   return '<span title="Polymarket/Kalshi also prices this side as underpriced (+'+e.edge_pct+'% vs book)" style="font-size:7px;letter-spacing:.5px;color:var(--brass);border:1px solid var(--leather);border-radius:3px;padding:1px 4px;margin-left:5px;white-space:nowrap">🔮 +'+e.edge_pct+'%</span>';
 }
+// In-game (live) vs pre-game. A play issued after the game started is a
+// different bet — flag it red. isLivePlay prefers the server's stamped flag,
+// else infers from commence_time.
+function isLivePlay(p){ if(p&&p.live!=null)return !!p.live; var ct=p&&p.commence_time; return !!(ct&&Date.now()>=new Date(ct).getTime()); }
+function liveTag(){ return '<span style="font-size:7px;letter-spacing:.5px;color:#fff;background:var(--wine);border-radius:3px;padding:1px 5px;margin-left:5px;font-weight:700">● LIVE</span>'; }
 // Quote freshness label: minutes since the book last moved this price. ⚠ marks
 // a quote getting old (dead-market quotes >90m are already dropped server-side).
 function qAge(m){
@@ -7014,6 +7023,13 @@ window.oppToggle=oppToggle;
 function renderRecentResults(bt){
   if(!bt||!bt.recent||!bt.recent.length)return '';
   var h='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin:13px 0 4px">RECORD — EVERY GRADED PLAY ('+bt.recent.length+')</div>';
+  // Live (in-game) vs pre-game split — different animals, broken out.
+  if(bt.liveSplit&&(bt.liveSplit.live.n||bt.liveSplit.pregame.n)){var ls=bt.liveSplit;
+    h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
+    h+='<div style="flex:1;background:rgba(150,40,40,.1);border:1px solid var(--wine);border-radius:6px;padding:6px 9px"><div style="font-size:7px;letter-spacing:.5px;color:var(--wine);font-weight:700">● LIVE (in-game)</div><div style="font-size:11px;color:var(--cream);font-family:var(--M);margin-top:1px">'+ls.live.w+'-'+ls.live.l+(ls.live.p?'-'+ls.live.p:'')+' · '+(ls.live.roi>=0?'+':'')+ls.live.roi+'%</div></div>';
+    h+='<div style="flex:1;background:var(--saddle);border-radius:6px;padding:6px 9px"><div style="font-size:7px;letter-spacing:.5px;color:var(--brass);font-weight:700">PRE-GAME</div><div style="font-size:11px;color:var(--cream);font-family:var(--M);margin-top:1px">'+ls.pregame.w+'-'+ls.pregame.l+(ls.pregame.p?'-'+ls.pregame.p:'')+' · '+(ls.pregame.roi>=0?'+':'')+ls.pregame.roi+'%</div></div>';
+    h+='</div>';
+  }
   var lastDay='';
   bt.recent.forEach(function(r){
     var day=r.graded_at?(function(){try{return new Date(r.graded_at).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})}catch(e){return ''}})():'';
@@ -7026,7 +7042,7 @@ function renderRecentResults(bt){
     var open=r.game_id&&state.oppOpen&&state.oppOpen[key];
     h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+(r.game_id?';cursor:pointer':'')+'"'+(r.game_id?' onclick="oppToggle(\''+encodeURIComponent(key)+'\')"':'')+'>';
     h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-    h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(r.game_id?(open?'▾ ':'▸ '):'')+esc(r.matchup||'')+'</div>';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(r.game_id?(open?'▾ ':'▸ '):'')+esc(r.matchup||'')+(r.live?liveTag():'')+'</div>';
     h+='<div style="font-size:9px;color:var(--leather);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.sport||'')+' · '+esc(r.market||'')+' · '+label+(r.result_score?' · '+esc(r.result_score):'')+anom+'</div></div>';
     h+='<div style="text-align:right;margin-left:8px"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+badge+'</span>';
     if(r.pnl!=null)h+='<div style="font-size:8px;color:'+(r.pnl>=0?'#34d399':'var(--wine)')+'">'+(r.pnl>=0?'+$':'-$')+Math.abs(r.pnl)+'</div>';
