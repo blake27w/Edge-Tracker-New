@@ -161,17 +161,22 @@ function normalize(sport, ev, snapshots, movements) {
   const totals = [];
   for (const bm of ev.bookmakers || []) {
     const bookKey = bm.key;
-    game.books[bookKey] = { label: BOOK_LABELS[bookKey] || bookKey, markets: {} };
+    // last_update = when this book last CHANGED its odds (per-market when present,
+    // else the bookmaker-level stamp). Kept so the scanners can see quote age and
+    // ignore dead/suspended markets. An old stamp = unchanged, not unavailable.
+    const bookTs = bm.last_update || null;
+    game.books[bookKey] = { label: BOOK_LABELS[bookKey] || bookKey, updated: bookTs, markets: {} };
     for (const mk of bm.markets || []) {
+      const mkTs = mk.last_update || bookTs;
       for (const oc of mk.outcomes || []) {
         const side = mk.key === 'totals' ? oc.name : oc.name; // Over/Under or team name
         const line = oc.point != null ? oc.point : null;
         const price = oc.price != null ? Math.round(oc.price) : null;
-        game.books[bookKey].markets[`${mk.key}:${side}`] = { line, price };
+        game.books[bookKey].markets[`${mk.key}:${side}`] = { line, price, ts: mkTs };
         snapshots.push({
           sport, game_id: ev.id, commence_time: ev.commence_time,
           home: ev.home_team, away: ev.away_team, book: bookKey,
-          market: mk.key, side, line, price,
+          market: mk.key, side, line, price, last_update: mkTs,
         });
         if (mk.key === 'totals' && side === 'Over' && line != null) totals.push(line);
 

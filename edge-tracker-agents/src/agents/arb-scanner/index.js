@@ -13,6 +13,7 @@
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
 import { getGames, getTennisGames, setArbPlays } from '../../store/index.js';
+import { ageMin, STALE_MIN } from '../shared/odds-math.js';
 
 const ARB_MIN = Number(process.env.ARB_MIN_PCT) || 0.5;   // report arbs ≥ 0.5% ROI
 const MID_MIN_WIDTH = Number(process.env.MID_MIN_WIDTH) || 2; // ≥2 pt of middle
@@ -40,8 +41,8 @@ function arb(aOuts, bOuts, labelA, labelB, lineA, lineB) {
   return {
     type: 'arb', roi: Math.round(roi * 100) / 100,
     legs: [
-      { side: labelA, line: lineA, book: a.book, price: a.price, stake: Math.round(((1 / a.dec) / margin) * 1000) / 10 },
-      { side: labelB, line: lineB, book: b.book, price: b.price, stake: Math.round(((1 / b.dec) / margin) * 1000) / 10 },
+      { side: labelA, line: lineA, book: a.book, price: a.price, age: a.age, stake: Math.round(((1 / a.dec) / margin) * 1000) / 10 },
+      { side: labelB, line: lineB, book: b.book, price: b.price, age: b.age, stake: Math.round(((1 / b.dec) / margin) * 1000) / 10 },
     ],
   };
 }
@@ -52,16 +53,23 @@ function byLine(outs) {
   for (const o of outs) {
     if (o.line == null) continue;
     const d = toDecimal(o.price);
-    if (!m[o.line] || d > m[o.line].dec) m[o.line] = { book: o.book, price: o.price, dec: d, line: o.line };
+    if (!m[o.line] || d > m[o.line].dec) m[o.line] = { book: o.book, price: o.price, dec: d, line: o.line, age: o.age };
   }
   return m;
 }
 
-function pull(game, side) {
+// Pull per-book quotes for a side, dropping dead-market (stale) quotes — an arb
+// or middle leg on a quote the book hasn't changed in STALE_MIN+ min is likely
+// already gone, so it would be a phantom. Quotes with no timestamp are kept.
+function pull(game, side, now) {
   const out = [];
   for (const [bk, b] of Object.entries(game.books || {})) {
     const o = (b.markets || {})[side];
-    if (o && o.price != null) out.push({ book: b.label || bk, price: o.price, line: o.line });
+    if (o && o.price != null) {
+      const a = ageMin(o.ts, now);
+      if (a != null && a > STALE_MIN) continue;
+      out.push({ book: b.label || bk, price: o.price, line: o.line, age: a });
+    }
   }
   return out;
 }
@@ -72,6 +80,7 @@ async function run() {
   if (!team.length && !tennis.length) { setArbPlays([]); return { summary: 'no games to scan' }; }
 
   const rows = [];
+  const now = Date.now();
   const add = (g, market, r) => rows.push({
     ...r, sport: g.sport, game_id: g.game_id, commence_time: g.commence_time, market,
     matchup: g.p1 ? `${g.p1} vs ${g.p2}` : `${g.away} @ ${g.home}`,
@@ -80,14 +89,14 @@ async function run() {
   // ── Moneyline arbs (all sports) ──
   for (const g of [...team, ...tennis]) {
     const A = g.p1 || g.home, B = g.p2 || g.away;
-    const r = arb(pull(g, `h2h:${A}`), pull(g, `h2h:${B}`), A, B, null, null);
+    const r = arb(pull(g, `h2h:${A}`, now), pull(g, `h2h:${B}`, now), A, B, null, null);
     if (r && r.legs[0].book !== r.legs[1].book) add(g, 'ml', r);
   }
 
   // ── Totals & spreads arbs + middles (team sports, per line) ──
   for (const g of team) {
     // Totals
-    const over = byLine(pull(g, 'totals:Over')), under = byLine(pull(g, 'totals:Under'));
+    const over = byLine(pull(g, 'totals:Over', now)), under = byLine(pull(g, 'totals:Under', now));
     let bestMid = null;
     for (const lo of Object.values(over)) for (const hi of Object.values(under)) {
       const margin = 1 / lo.dec + 1 / hi.dec;
@@ -106,7 +115,7 @@ async function run() {
     if (bestMid) add(g, `total ${bestMid.legs[0].line}/${bestMid.legs[1].line}`, bestMid);
 
     // Spreads (home line h, away line a; middle when h + a > 0, arb when == 0)
-    const homeS = byLine(pull(g, `spreads:${g.home}`)), awayS = byLine(pull(g, `spreads:${g.away}`));
+    const homeS = byLine(pull(g, `spreads:${g.home}`, now)), awayS = byLine(pull(g, `spreads:${g.away}`, now));
     let bestSpMid = null;
     for (const h of Object.values(homeS)) for (const a of Object.values(awayS)) {
       const gap = Math.round((h.line + a.line) * 10) / 10;
