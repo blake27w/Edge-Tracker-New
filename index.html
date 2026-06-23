@@ -5982,6 +5982,7 @@ function renderResultsContent(){
     h+=renderVerdict(bt);
     if(bt.variance&&bt.variance.losses){var v=bt.variance;var bad=v.overtime+v.hook+v.close;if(bad)h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid var(--brass);font-size:10px;color:var(--cream)">🎲 '+bad+' of '+v.losses+' losses were variance — '+v.overtime+' OT, '+v.hook+' hook, '+v.close+' close. Bad beats, not bad reads.</div>';}
     h+=renderBtOverall(bt);
+    h+=renderMarketValidation(bt);
     if(bt.combat&&bt.combat.n){var cm=bt.combat;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;border-left:3px solid var(--brass)"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">🥊 COMBAT (OBSERVATIONAL)</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+cm.w+'-'+cm.l+(cm.p?'-'+cm.p:'')+' · '+cm.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(cm.roi)+'">'+(cm.roi>=0?'+':'')+cm.roi+'%</div></div>'+(cm.gated?'<div style="font-size:8px;color:var(--muted);margin-top:3px;font-style:italic">Not counted in the verdict until '+cm.gate+' graded ('+cm.n+' so far) — combat variance is brutal.</div>':'')+'</div>';}
   } else if(V==='breakdown'){
     h+=renderBtBreakdowns(bt);
@@ -7045,6 +7046,46 @@ function renderBtOverall(bt){
   h+='<div style="text-align:right"><div style="font-family:var(--M);font-size:24px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:8px;color:var(--muted)">ROI · '+(o.pnl>=0?'+$':'-$')+Math.abs(o.pnl)+'</div></div>';
   h+='</div></div>';
   if(bt.research&&bt.research.n){var rr=bt.research;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">📝 RESEARCH PICKS</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+rr.w+'-'+rr.l+(rr.p?'-'+rr.p:'')+' · '+rr.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(rr.roi)+'">'+(rr.roi>=0?'+':'')+rr.roi+'%</div></div></div>';}
+  return h;
+}
+// Market validation — settled ROI + CLV per market, with a "safe to bet?" verdict.
+// CLV is the leading indicator, so it decides: validated = real edge, losing =
+// stop, unproven = not enough clean CLV yet (treat ROI as variance).
+function renderMarketValidation(bt){
+  var mv=bt&&bt.marketValidation;
+  if(!mv||!mv.length)return '';
+  var V={validated:{c:'#34d399',t:'✅ VALIDATED',d:'beating the close — safe to bet'},
+         losing:{c:'var(--wine)',t:'⛔ LOSING',d:'losing on results and/or the close — do not bet'},
+         unproven:{c:'var(--brass)',t:'⏳ UNPROVEN',d:'not enough clean CLV yet — treat ROI as variance'}};
+  var MK={ml:'Moneyline',total:'Totals',spread:'Spreads',prop:'Props'};
+  var h='<div class="card" style="padding:13px 14px;margin-bottom:8px">';
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1px;color:var(--leather);margin-bottom:3px">📊 MARKET VALIDATION</div>';
+  h+='<div style="font-size:8px;color:var(--muted);margin-bottom:9px">Is each bet type actually an edge? Results ROI tells you what happened; CLV (beating the close) tells you if it\'s real. CLV decides the verdict.</div>';
+  mv.forEach(function(m){
+    var v=V[m.verdict]||V.unproven;
+    h+='<div style="border-left:3px solid '+v.c+';padding:7px 0 7px 9px;margin-bottom:7px">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="font-size:12px;font-weight:600;color:var(--txt)">'+esc(MK[m.market]||m.market)+'</div>';
+    h+='<div style="font-size:8px;font-weight:700;letter-spacing:.5px;color:'+v.c+'">'+v.t+'</div></div>';
+    // results line
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">';
+    h+='<span style="font-family:var(--M);font-size:10px;color:var(--cream)">'+m.w+'-'+m.l+(m.p?'-'+m.p:'')+' <span style="color:var(--muted)">('+m.n+', '+m.winPct+'% win)</span></span>';
+    h+='<span style="font-family:var(--M);font-size:11px;font-weight:700;color:'+btColor(m.roi)+'">'+(m.roi>=0?'+':'')+m.roi+'% ROI</span></div>';
+    // CLV line
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">';
+    if(m.clvN){
+      var cc=(m.avgClv>0&&m.beatPct>50)?'#34d399':'var(--wine)';
+      h+='<span style="font-family:var(--M);font-size:9px;color:var(--dim)">CLV: '+m.beatPct+'% beat close <span style="color:var(--muted)">('+m.clvN+' clean)</span></span>';
+      h+='<span style="font-family:var(--M);font-size:9px;font-weight:600;color:'+cc+'">'+(m.avgClv>=0?'+':'')+m.avgClv+' avg</span>';
+    } else {
+      h+='<span style="font-family:var(--M);font-size:9px;color:var(--muted);font-style:italic">No clean CLV yet</span><span></span>';
+    }
+    h+='</div>';
+    h+='<div style="font-size:7.5px;color:var(--muted);margin-top:3px;font-style:italic">'+v.d+'</div>';
+    h+='</div>';
+  });
+  h+='<div style="font-size:7px;color:var(--muted);margin-top:2px">Green light = positive CLV + >50% beat-close on 25+ clean records. Updates automatically as plays grade.</div>';
+  h+='</div>';
   return h;
 }
 // Per-signal CLV scorecard — which signal TYPES actually beat the close.
