@@ -5799,10 +5799,11 @@ var AGENTS_META=[
   {name:'mlb-umpire',icon:'⚾',label:'MLB Umpire Totals',cadence:'every 6h'},
   {name:'mlb-lineup',icon:'🔄',label:'MLB Lineup / SP Scratch',cadence:'every 10m'},
   {name:'mlb-bullpen',icon:'🔥',label:'MLB Bullpen Fatigue',cadence:'every 6h'},
+  {name:'weather-change',icon:'🌬️',label:'Weather-Shift vs Line',cadence:'every 15m'},
   {name:'pred-market',icon:'🔮',label:'Prediction Markets (Poly/Kalshi)',cadence:'every 10m (if enabled)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'pred-market':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5899,7 +5900,7 @@ function loadAgentsData(){
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];state.agentsNflPace=bag.bePlays.nflPrep.pace||null;}
-    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsPredMarket=bag.bePlays.predMarket||null;}
+    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -6104,6 +6105,7 @@ function renderAgentsContent(){
     bet:k.side+(k.line!=null?' '+(k.line>0?'+'+k.line:k.line):'')+' '+fp(k.price)+' @ '+k.book}); });
   div.forEach(function(dv){ if(!dv.aligned)return; items.push({prio:4,kind:'DIVERGE',tag:'+'+dv.edgePct+'% vs field'+(dv.aligned?' · sharp side':''),matchup:dv.matchup,sport:dv.sport,edge:(dv.edgePct||0),gid:dv.game_id,mk:(dv.market==='h2h'?'ml':dv.market==='totals'?'total':'spread'),sd:dv.side,
     bet:dv.side+' '+fp(dv.price)+' @ '+dv.book}); });
+  (state.agentsWeatherChange||[]).forEach(function(w){ var sd=w.lean==='under'?'Under':'Over'; items.push({prio:3,kind:'🌬️ WX',tag:w.note||('wind '+w.first_wind+'→'+w.cur_wind+'mph, line stale'),matchup:w.matchup,sport:w.sport,edge:(w.cur_wind||0),gid:w.game_id,mk:'total',sd:sd,bet:sd+(w.cur_total!=null?' '+w.cur_total:'')}); });
   items.sort(function(a,b){return a.prio-b.prio||b.edge-a.edge});
   h+='<div style="background:rgba(52,211,153,.08);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">▶ BET NOW — LIVE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Proven scanner edges that are live right now: open the book, bet the number, act fast. Flat stake. Model picks are excluded until validated.</div></div>';
   if(!items.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Nothing actionable right now. Stale lines, +EV, and arbs appear here the moment a book is off-market.</div>'; }

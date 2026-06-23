@@ -18,6 +18,7 @@ const store = {
   umpire: [],         // MLB home-plate umpire totals leans (self-learned)
   lineup: [],         // MLB late starting-pitcher change leans
   bullpenFatigue: [], // MLB gassed-bullpen Over leans (real relief workload)
+  weatherChange: [],  // live weather-shift-vs-stale-line edges (speed)
   plays: [],          // qualifying plays from the signal engine
   propPlays: [],      // qualifying prop alerts
   tennisGames: [],    // tennis matches (kept separate from team-sport games)
