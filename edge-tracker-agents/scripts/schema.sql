@@ -727,6 +727,33 @@ create table if not exists pred_market_edges (
 );
 create index if not exists pred_market_edges_idx on pred_market_edges (detected_at desc);
 
+-- ── MLB home-plate umpire run tendencies (self-learned, free StatsAPI) ──
+create table if not exists umpire_runs (
+  umpire      text primary key,
+  games       integer,
+  avg_runs    numeric,                    -- this ump's runs/game
+  run_index   numeric,                    -- avg_runs - league_avg (+ = Over-leaning)
+  league_avg  numeric,
+  updated_at  timestamptz not null default now()
+);
+
+-- ── MLB late starting-pitcher changes (speed edge) ──────────────────
+create table if not exists pitcher_changes (
+  id           uuid primary key default gen_random_uuid(),
+  game_id      text,
+  sport        text default 'MLB',
+  matchup      text,
+  team         text,
+  side         text,                       -- home | away
+  old_pitcher  text,
+  new_pitcher  text,
+  old_era      numeric,
+  new_era      numeric,
+  lean         text,                       -- over | under | null
+  detected_at  timestamptz not null default now()
+);
+create index if not exists pitcher_changes_idx on pitcher_changes (detected_at desc);
+
 -- ── Quote freshness (Odds API per-book last_update) ─────────────────
 -- Each book's last CHANGED timestamp, so scanners can see quote age and ignore
 -- dead/suspended markets. quote_age_min = minutes since the flagged book moved.
