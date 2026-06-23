@@ -50,14 +50,17 @@ function bestEv(sideOutcomes, fair) {
   return best;
 }
 
-// Push a +EV play, but on heavily-juiced prices require a corroborating signal
-// (sharp/RLM/public) on that side — otherwise skip it.
+// Push a +EV play, but require a corroborating signal (sharp/RLM/public) on the
+// side when EITHER (a) the price is heavily juiced, OR (b) it's a totals Over —
+// totals default to Under, so an Over only surfaces if a real signal overrides
+// the bias. Under/spread/ml value flags through on price alone.
 function consider(rows, game, displayMarket, corrMarket, side, best, fair) {
   if (!best) return;
   let note = null;
-  if (best.price < MAX_JUICE) {
+  const needsBacking = best.price < MAX_JUICE || (corrMarket === 'total' && side === 'Over');
+  if (needsBacking) {
     note = corroboration(game.game_id, corrMarket, side);
-    if (!note) return;                 // heavy chalk with no backing signal → not an edge
+    if (!note) return;                 // heavy chalk OR an unbacked Over → not an edge
   }
   pushEv(rows, game, displayMarket, side, best, fair, note);
 }

@@ -12,15 +12,16 @@ import { getGames, setStaleLines } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { fmtOdds } from '../shared/odds-math.js';
 import { trackBookEdges } from '../shared/book-edge.js';
+import { corroboration } from '../shared/corroborate.js';
 
 const STALE_PTS = Number(process.env.STALE_LINE_PTS) || 1.5; // min points off consensus
 
-function push(rows, g, market, side, o, consensus) {
+function push(rows, g, market, side, o, consensus, note) {
   rows.push({
     sport: g.sport, game_id: g.game_id, commence_time: g.commence_time,
     matchup: `${g.away} @ ${g.home}`, market, side,
     book: o.book, line: o.line, consensus,
-    pts: Math.round(Math.abs(o.line - consensus) * 10) / 10, price: o.price,
+    pts: Math.round(Math.abs(o.line - consensus) * 10) / 10, price: o.price, note: note || null,
   });
 }
 
@@ -38,10 +39,16 @@ async function run() {
       const label = b.label || bk; const mk = b.markets || {};
 
       // Totals: a line above consensus favors Under; below favors Over.
+      // Under flags on the number alone (preferred direction). A stale Over only
+      // surfaces with a corroborating signal — totals default to Under unless a
+      // real edge (sharp/RLM/handle) overrides the bias.
       if (consT != null) {
         const ov = mk['totals:Over'], un = mk['totals:Under'];
         if (un && un.line != null && un.line - consT >= STALE_PTS) push(rows, g, `total`, 'Under', { book: label, line: un.line, price: un.price }, consT);
-        if (ov && ov.line != null && consT - ov.line >= STALE_PTS) push(rows, g, `total`, 'Over', { book: label, line: ov.line, price: ov.price }, consT);
+        if (ov && ov.line != null && consT - ov.line >= STALE_PTS) {
+          const note = corroboration(g.game_id, 'total', 'Over');
+          if (note) push(rows, g, `total`, 'Over', { book: label, line: ov.line, price: ov.price }, consT, note);
+        }
       }
       // Spreads: a more generous number than consensus on either side.
       if (consH != null) {
