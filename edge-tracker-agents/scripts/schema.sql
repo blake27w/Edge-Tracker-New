@@ -263,6 +263,8 @@ alter table monitor_scores add column if not exists prop_signal_type text;
 -- Consensus price of the played side (mainly ML) so win P&L reflects the real
 -- payout instead of a hardcoded -110 (favorites were over-credited).
 alter table monitor_scores add column if not exists price integer;
+-- Whether the play was issued in-game (live) vs pre-game.
+alter table monitor_scores add column if not exists live boolean default false;
 
 -- Combat (UFC/Boxing) market snapshots — open vs current per fighter, softest book.
 create table if not exists combat_markets (

@@ -251,6 +251,8 @@ async function run() {
       // headline record) and cut the stake until a totals sub-signal proves CLV.
       const probation = c.market === 'total' && rules.totalsProbation;
       const stakeMult = probation ? (rules.totalsProbationStake || 0.5) : 1;
+      // Live = the play was issued AFTER the game started (in-game), vs pre-game.
+      const live = !!(g.commence_time && Date.parse(g.commence_time) <= Date.parse(now));
       const row = {
         sport: g.sport, game_id: g.game_id, matchup: `${g.away} @ ${g.home}`,
         commence_time: g.commence_time,
@@ -260,7 +262,7 @@ async function run() {
         unit_mult: Math.round(unit.mult * stakeMult * 100) / 100,
         unit_dollars: Math.round(unit.dollars * stakeMult * 100) / 100,
         t1_count: sc.t1, signals: c.sigs, qualified, over_penalty_applied: sc.overPenalty,
-        observational: probation, status: 'pending', scored_at: now,
+        observational: probation, live, status: 'pending', scored_at: now,
       };
       rows.push(row);
       if (qualified) {

@@ -292,9 +292,16 @@ async function run() {
   }
   report.recent = rows.slice(0, 100).map((r) => ({
     sport: r.sport, game_id: r.game_id, market: r.market, matchup: r.matchup, side: r.side, line: r.line, player: r.player,
-    score: r.score, tier: r.tier, t1_count: r.t1_count, signals: r.signals,
+    score: r.score, tier: r.tier, t1_count: r.t1_count, signals: r.signals, live: !!r.live,
     status: r.status, pnl: r.pnl, result_score: r.result_score, anomaly: r.anomaly, graded_at: r.graded_at,
   }));
+  // Live (in-game) vs pre-game split of the headline record — they're different
+  // animals, so the record breaks them out.
+  {
+    const lv = blank(), pg = blank();
+    for (const r of rows) tally(r.live ? lv : pg, r);
+    report.liveSplit = { live: finalize(lv), pregame: finalize(pg) };
+  }
   // Variance losses — how many losses were bad beats (OT / hook / close) vs bad reads.
   const losses = rows.filter((r) => r.status === 'loss');
   report.variance = {
