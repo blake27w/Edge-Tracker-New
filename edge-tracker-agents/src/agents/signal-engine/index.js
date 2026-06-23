@@ -214,7 +214,7 @@ async function run() {
       const row = {
         sport: g.sport, game_id: g.game_id, matchup: `${g.away} @ ${g.home}`,
         commence_time: g.commence_time,
-        market: c.market, side: c.side, line: c.line,
+        market: c.market, side: c.side, line: c.line, price: c.price ?? null,
         raw_score: sc.raw, score: sc.score, confidence: sc.score,
         tier: probation ? `${unit.label} (prob)` : unit.label,
         unit_mult: Math.round(unit.mult * stakeMult * 100) / 100,

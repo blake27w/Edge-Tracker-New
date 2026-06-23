@@ -253,7 +253,10 @@ async function run() {
     const result = p.market === 'prop' ? await gradeProp(p, f, ESPN_PATH[p.sport]) : gradePlay(p, f);
     if (!result) continue;
     const stake = p.unit_dollars ?? config.rules.unitDollars;
-    const pnl = result === 'win' ? Math.round(stake * profitPerUnit(-110) * 100) / 100
+    // Win P&L at the side's real price (mainly ML). Spreads/totals/props have no
+    // stored price → default -110 (standard juice). Favorites were over-credited.
+    const winOdds = p.market === 'ml' && p.price != null ? p.price : -110;
+    const pnl = result === 'win' ? Math.round(stake * profitPerUnit(winOdds) * 100) / 100
       : result === 'loss' ? -stake : 0;
     const anomaly = result === 'loss' ? (p.market === 'prop' ? (f.overtime ? 'overtime' : null) : lossAnomaly(p, f)) : null;
     try {
