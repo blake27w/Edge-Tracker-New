@@ -52,13 +52,15 @@ import nflLineMove from '../agents/nfl-line-move/index.js';
 import nflDerivatives from '../agents/nfl-derivatives/index.js';
 import nflPace from '../agents/nfl-pace/index.js';
 import predMarket from '../agents/pred-market/index.js';
+import mlbUmpire from '../agents/mlb-umpire/index.js';
+import mlbLineup from '../agents/mlb-lineup/index.js';
 
 // Run order matters within a tick: ingest → intel → score. The timers are
 // independent, but listing odds/intel before signal keeps cold-start sane.
 // nfl-power precedes win-totals/schedule, which read its preseason ratings.
 const AGENTS = [
   odds, injury, weather, sharp, power, publicSplits, scheduleSpot,
-  mlbContext, signal, propEngine, clv, grading,
+  mlbContext, mlbUmpire, mlbLineup, signal, propEngine, clv, grading,
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal, tennisClose,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
   oppGrading, bookEdges, combatMarket, combatWeighin, combatSignal, combatDerivatives,

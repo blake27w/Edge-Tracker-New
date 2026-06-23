@@ -106,6 +106,16 @@ function collectSignals(game, market, side, intel, power) {
       const wind = w.wind_mph || 0;
       if (under && !w.dome && wind >= 10 && wind < 15 && w.total_impact === 'under') add(2, 'weather_mild', `Wind ${Math.round(wind)}mph`);
     }
+    // Home-plate umpire run tendency (self-learned) — supporting only.
+    for (const u of intel.umpire || []) {
+      if (u.lean === 'under' && under) add(2, 'umpire', u.note || 'Under-leaning plate ump');
+      if (u.lean === 'over' && !under) add(2, 'umpire_over', u.note || 'Over-leaning plate ump');
+    }
+    // Late starting-pitcher change (speed edge) — supporting only.
+    for (const lp of intel.lineup || []) {
+      if (lp.lean === 'under' && under) add(2, 'pitcher_change', lp.note || 'SP upgrade → Under');
+      if (lp.lean === 'over' && !under) add(2, 'pitcher_change_over', lp.note || 'SP downgrade → Over');
+    }
   } else if (power) {
     // Power-rating vs market-line gap (spread/ml). Supporting only — never a
     // standalone qualifier (consistent with "power is priced in already").

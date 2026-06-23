@@ -15,6 +15,8 @@ const store = {
   splits: [],         // latest public_splits
   schedule: [],       // latest schedule_spots
   mlbContext: [],     // latest mlb_context
+  umpire: [],         // MLB home-plate umpire totals leans (self-learned)
+  lineup: [],         // MLB late starting-pitcher change leans
   plays: [],          // qualifying plays from the signal engine
   propPlays: [],      // qualifying prop alerts
   tennisGames: [],    // tennis matches (kept separate from team-sport games)
@@ -143,6 +145,8 @@ export function signalsForGame(gameId) {
     weather: pick(store.weather),
     schedule: pick(store.schedule),
     mlbContext: pick(store.mlbContext),
+    umpire: pick(store.umpire),
+    lineup: pick(store.lineup),
   };
 }
 
