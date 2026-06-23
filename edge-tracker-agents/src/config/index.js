@@ -256,6 +256,10 @@ const config = {
     // Tier-2 handle>bets divergence). Default 2 → no single-signal plays; "sharp"
     // means two independent edges agreeing. Raise to 3 for an even tighter book.
     minPrimary: num(env.MIN_PRIMARY_SIGNALS, 2),
+    // Exchange (Polymarket/Kalshi) edge is recorded on ML plays immediately but
+    // adds 0 points until it proves positive CLV over this many tracked plays —
+    // then it auto-promotes to a Tier-2 supporting signal. Validate-before-trust.
+    exchangeMinSample: num(env.EXCHANGE_MIN_SAMPLE, 25),
     unitDollars: num(env.UNIT_DOLLARS, 12),
     // Totals probation: totals are a proven break-even market (75-75, -6.2% over
     // 150). While ON, new totals plays are observational + reduced-stake (kept out

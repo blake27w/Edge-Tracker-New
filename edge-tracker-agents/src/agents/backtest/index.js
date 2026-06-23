@@ -129,7 +129,7 @@ const SIG_LABELS = {
   bullpen: 'Bullpen/park Under', bullpen_over: 'Bullpen Over', power: 'Power-rating gap',
   under_bias: 'Structural Under bias', weather_mild: 'Mild wind', ev: '+EV vs fair', weighin: 'Weigh-in news',
   umpire: 'Umpire Under', umpire_over: 'Umpire Over', pitcher_change: 'SP change Under', pitcher_change_over: 'SP change Over',
-  bullpen_fatigue: 'Gassed bullpen Over',
+  bullpen_fatigue: 'Gassed bullpen Over', exchange: 'Exchange edge (Poly/Kalshi)',
 };
 
 // PER-SIGNAL CLV SCORECARD — the key analytic: which signal TYPES actually beat
