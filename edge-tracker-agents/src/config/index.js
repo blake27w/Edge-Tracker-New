@@ -255,9 +255,13 @@ const config = {
     // out of the headline record, still graded). Lift with TENNIS_OBSERVATIONAL=false.
     tennisObservational: bool(env.TENNIS_OBSERVATIONAL, true),
     // Max juice we'll surface as an opportunity (American). Even a real edge on
-    // a heavy favorite means laying a brutal price — skip prices worse than this.
-    // Default -400 (only kills egregious chalk); tighten via MAX_OPP_JUICE=-250.
-    maxOppJuice: num(env.MAX_OPP_JUICE, -400),
+    // a heavy favorite means laying a brutal price. Anything worse than this needs
+    // EXTREME confidence to surface: scanners require a corroborating sharp/RLM
+    // signal, and signal-engine plays require a score ≥ extremeConfidence.
+    // Default -140; loosen via MAX_OPP_JUICE=-200.
+    maxOppJuice: num(env.MAX_OPP_JUICE, -140),
+    // Score bar a play priced worse than maxOppJuice must clear to surface anyway.
+    extremeConfidence: num(env.EXTREME_CONFIDENCE, 85),
     // Budget protection: discretionary Odds-API consumers (props, tennis,
     // derivatives) stand down when fewer than this many monthly credits remain,
     // reserving them for core odds ingestion. Set ODDS_BUDGET_RESERVE.
