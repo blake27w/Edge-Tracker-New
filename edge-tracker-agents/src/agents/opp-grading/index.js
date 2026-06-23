@@ -13,6 +13,9 @@ import { logger } from '../../utils/index.js';
 import { ESPN_PATH, profitPerUnit, ymd, fetchFinals, gradePlay } from '../grading/index.js';
 
 const LOOKBACK_H = Number(process.env.OPP_GRADE_LOOKBACK_H) || 30;
+// Run/puck-line sports: the spread is fixed ±1.5, so line-based stale "spread"
+// flags are artifacts — don't grade them (they inflated the Book Edges record).
+const FIXED_RUNLINE = new Set(['MLB', 'NHL']);
 
 // +EV row → gradeable play. Skip spreads (line/side sign ambiguity) and tennis.
 function fromEv(r) {
@@ -32,6 +35,7 @@ function fromSignal(r) {
   else if (market === 'totals') market = 'total';
   else if (market === 'spreads') market = 'spread';
   if (!['ml', 'total', 'spread'].includes(market)) return null;
+  if (market === 'spread' && FIXED_RUNLINE.has(r.sport)) return null; // fixed run/puck line — artifact, don't grade
   if ((market === 'total' || market === 'spread') && line == null) return null; // divergence totals/spreads lack a line
   return { type: r.type, sport: r.sport, game_id: r.game_id, matchup: r.matchup, market, side: r.side, line, price: r.price, detail: r.detail || null };
 }

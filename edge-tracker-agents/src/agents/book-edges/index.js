@@ -17,6 +17,11 @@ import { setBookEdges } from '../../store/index.js';
 
 const UNIT = config.rules.unitDollars;
 const MIN_SAMPLE = Number(process.env.BOOK_EDGE_MIN_SAMPLE) || 15; // below this = too small to trust
+// Run/puck-line sports have a fixed ±1.5 spread, so line-based stale "spread"
+// episodes are artifacts (sign flip / alt line). Exclude them from the scorecard
+// so they stop inflating book ROI (the source is also fixed in stale-line).
+const FIXED_RUNLINE = new Set(['MLB', 'NHL']);
+const isArtifactSpread = (ep) => ep.market === 'spread' && FIXED_RUNLINE.has(ep.sport);
 
 function acc() { return { n: 0, graded: 0, w: 0, l: 0, p: 0, staked: 0, pnl: 0, winSum: 0, winN: 0, ptsSum: 0, ptsN: 0, r7n: 0, r7staked: 0, r7pnl: 0, pPnl: 0, pStaked: 0 }; }
 
@@ -65,6 +70,7 @@ async function run() {
   const byBook = {}, grid = {};
   for (const ep of episodes) {
     if (!ep.book) continue;
+    if (isArtifactSpread(ep)) continue; // fixed run/puck-line spread artifact — don't count
     const res = resMap.get(`${ep.type}|${ep.game_id}|${ep.market}|${ep.side}`);
     tally((byBook[ep.book] ||= acc()), ep, res);
     tally((grid[`${ep.book}|${ep.sport}|${ep.market}|${ep.type}`] ||= acc()), ep, res);
