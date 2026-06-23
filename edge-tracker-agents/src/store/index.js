@@ -17,6 +17,7 @@ const store = {
   mlbContext: [],     // latest mlb_context
   umpire: [],         // MLB home-plate umpire totals leans (self-learned)
   lineup: [],         // MLB late starting-pitcher change leans
+  bullpenFatigue: [], // MLB gassed-bullpen Over leans (real relief workload)
   plays: [],          // qualifying plays from the signal engine
   propPlays: [],      // qualifying prop alerts
   tennisGames: [],    // tennis matches (kept separate from team-sport games)
@@ -147,6 +148,7 @@ export function signalsForGame(gameId) {
     mlbContext: pick(store.mlbContext),
     umpire: pick(store.umpire),
     lineup: pick(store.lineup),
+    bullpenFatigue: pick(store.bullpenFatigue),
   };
 }
 
