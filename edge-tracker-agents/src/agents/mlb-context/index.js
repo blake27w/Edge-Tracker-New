@@ -83,14 +83,14 @@ async function run() {
     const awayFat = fatigueLabel(priorCounts[g.away] || 0);
     const p = probables[`${g.away}@${g.home}`] || {};
     const pf = PARK_FACTOR[g.home] || 'neutral';
-    const tired = homeFat === 'high' || awayFat === 'high';
-    // Combine park factor + bullpen fatigue. Pitcher park → Under (unless a
-    // gassed pen cancels it); hitter park → Over; neutral park → Over only if a
-    // pen is gassed.
+    // PARK-FACTOR ONLY. Bullpen fatigue now has its own agent (mlb-bullpen) that
+    // measures real relief workload, so we don't double-count it here. Pitcher
+    // park → Under (our bias); hitter park → Over; neutral → no lean. The
+    // fatigue fields below are kept for display only.
     let lean;
-    if (pf === 'pitcher') lean = tired ? 'neutral' : 'under';
+    if (pf === 'pitcher') lean = 'under';
     else if (pf === 'hitter') lean = 'over';
-    else lean = tired ? 'over' : 'neutral';
+    else lean = 'neutral';
     return {
       game_id: g.game_id, home: g.home, away: g.away,
       ump_name: null, ump_ou_tendency: null, ump_k_tendency: null,

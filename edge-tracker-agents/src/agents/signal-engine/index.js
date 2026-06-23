@@ -116,6 +116,10 @@ function collectSignals(game, market, side, intel, power) {
       if (lp.lean === 'under' && under) add(2, 'pitcher_change', lp.note || 'SP upgrade → Under');
       if (lp.lean === 'over' && !under) add(2, 'pitcher_change_over', lp.note || 'SP downgrade → Over');
     }
+    // Gassed bullpen (real relief workload) → Over — supporting only.
+    for (const bf of intel.bullpenFatigue || []) {
+      if (bf.lean === 'over' && !under) add(2, 'bullpen_fatigue', bf.note || 'Gassed bullpen → Over');
+    }
   } else if (power) {
     // Power-rating vs market-line gap (spread/ml). Supporting only — never a
     // standalone qualifier (consistent with "power is priced in already").
