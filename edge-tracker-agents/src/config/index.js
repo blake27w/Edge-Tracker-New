@@ -151,6 +151,8 @@ const AGENT_DEFS = {
   'mlb-lineup': { label: 'MLB Lineup / SP Scratch', emoji: '🔄', min: 10 },
   // MLB bullpen fatigue (real relief workload from box scores, free StatsAPI).
   'mlb-bullpen': { label: 'MLB Bullpen Fatigue', emoji: '🔥', min: 360 },
+  // Weather-shift vs stale total (speed edge, reuses weather data — free).
+  'weather-change': { label: 'Weather-Shift vs Line', emoji: '🌬️', min: 15 },
   // Prediction-market reference — disabled unless PREDICTION_MARKETS=true.
   'pred-market': { label: 'Prediction Markets (Poly/Kalshi)', emoji: '🔮', min: 10 },
   watchdog: { label: 'Self-Watchdog', emoji: '🛡️', min: 5 },
