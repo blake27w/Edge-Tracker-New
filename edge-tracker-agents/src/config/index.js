@@ -244,6 +244,10 @@ const config = {
   // ── Business rules ──
   rules: {
     confidenceFloor: num(env.CONFIDENCE_FLOOR, 70),
+    // Min independent "primary" signals to qualify (a distinct Tier-1 edge, or a
+    // Tier-2 handle>bets divergence). Default 2 → no single-signal plays; "sharp"
+    // means two independent edges agreeing. Raise to 3 for an even tighter book.
+    minPrimary: num(env.MIN_PRIMARY_SIGNALS, 2),
     unitDollars: num(env.UNIT_DOLLARS, 12),
     // Totals probation: totals are a proven break-even market (75-75, -6.2% over
     // 150). While ON, new totals plays are observational + reduced-stake (kept out

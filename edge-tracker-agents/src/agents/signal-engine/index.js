@@ -9,15 +9,16 @@
 //   Tier 1 (+20, primary edge): RLM vs heavy public, steam (spreads/ml only),
 //     significant (15+ mph) DIRECTIONAL wind on totals.
 //   Tier 2 (+10, supporting): handle≫bets divergence, power-vs-line gap,
-//     key starter OUT, park/bullpen spot, schedule spot.
-//   Tier 3 (+3, CONFIRMATION ONLY): structural Under trend, AND steam on
-//     TOTALS (demoted — it grades badly, can't qualify a totals play alone).
+//     key starter OUT, park/bullpen spot, schedule spot, steam on TOTALS.
+//   Tier 3 (+3, CONFIRMATION ONLY): structural Under trend.
 //
 // SCORING: diminishing returns on correlated (same-id) signals — first counts
 //   full, repeats decay ×0.6. Tier-1 count is DISTINCT ids (independent edges).
 //
-// QUALIFYING: score ≥ 70 AND (≥1 Tier 1 OR a Tier-2 sharp/public divergence).
-//   A play built only on Tier 3 never qualifies.
+// QUALIFYING: score ≥ 70 AND ≥1 Tier-1 edge AND ≥ minPrimary (default 2)
+//   independent primary signals, where a primary = a distinct Tier-1 OR a
+//   Tier-2 handle>bets divergence. No single-signal plays; "sharp" = two
+//   independent edges agreeing.
 //
 // UNDER BIAS: Over totals take a -10 penalty and need 2+ independent Tier 1.
 //   Spreads / moneylines / props are exempt.
@@ -64,10 +65,10 @@ function collectSignals(game, market, side, intel, power) {
     // Require the steam to be on THIS side (not just this market) — otherwise a
     // steam on the opposite side would wrongly credit a Tier-1 to this play.
     if (s.market !== mk || s.side !== side) continue;
-    // Steam on TOTALS is the correlated line-move signal that grades badly
-    // (1-4-1, -51.5%) — demote to confirmation-only so it can't qualify a
-    // totals play on its own. On spreads/ml it stays a Tier-1 edge.
-    if (isTotal) add(3, 'steam', `${s.detail || 'steam move'} (totals — confirmation only)`);
+    // Steam on TOTALS is a supporting (Tier-2) signal, not a primary edge: it
+    // can help a totals play but can't qualify one on its own (totals need an
+    // independent primary). On spreads/ml steam stays a Tier-1 edge.
+    if (isTotal) add(2, 'steam', `${s.detail || 'steam move'} (totals — supporting)`);
     else add(1, 'steam', s.detail || 'steam move');
   }
   if (isTotal && under) {
@@ -151,10 +152,13 @@ function score(sigs, side, market) {
 
 function qualifies(side, market, sc, price) {
   if (sc.score < rules.confidenceFloor) return false;
-  // Primary edge required: a Tier 1, OR a Tier 2 sharp/public divergence.
-  // Never qualifies on Tier 3 (confirmation) signals alone.
-  if (!(sc.t1 >= 1 || sc.hasDivergence)) return false;
-  // Over totals must clear a higher bar: 2+ independent Tier 1 signals.
+  // No single-signal plays. Require at least one true Tier-1 edge AND a total of
+  // `minPrimary` independent primary signals, where a primary = a distinct Tier-1
+  // OR a Tier-2 handle>bets divergence. Default 2 → "sharp" means two independent
+  // edges agreeing (e.g. RLM + steam, or steam + sharp-money divergence), not one.
+  const primary = sc.t1 + (sc.hasDivergence ? 1 : 0);
+  if (sc.t1 < 1 || primary < rules.minPrimary) return false;
+  // Over totals must clear an even higher bar: 2+ independent Tier 1 signals.
   if (market === 'total' && side === 'Over' && sc.t1 < 2) return false;
   // Heavy juice (worse than maxOppJuice, e.g. -140): only surface with EXTREME
   // confidence — laying a brutal price is rarely worth it otherwise.
