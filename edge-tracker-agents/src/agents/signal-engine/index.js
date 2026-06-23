@@ -149,13 +149,16 @@ function score(sigs, side, market) {
   return { raw, score: finalScore, t1, hasDivergence, overPenalty };
 }
 
-function qualifies(side, market, sc) {
+function qualifies(side, market, sc, price) {
   if (sc.score < rules.confidenceFloor) return false;
   // Primary edge required: a Tier 1, OR a Tier 2 sharp/public divergence.
   // Never qualifies on Tier 3 (confirmation) signals alone.
   if (!(sc.t1 >= 1 || sc.hasDivergence)) return false;
   // Over totals must clear a higher bar: 2+ independent Tier 1 signals.
   if (market === 'total' && side === 'Over' && sc.t1 < 2) return false;
+  // Heavy juice (worse than maxOppJuice, e.g. -140): only surface with EXTREME
+  // confidence — laying a brutal price is rarely worth it otherwise.
+  if (price != null && price < rules.maxOppJuice && sc.score < rules.extremeConfidence) return false;
   return true;
 }
 
@@ -192,11 +195,17 @@ async function run() {
       candidates.push({ market: 'spread', side: sideSpread, line: spreadLine, sigs: collectSignals(g, 'spread', sideSpread, intel, power) });
     }
     const sideMl = pickTeamSide(intel, 'ml') || pickPowerSide(power, g);
-    if (sideMl) candidates.push({ market: 'ml', side: sideMl, line: null, sigs: collectSignals(g, 'ml', sideMl, intel, power) });
+    if (sideMl) {
+      // Carry the consensus ML price so the juice gate can reject heavy chalk
+      // (worse than maxOppJuice) unless the play has extreme confidence.
+      const ml = computeMarkets(g).ml;
+      const mlPrice = sideMl === g.home ? ml.consensusHome : ml.consensusAway;
+      candidates.push({ market: 'ml', side: sideMl, line: null, price: mlPrice, sigs: collectSignals(g, 'ml', sideMl, intel, power) });
+    }
 
     for (const c of candidates) {
       const sc = score(c.sigs, c.side, c.market);
-      const qualified = qualifies(c.side, c.market, sc);
+      const qualified = qualifies(c.side, c.market, sc, c.price);
       const unit = qualified ? unitFor(sc.score) : unitFor(0);
       // Totals probation: keep grading them, but mark observational (out of the
       // headline record) and cut the stake until a totals sub-signal proves CLV.
