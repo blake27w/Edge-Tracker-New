@@ -188,6 +188,38 @@ async function buildSignalDetail(url) {
 
 // Graded plays behind one "What Works" breakdown bucket (dim+key), e.g.
 // dim=confidence key="80–89", dim=sport key="NBA", dim=signal key=<label>.
+// Live betting splits (public bets%/handle%) + per-book line board per game.
+function buildSplits(url) {
+  const want = String(url.searchParams.get('sport') || '').toUpperCase();
+  const games = getGames().filter((g) => !want || g.sport === want);
+  const splits = getIntel('splits') || [];
+  const now = Date.now();
+  const out = games.map((g) => {
+    const gs = splits.filter((s) => s.game_id === g.game_id)
+      .map((s) => ({ market: s.market, side: s.side, bets_pct: s.bets_pct, handle_pct: s.handle_pct, divergence: s.divergence, rlm: s.rlm }));
+    const books = [];
+    for (const [bk, b] of Object.entries(g.books || {})) {
+      const mk = b.markets || {};
+      const mh = mk[`h2h:${g.home}`], ma = mk[`h2h:${g.away}`];
+      const sh = mk[`spreads:${g.home}`], ov = mk['totals:Over'], un = mk['totals:Under'];
+      books.push({
+        book: b.label || bk, updated: b.updated || null,
+        ml_home: mh?.price ?? null, ml_away: ma?.price ?? null,
+        spread_line: sh?.line ?? null, spread_price: sh?.price ?? null,
+        total_line: ov?.line ?? null, over_price: ov?.price ?? null, under_price: un?.price ?? null,
+      });
+    }
+    books.sort((a, b) => a.book.localeCompare(b.book));
+    return {
+      game_id: g.game_id, sport: g.sport, matchup: `${g.away} @ ${g.home}`, home: g.home, away: g.away,
+      commence_time: g.commence_time, live: !!(g.commence_time && Date.parse(g.commence_time) <= now),
+      splits: gs, books,
+    };
+  }).filter((g) => g.books.length);
+  out.sort((a, b) => new Date(a.commence_time || 0) - new Date(b.commence_time || 0));
+  return { count: out.length, games: out };
+}
+
 async function buildPlaysDetail(url) {
   const dim = url.searchParams.get('dim'), key = url.searchParams.get('key');
   if (!dim || key == null) return { error: 'dim and key required' };
@@ -324,6 +356,9 @@ const server = http.createServer(async (req, res) => {
     case '/data-health':
       try { return json(res, 200, await buildDataHealth()); }
       catch (e) { logger.error('data-health', e.message); return json(res, 500, { error: 'data-health failed', detail: e.message }); }
+    case '/splits':
+      try { return json(res, 200, buildSplits(url)); }
+      catch (e) { logger.error('splits', e.message); return json(res, 500, { error: 'splits failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');
