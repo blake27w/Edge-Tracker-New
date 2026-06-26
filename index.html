@@ -5853,6 +5853,7 @@ function loadAgentsData(){
     tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/data-health').then(function(r){return r.json()}).then(function(j){return {beDataHealth:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/splits').then(function(r){return r.json()}).then(function(j){return {beSplits:j}}).catch(function(){return {}}));
     tasks.push(fetch(api+'/research').then(function(r){return r.json()}).then(function(j){return {beResearch:j}}).catch(function(){return {}}));
   }
   if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())rerender();return}
@@ -5895,6 +5896,7 @@ function loadAgentsData(){
     if(bag.bePlays){state.agentsEv=bag.bePlays.ev||[];state.agentsArb=bag.bePlays.arb||[];state.agentsBacktest=bag.bePlays.backtest||null;state.agentsStale=bag.bePlays.stale||[];state.agentsDivergence=bag.bePlays.divergence||[];state.agentsWatchdog=bag.bePlays.watchdog||null;}
     if(bag.beBudget&&bag.beBudget.budget!=null)state.agentsBudget=bag.beBudget;
     if(bag.beDataHealth)state.agentsDataHealth=bag.beDataHealth;
+    if(bag.beSplits)state.agentsSplitsBoard=bag.beSplits;
     if(bag.beResearch&&bag.beResearch.research)state.agentsResearch=bag.beResearch.research;
     if(bag.bePlays)state.agentsKey=bag.bePlays.keyNumbers||[];
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
@@ -6086,7 +6088,7 @@ function renderAgentsContent(){
   if(onPlays){
   if(!state.playView)state.playView='action';
   var pv=state.playView;
-  var pviews=[['action','▶ Now'],['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['exch','🔮 Exch'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
+  var pviews=[['action','▶ Now'],['bets','Bets'],['ev','+EV'],['arb','Arbs'],['lines','Lines'],['splits','📊 Splits'],['exch','🔮 Exch'],['props','Props'],['fade','Fade'],['combat','Combat'],['nfl','NFL Prep'],['research','Research'],['model','Model']];
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">';
   pviews.forEach(function(v){var on=pv===v[0];h+='<button class="btn-sm'+(on?' on':'')+'" onclick="state.playView=\''+v[0]+'\';render()" style="flex:1;min-width:54px;font-size:10px;padding:9px 4px;'+(on?'background:var(--saddle);color:var(--cream);border-color:var(--txt)':'')+'">'+v[1]+'</button>';});
   h+='</div>';
@@ -6095,7 +6097,7 @@ function renderAgentsContent(){
   var stale=state.agentsStale||[],ev=state.agentsEv||[],arb=state.agentsArb||[],div=state.agentsDivergence||[],keyn=state.agentsKey||[];
   var items=[];
   var fp=function(v){return v==null?'':(v>0?'+'+v:''+v)};
-  arb.forEach(function(a){ items.push({prio:0,kind:'ARB',ct:a.commence_time,tag:(a.type==='middle'?'MIDDLE':'ARB')+' '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
+  arb.forEach(function(a){ if(a.type==='middle')return; items.push({prio:0,kind:'ARB',ct:a.commence_time,tag:'ARB '+(a.roi!=null?a.roi+'%':''),matchup:a.matchup,sport:a.sport,edge:(a.roi||0)+1000,
     bet:(a.legs||[]).map(function(l){return l.side+(l.line!=null?' '+(l.line>0?'+'+l.line:l.line):'')+' '+fp(l.price)+' @ '+l.book+(l.stake?' ('+l.stake+'%)':'')}).join('  +  ')}); });
   stale.forEach(function(s){ items.push({prio:1,kind:'STALE',ct:s.commence_time,tag:s.pts+'pt vs field '+s.consensus+(s.note?' · '+s.note:'')+qAge(s.quote_age_min),matchup:s.matchup,sport:s.sport,edge:(s.pts||0)*100,gid:s.game_id,mk:s.market,sd:s.side,
     bet:s.side+(s.line!=null?' '+(s.line>0?'+'+s.line:s.line):'')+' '+fp(s.price)+' @ '+s.book}); });
@@ -6107,7 +6109,7 @@ function renderAgentsContent(){
     bet:dv.side+' '+fp(dv.price)+' @ '+dv.book}); });
   (state.agentsWeatherChange||[]).forEach(function(w){ var sd=w.lean==='under'?'Under':'Over'; items.push({prio:3,kind:'🌬️ WX',tag:w.note||('wind '+w.first_wind+'→'+w.cur_wind+'mph, line stale'),matchup:w.matchup,sport:w.sport,edge:(w.cur_wind||0),gid:w.game_id,mk:'total',sd:sd,bet:sd+(w.cur_total!=null?' '+w.cur_total:'')}); });
   items.sort(function(a,b){return a.prio-b.prio||b.edge-a.edge});
-  h+='<div style="background:rgba(52,211,153,.08);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">▶ BET NOW — LIVE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Proven scanner edges that are live right now: open the book, bet the number, act fast. Flat stake. Model picks are excluded until validated.</div></div>';
+  h+='<div style="background:rgba(52,211,153,.08);border:1px solid var(--sage);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--sage);font-weight:600">▶ BET NOW — LIVE EDGES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Straight-up edges live right now: open the book, bet the number, act fast. Flat stake. Middles live in the Arbs tab; model picks are excluded until validated.</div></div>';
   if(!items.length){ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">Nothing actionable right now. Stale lines, +EV, and arbs appear here the moment a book is off-market.</div>'; }
   else { items.slice(0,40).forEach(function(it){
     var kc=it.kind.charAt(0)==='A'||it.kind.indexOf('MIDDLE')>=0?'var(--brass)':it.kind==='STALE'?'var(--sage)':it.kind==='+EV'?'#34d399':'var(--leather)';
@@ -6139,6 +6141,8 @@ function renderAgentsContent(){
     h+='</div>';
   }); h+='<div style="height:8px"></div>'; }
   } // end exch
+
+  if(pv==='splits'){ h+=renderSplitsBoard(); }
 
   if(pv==='bets'){
   // ── Qualifying Plays Queue ──
@@ -7107,6 +7111,54 @@ function renderMarketValidation(bt){
   });
   h+='<div style="font-size:7px;color:var(--muted);margin-top:2px">Green light = positive CLV + >50% beat-close on 25+ clean records. Updates automatically as plays grade.</div>';
   h+='</div>';
+  return h;
+}
+// Live betting splits (public %) + per-book line board, per game.
+function renderSplitsBoard(){
+  var b=state.agentsSplitsBoard;
+  var fa=function(v){return v==null?'—':(v>0?'+'+v:''+v)};
+  var h='<div style="background:rgba(230,187,70,.07);border:1px solid var(--leather);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">📊 SPLITS & PER-BOOK LINES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Public betting % (tickets vs money, market-wide — per-book splits aren\'t public) and every book\'s live number side by side. Green = best price.</div></div>';
+  if(!b||!b.games||!b.games.length){ return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No slate loaded. Lines appear here once games are in the next-36h window.</div>'; }
+  b.games.slice(0,40).forEach(function(g){
+    var live=g.live;
+    h+='<div class="card" style="padding:10px 12px;margin:0 0 9px'+(live?';border-left:3px solid var(--wine)':'')+'">';
+    h+='<div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(g.matchup||'')+(live?liveTag():'')+'</div>';
+    var gt=g.commence_time&&!live?(function(){try{return new Date(g.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}catch(e){return ''}})():'';
+    if(gt)h+='<div style="font-size:8px;color:var(--brass);margin-top:1px">🕒 '+esc(gt)+'</div>';
+    // Public splits
+    if(g.splits&&g.splits.length){
+      h+='<div style="margin-top:6px">';
+      g.splits.forEach(function(s){
+        var div=s.divergence;var sharp=(div!=null&&div<=-5)?' · <span style="color:#34d399">sharp OFF this side</span>':(div!=null&&div>=5)?' · <span style="color:#34d399">money agrees</span>':'';
+        h+='<div style="font-size:9px;color:var(--cream);margin-top:2px"><span style="color:var(--leather);text-transform:uppercase">'+esc(s.market||'')+'</span> '+esc(s.side||'')+' · <span style="font-family:var(--M)">'+(s.bets_pct!=null?s.bets_pct+'% bets':'')+(s.handle_pct!=null?' / '+s.handle_pct+'% money':'')+'</span>'+(s.rlm?' <span style="color:var(--wine);font-weight:700">RLM</span>':'')+sharp+'</div>';
+      });
+      h+='</div>';
+    } else { h+='<div style="font-size:8px;color:var(--muted);font-style:italic;margin-top:5px">No public-split data for this game yet.</div>'; }
+    // Per-book line board
+    var bk=g.books||[];
+    if(bk.length){
+      var maxA=Math.max.apply(null,bk.map(function(x){return x.ml_away!=null?x.ml_away:-1e9}));
+      var maxH=Math.max.apply(null,bk.map(function(x){return x.ml_home!=null?x.ml_home:-1e9}));
+      var maxO=Math.max.apply(null,bk.map(function(x){return x.over_price!=null?x.over_price:-1e9}));
+      var maxU=Math.max.apply(null,bk.map(function(x){return x.under_price!=null?x.under_price:-1e9}));
+      var g1='#34d399';
+      h+='<div style="overflow-x:auto;margin-top:7px"><table style="width:100%;border-collapse:collapse;font-family:var(--M);font-size:8.5px">';
+      h+='<tr style="color:var(--leather);text-align:right"><th style="text-align:left;font-weight:600">Book</th><th>'+esc(g.away||'A')+'</th><th>'+esc(g.home||'H')+'</th><th>Spread</th><th>O</th><th>U</th></tr>';
+      bk.forEach(function(x){
+        h+='<tr style="color:var(--cream);text-align:right;border-top:1px solid rgba(255,255,255,.04)">';
+        h+='<td style="text-align:left;color:var(--dim)">'+esc(x.book||'')+'</td>';
+        h+='<td'+(x.ml_away===maxA&&x.ml_away!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_away)+'</td>';
+        h+='<td'+(x.ml_home===maxH&&x.ml_home!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_home)+'</td>';
+        h+='<td>'+(x.spread_line!=null?(x.spread_line>0?'+'+x.spread_line:x.spread_line)+' '+fa(x.spread_price):'—')+'</td>';
+        h+='<td'+(x.over_price===maxO&&x.over_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+(x.total_line!=null?x.total_line+' ':'')+fa(x.over_price)+'</td>';
+        h+='<td'+(x.under_price===maxU&&x.under_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.under_price)+'</td>';
+        h+='</tr>';
+      });
+      h+='</table></div>';
+    }
+    h+='</div>';
+  });
+  h+='<div style="height:8px"></div>';
   return h;
 }
 // Per-signal CLV scorecard — which signal TYPES actually beat the close.
