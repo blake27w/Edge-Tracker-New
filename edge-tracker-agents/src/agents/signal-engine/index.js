@@ -294,7 +294,11 @@ async function run() {
 
   for (const p of newAlerts) {
     if (p.observational) continue; // probation totals are graded but not real-stake — don't push alerts
-    const body = `🟢 ${p.sport} ${p.matchup} — ${p.side} ${p.line ?? ''} (${Math.round(p.score)} conf, ${p.tier}/$${p.unit_dollars}, ${p.t1_count} T1)`;
+    // Actionable one-liner: LIVE flag first (most time-sensitive), the side +
+    // line + price to bet, then the matchup and conviction.
+    const lv = p.live ? '🔴 LIVE — ' : '';
+    const pr = p.price != null ? ` ${p.price > 0 ? '+' + p.price : p.price}` : '';
+    const body = `${lv}🟢 BET ${p.sport}: ${p.side} ${p.line ?? ''}${pr} — ${p.matchup} · ${Math.round(p.score)} conf, ${p.t1_count} T1, ${p.tier}/$${p.unit_dollars}`;
     try {
       const r = await notifyAll(`Edge Tracker play: ${p.sport} ${p.side}`, body);
       await db.insert('alert_log', { type: r.email && !r.sms ? 'email' : 'sms', channel: 'signal', recipients: r.total, body, sport: p.sport, game_id: p.game_id, status: 'sent' });
