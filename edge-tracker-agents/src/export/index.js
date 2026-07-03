@@ -5,6 +5,7 @@
 // ══════════════════════════════════════════════════════════════
 import ExcelJS from 'exceljs';
 import db from '../db/index.js';
+import { getBacktest } from '../store/index.js';
 
 const MAXROW = 5000; // cap big tables so the file stays openable
 
@@ -54,6 +55,8 @@ function summarySheet(wb, plays) {
   head('Overall record');
   ws.addRow(['Wins', wins]); ws.addRow(['Losses', losses]); ws.addRow(['Pushes', pushes]);
   ws.addRow(['Pending', pending]);
+  ws.addRow(['Observational graded (excluded from headline)', graded.filter((p) => p.observational).length]);
+  ws.addRow(['Live (in-game) graded', graded.filter((p) => p.live).length]);
   ws.addRow(['Win %', graded.length ? `${((wins / (wins + losses || 1)) * 100).toFixed(1)}%` : '—']);
   ws.addRow(['Net units', Math.round(units * 100) / 100]);
   ws.addRow(['Net P&L ($)', Math.round(pnl * 100) / 100]);
@@ -83,6 +86,30 @@ function summarySheet(wb, plays) {
   return ws;
 }
 
+// Research Findings — the documented conclusions from our backtests/research
+// scripts, with the numbers. Update when a new script run changes a verdict.
+function findingsSheet(wb) {
+  const ws = wb.addWorksheet('Research Findings');
+  ws.columns = [{ header: 'Topic', width: 26 }, { header: 'Finding', width: 95 }, { header: 'Source', width: 26 }];
+  const rows = [
+    ['Key numbers (NFL)', 'Measured margin-landing % (2025, n=271): 3→15.1, 7→9.6, 4→5.5, 6→4.1, 14→4.1, 10→3.7, 17→5.9 (long-run ~3.3). The 4 outlands 6/10/14. Key-number EVs now use these.', 'nfl-backtest.js'],
+    ['Power ratings', 'Frozen preseason Elo graded 56.8% straight-up vs a 62-67% floor — it never learned. Fixed: nfl-power now updates weekly from finals in-season.', 'nfl-backtest.js'],
+    ['NFL scoring model', '24/39 (61.5%) total leans vs reality — above breakeven but not significant, and untested vs the close. Stays Tier-3 until CLV proves it.', 'nfl-backtest.js'],
+    ['Prop baselines', 'Prior-year volume is reference-only: best market pass yds (77% within ±25% = ±57 yds — not line precision). Rush/rec yardage baselines weak (35-38%). Never wired as a signal.', 'nfl-props-backtest.js'],
+    ['Prop market stability', 'Yardage props are near-random game to game (rush/rec yds CV ~81%); pass yds (35%) and volume stats (52-55%) are the model-trustable markets. Prop flags require 3+ books.', 'nfl-props-backtest.js'],
+    ['Rolling-usage model', 'KILLED by data before building: usage shifts do not persist (receptions 48%, rush att 55%). Books are right to be slow on usage changes.', 'nfl-props-backtest.js'],
+    ['Offense style', 'Position shares persist year-over-year (TE r=.60, WR .46, RB .41) — projectable. Pace does NOT (r=.01). Player concentration barely (WR1 .33, RB1 .21).', 'nfl-style-research.js'],
+    ['Defensive funnels', 'Real within a season, perishable across seasons (r≈.25). Recomputed in-season only by nfl-style; never carried across years.', 'nfl-style-research.js'],
+    ['Totals market', 'LOSING on both results and CLV (81-79-2, -4.5% ROI; 13.6% beat close). On probation/observational — do not bet totals.', 'live record + CLV'],
+    ['Core thesis', 'Prediction models keep grading mediocre; price/speed mechanisms keep surviving. The edge is price + speed + discipline, validated by CLV — not out-predicting the market.', 'all of the above'],
+  ];
+  for (const r of rows) ws.addRow(r);
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  for (let i = 2; i <= ws.rowCount; i++) ws.getRow(i).alignment = { wrapText: true, vertical: 'top' };
+  return ws;
+}
+
 export async function buildWorkbook() {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Edge Tracker Agents';
@@ -91,6 +118,22 @@ export async function buildWorkbook() {
   const plays = await grab('monitor_scores', { order: { column: 'scored_at', ascending: false }, limit: MAXROW });
 
   summarySheet(wb, plays);
+  findingsSheet(wb);
+
+  // Live analysis from the backtest agent (in-memory): validation + scorecard.
+  const bt = getBacktest();
+  if (bt && bt.marketValidation) {
+    addSheet(wb, 'Market Validation', bt.marketValidation.map((m) => ({
+      market: m.market, verdict: m.verdict, graded: m.n, record: `${m.w}-${m.l}-${m.p}`, win_pct: m.winPct,
+      roi_pct: m.roi, clv_records: m.clvN, avg_clv: m.avgClv, beat_close_pct: m.beatPct,
+    })), ['market', 'verdict']);
+  }
+  if (bt && bt.signalClv && bt.signalClv.length) {
+    addSheet(wb, 'Signal CLV Scorecard', bt.signalClv.map((s) => ({
+      signal: s.label, plays_tracked: s.n, beat_close_pct: s.beatPct, avg_clv: s.avgClv,
+      graded: s.graded, win_pct: s.winPct, roi_pct: s.roi, flagged_for_removal: s.flag ? 'YES' : '',
+    })), ['signal']);
+  }
 
   // Curated Plays sheet (readable column order).
   addSheet(wb, 'Plays', plays, [
@@ -121,7 +164,33 @@ export async function buildWorkbook() {
   addSheet(wb, 'Agent Runs', await grab('scan_runs', { order: { column: 'started_at', ascending: false }, limit: 1000 }),
     ['started_at', 'agent', 'status', 'duration_ms', 'games_monitored', 'result', 'error']);
   addSheet(wb, 'Odds Snapshots', await grab('line_snapshots', { order: { column: 'fetched_at', ascending: false }, limit: MAXROW }),
-    ['fetched_at', 'sport', 'away', 'home', 'book', 'market', 'side', 'line', 'price']);
+    ['fetched_at', 'sport', 'away', 'home', 'book', 'market', 'side', 'line', 'price', 'last_update']);
+
+  // This week's research + scanner layers.
+  addSheet(wb, 'Opportunities Graded', await grab('opp_results', { order: { column: 'graded_at', ascending: false }, limit: MAXROW }),
+    ['graded_at', 'type', 'sport', 'matchup', 'market', 'side', 'line', 'price', 'status', 'pnl', 'detail']);
+  addSheet(wb, 'Book Edge Log', await grab('book_edge_log', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'type', 'sport', 'book', 'market', 'side', 'consensus_line', 'outlier_line', 'pts', 'price', 'corrected_at', 'window_sec']);
+  addSheet(wb, 'Public Fades', await grab('public_fades', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'sport', 'matchup', 'market', 'public_side', 'fade_side', 'bets_pct', 'handle_pct', 'divergence', 'rlm', 'score', 'reasons']);
+  addSheet(wb, 'Exchange Edges', await grab('pred_market_edges', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'sport', 'matchup', 'side', 'price', 'exch_prob', 'book_prob', 'edge_pct', 'source', 'vol']);
+  addSheet(wb, 'Umpire Tendencies', await grab('umpire_runs', { order: { column: 'run_index', ascending: false }, limit: MAXROW }),
+    ['umpire', 'games', 'avg_runs', 'run_index', 'league_avg', 'updated_at']);
+  addSheet(wb, 'Pitcher Changes', await grab('pitcher_changes', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'matchup', 'team', 'old_pitcher', 'new_pitcher', 'old_era', 'new_era', 'lean']);
+  addSheet(wb, 'Weather Shifts', await grab('weather_changes', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'sport', 'matchup', 'lean', 'first_wind', 'cur_wind', 'opener_total', 'cur_total', 'note']);
+  addSheet(wb, 'NFL QB Status', await grab('nfl_qb_status', { order: { column: 'detected_at', ascending: false }, limit: MAXROW }),
+    ['detected_at', 'team', 'player', 'old_status', 'new_status']);
+  addSheet(wb, 'Prop Flags', await grab('prop_snapshots', { order: { column: 'fetched_at', ascending: false }, limit: MAXROW }),
+    ['fetched_at', 'sport', 'player', 'stat_type', 'side', 'line', 'price', 'book', 'trigger']);
+  addSheet(wb, 'NFL Power', await grab('nfl_power_ratings', { order: { column: 'rating', ascending: false }, limit: MAXROW }),
+    ['season', 'team', 'rating', 'end_of_season', 'notes', 'updated_at']);
+  addSheet(wb, 'NFL Win Totals', await grab('nfl_win_totals', { order: { column: 'edge', ascending: false }, limit: MAXROW }),
+    ['season', 'team', 'posted_total', 'model_wins', 'edge', 'side', 'fair_over_pct']);
+  addSheet(wb, 'NFL Pace Map', await grab('nfl_pace', { order: { column: 'lean', ascending: true }, limit: MAXROW }),
+    ['season', 'team', 'pace', 'pass', 'lean', 'updated_at']);
 
   return wb;
 }
