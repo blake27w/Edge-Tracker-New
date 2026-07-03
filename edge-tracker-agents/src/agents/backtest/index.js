@@ -130,7 +130,7 @@ const SIG_LABELS = {
   under_bias: 'Structural Under bias', weather_mild: 'Mild wind', ev: '+EV vs fair', weighin: 'Weigh-in news',
   umpire: 'Umpire Under', umpire_over: 'Umpire Over', pitcher_change: 'SP change Under', pitcher_change_over: 'SP change Over',
   bullpen_fatigue: 'Gassed bullpen Over', exchange: 'Exchange edge (Poly/Kalshi)',
-  nfl_env: 'NFL scoring model', nfl_pace: 'NFL pace map',
+  nfl_env: 'NFL scoring model', nfl_pace: 'NFL pace map', qb_change: 'QB change cascade',
 };
 
 // PER-SIGNAL CLV SCORECARD — the key analytic: which signal TYPES actually beat
