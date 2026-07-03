@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-title" content="Edge Tracker">
 <meta name="theme-color" content="#0b1422">
 <title>Edge Tracker</title>
+<!-- Warm the backend connection (DNS+TLS) while the page parses — shaves the first fetch. -->
+<link rel="preconnect" href="https://edge-tracker-new-production.up.railway.app" crossorigin>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icon-192.png">
@@ -5832,35 +5834,9 @@ function agentStatus(run,name){
 }
 
 // ── Load data from Supabase (+ optional backend) ──
-function loadAgentsData(){
-  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')};
-  var rerender=function(){if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
-  var tasks=[];
-  // Supabase reads
-  if(SB.url&&SB.key){
-    tasks.push(SB.api('/scan_runs?select=*&order=started_at.desc&limit=120','GET').then(function(r){return {scan:r}}).catch(function(){return {scan:null}}));
-    tasks.push(SB.api('/monitor_scores?select=*&qualified=eq.true&status=eq.pending&order=score.desc&limit=60','GET').then(function(r){return {plays:r}}).catch(function(){return {plays:null}}));
-    tasks.push(SB.api('/alert_log?select=*&order=sent_at.desc&limit=60','GET').then(function(r){return {alerts:r}}).catch(function(){return {alerts:null}}));
-    tasks.push(SB.api('/api_usage?select=*&order=updated_at.desc&limit=1','GET').then(function(r){return {usage:r}}).catch(function(){return {usage:null}}));
-    var _d0=new Date();_d0.setHours(0,0,0,0);
-    tasks.push(SB.api('/monitor_scores?select=status&qualified=eq.true&scored_at=gte.'+encodeURIComponent(_d0.toISOString()),'GET').then(function(r){return {today:r}}).catch(function(){return {today:null}}));
-  }
-  // Optional backend
-  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
-  if(api){
-    tasks.push(fetch(api+'/health').then(function(r){return r.json()}).then(function(j){return {beHealth:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/plays').then(function(r){return r.json()}).then(function(j){return {bePlays:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/data-health').then(function(r){return r.json()}).then(function(j){return {beDataHealth:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/splits').then(function(r){return r.json()}).then(function(j){return {beSplits:j}}).catch(function(){return {}}));
-    tasks.push(fetch(api+'/research').then(function(r){return r.json()}).then(function(j){return {beResearch:j}}).catch(function(){return {}}));
-  }
-  if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())rerender();return}
-
-  state.agentsError=null;
-  return Promise.all(tasks).then(function(res){
-    var bag={};res.forEach(function(o){Object.assign(bag,o)});
+// Apply a fetched (or cached) data bag to state. Shared by the live loader and
+// the startup cache hydration so the app paints instantly on open.
+function applyAgentsBag(bag){
     // Health: prefer backend live statuses; else derive from scan_runs latest-per-agent
     var health;
     if(bag.beHealth&&bag.beHealth.agents){
@@ -5916,13 +5892,58 @@ function loadAgentsData(){
       feed.sort(function(a,b){return new Date(b.ts)-new Date(a.ts)});
       state.agentsFeed=feed.slice(0,100);
     }
+}
+// Instant open: hydrate state from the last successful load (localStorage) so
+// the app paints immediately with recent data; the live fetch replaces it.
+function hydrateAgentsCache(){
+  if(state._cacheHydrated)return false;
+  state._cacheHydrated=true;
+  try{
+    var c=JSON.parse(localStorage.getItem('etBagCache')||'null');
+    if(c&&c.bag){applyAgentsBag(c.bag);state.agentsCachedAt=c.at||null;return true}
+  }catch(_){}
+  return false;
+}
+function loadAgentsData(){
+  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')};
+  var rerender=function(){if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
+  var tasks=[];
+  // Supabase reads
+  if(SB.url&&SB.key){
+    tasks.push(SB.api('/scan_runs?select=*&order=started_at.desc&limit=120','GET').then(function(r){return {scan:r}}).catch(function(){return {scan:null}}));
+    tasks.push(SB.api('/monitor_scores?select=*&qualified=eq.true&status=eq.pending&order=score.desc&limit=60','GET').then(function(r){return {plays:r}}).catch(function(){return {plays:null}}));
+    tasks.push(SB.api('/alert_log?select=*&order=sent_at.desc&limit=60','GET').then(function(r){return {alerts:r}}).catch(function(){return {alerts:null}}));
+    tasks.push(SB.api('/api_usage?select=*&order=updated_at.desc&limit=1','GET').then(function(r){return {usage:r}}).catch(function(){return {usage:null}}));
+    var _d0=new Date();_d0.setHours(0,0,0,0);
+    tasks.push(SB.api('/monitor_scores?select=status&qualified=eq.true&scored_at=gte.'+encodeURIComponent(_d0.toISOString()),'GET').then(function(r){return {today:r}}).catch(function(){return {today:null}}));
+  }
+  // Optional backend
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+  if(api){
+    tasks.push(fetch(api+'/health').then(function(r){return r.json()}).then(function(j){return {beHealth:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/plays').then(function(r){return r.json()}).then(function(j){return {bePlays:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/feed').then(function(r){return r.json()}).then(function(j){return {beFeed:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/budget').then(function(r){return r.json()}).then(function(j){return {beBudget:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/data-health').then(function(r){return r.json()}).then(function(j){return {beDataHealth:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/splits').then(function(r){return r.json()}).then(function(j){return {beSplits:j}}).catch(function(){return {}}));
+    tasks.push(fetch(api+'/research').then(function(r){return r.json()}).then(function(j){return {beResearch:j}}).catch(function(){return {}}));
+  }
+  if(!tasks.length){state.agentsError='Connect Supabase (or set a backend URL) to see agent data.';if(onView())rerender();return}
+
+  state.agentsError=null;
+  return Promise.all(tasks).then(function(res){
+    var bag={};res.forEach(function(o){Object.assign(bag,o)});
+    applyAgentsBag(bag);
     state.agentsLastLoad=new Date().toISOString();
+    // Persist for instant paint on next open (best-effort; quota errors ignored).
+    try{localStorage.setItem('etBagCache',JSON.stringify({at:Date.now(),bag:bag}))}catch(_){}
     if(onView())rerender();
   });
 }
 
 function renderAgentsView(){
   startAgentsPoll();
+  hydrateAgentsCache(); // paint the last-known data instantly; live fetch replaces it
   // First entry: kick a load if we have nothing yet.
   if(!state.agentsLastLoad&&!state.agentsLoading){state.agentsLoading=true;Promise.resolve(loadAgentsData()).then(function(){state.agentsLoading=false})}
   renderAgentsContent();
@@ -5964,6 +5985,7 @@ function renderClvDashboard(){
 
 function renderResultsView(){
   startAgentsPoll();
+  hydrateAgentsCache(); // paint the last-known data instantly; live fetch replaces it
   if(!state.agentsLastLoad&&!state.agentsLoading){state.agentsLoading=true;Promise.resolve(loadAgentsData()).then(function(){state.agentsLoading=false})}
   renderResultsContent();
 }
@@ -5971,7 +5993,7 @@ function renderResultsContent(){
   var h='';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
   h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">✅ TRACK RECORD</div>';
-  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
+  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):(state.agentsCachedAt?'refreshing…':'loading…'))+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
   h+='<div style="font-size:9px;color:var(--muted);font-style:italic;margin-bottom:12px">Every system play after grading — overall record, what works by signal/sport/tier, opportunity-scanner hit rates, and recent results. Your own logged bets are under My Stats.</div>';
   if(state.agentsError){h+='<div class="card" style="text-align:center;font-size:11px;color:var(--muted);font-style:italic">'+state.agentsError+'</div>';$('sport-selector').innerHTML=h;return;}
@@ -6011,7 +6033,7 @@ function renderAgentsContent(){
   var onPlays=state.homeTab==='plays';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
   h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">'+(onPlays?'🎯 PLAYS & SIGNALS':'🤖 AGENT CONTROL')+'</div>';
-  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):'loading…')+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
+  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):(state.agentsCachedAt?'refreshing…':'loading…'))+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
   h+='</div>';
 
   // One-click export → opens the backend /export (downloads .xlsx for Excel/Sheets).
