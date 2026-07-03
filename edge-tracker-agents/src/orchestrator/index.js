@@ -52,6 +52,7 @@ import nflLineMove from '../agents/nfl-line-move/index.js';
 import nflDerivatives from '../agents/nfl-derivatives/index.js';
 import nflPace from '../agents/nfl-pace/index.js';
 import nflQb from '../agents/nfl-qb/index.js';
+import nflStyle from '../agents/nfl-style/index.js';
 import predMarket from '../agents/pred-market/index.js';
 import mlbUmpire from '../agents/mlb-umpire/index.js';
 import mlbLineup from '../agents/mlb-lineup/index.js';
@@ -67,7 +68,7 @@ const AGENTS = [
   tennisIngest, tennisFatigue, tennisSurface, tennisSignal, tennisClose,
   evScanner, arbScanner, backtest, staleLine, sharpDivergence, keyNumber, fairLine,
   oppGrading, bookEdges, combatMarket, combatWeighin, combatSignal, combatDerivatives,
-  publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, nflInactives, nflLineMove, nflDerivatives, nflPace, nflQb, predMarket, watchdog, digest,
+  publicFade, nflPower, nflWinTotals, nflSchedule, nflProps, nflTotals, nflInactives, nflLineMove, nflDerivatives, nflPace, nflQb, nflStyle, predMarket, watchdog, digest,
 ];
 
 // name -> live status (the /health payload reads from here).

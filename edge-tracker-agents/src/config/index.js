@@ -147,6 +147,8 @@ const AGENT_DEFS = {
   'nfl-pace': { label: 'NFL Coaching/Pace', emoji: '⏱️', min: 1440 },
   // QB-status speed monitor (free ESPN injuries; dormant outside Aug–Feb).
   'nfl-qb': { label: 'NFL QB Status Watch', emoji: '🎯', min: 20 },
+  // Measured style fingerprints + defensive funnels (free ESPN box scores).
+  'nfl-style': { label: 'NFL Style & Funnels', emoji: '🎛️', min: 1440 },
   // MLB home-plate umpire totals tendency (self-learned, free StatsAPI).
   'mlb-umpire': { label: 'MLB Umpire Totals', emoji: '⚾', min: 360 },
   // MLB late starting-pitcher scratch monitor (speed edge, free StatsAPI).
