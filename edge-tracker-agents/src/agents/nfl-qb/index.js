@@ -13,7 +13,7 @@
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
-import { setIntel } from '../../store/index.js';
+import { getGames, setIntel } from '../../store/index.js';
 
 const URL = process.env.NFL_INJURY_URL || 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries';
 const lastStatus = new Map(); // player name -> status
@@ -54,6 +54,14 @@ async function run() {
 
   const qbs = rows.filter((r) => /^QB$/i.test(r.position));
   const now = new Date().toISOString();
+  // Map a team name to its NFL game on the slate, so a QB change can trigger a
+  // prop scan of that specific game (the biggest prop cascade in the sport).
+  const teamGame = (team) => {
+    const t = String(team || '').toLowerCase();
+    if (!t) return null;
+    const g = getGames().find((x) => x.sport === 'NFL' && (String(x.home).toLowerCase().includes(t) || t.includes(String(x.home).toLowerCase()) || String(x.away).toLowerCase().includes(t) || t.includes(String(x.away).toLowerCase())));
+    return g ? g.game_id : null;
+  };
   const changes = [];
   for (const q of qbs) {
     const prev = lastStatus.get(q.player);
@@ -62,8 +70,10 @@ async function run() {
     changes.push({ team: q.team, player: q.player, old_status: prev, new_status: q.status, detected_at: now });
   }
 
-  // Publish the current QB injury board (reference) + persist/alert changes.
+  // Publish the current QB injury board (reference), the changes (prop-engine
+  // reads these as scan triggers), + persist/alert changes.
   setIntel('qbWatch', qbs.map((q) => ({ team: q.team, player: q.player, status: q.status })));
+  setIntel('qbChanges', changes.map((c) => ({ ...c, game_id: teamGame(c.team) })).filter((c) => c.game_id));
   if (changes.length) {
     try { await db.insert('nfl_qb_status', changes); } catch (e) { logger.warn('nfl-qb', e.message); }
     for (const c of changes) {

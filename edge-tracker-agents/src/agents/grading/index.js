@@ -73,6 +73,7 @@ const STAT = {
   player_pass_yds: { labels: ['YDS'], category: 'passing' },
   player_rush_yds: { labels: ['YDS'], category: 'rushing' },
   player_reception_yds: { labels: ['YDS'], category: 'receiving' },
+  player_receptions: { labels: ['REC'], category: 'receiving' },
   batter_hits: { labels: ['H'], category: 'batting' },
   pitcher_strikeouts: { labels: ['K', 'SO'], category: 'pitching' },
 };
