@@ -756,6 +756,17 @@ create table if not exists pitcher_changes (
 );
 create index if not exists pitcher_changes_idx on pitcher_changes (detected_at desc);
 
+-- ── NFL QB status changes (speed edge; biggest line-mover in the sport) ──
+create table if not exists nfl_qb_status (
+  id          uuid primary key default gen_random_uuid(),
+  team        text,
+  player      text,
+  old_status  text,
+  new_status  text,
+  detected_at timestamptz not null default now()
+);
+create index if not exists nfl_qb_status_idx on nfl_qb_status (detected_at desc);
+
 -- ── Weather-shift vs stale total (speed edge) ───────────────────────
 create table if not exists weather_changes (
   id           uuid primary key default gen_random_uuid(),

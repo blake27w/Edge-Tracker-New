@@ -30,7 +30,7 @@
 import config, { unitFor } from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger, notifyAll } from '../../utils/index.js';
-import { getGames, getPower, signalsForGame, setPlays, getPredMarket, getBacktest } from '../../store/index.js';
+import { getGames, getPower, signalsForGame, setPlays, getPredMarket, getBacktest, getNflTotals, getNflPace } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 
 // Fight sports are excluded from the team engine until they get a dedicated model.
@@ -142,6 +142,17 @@ function collectSignals(game, market, side, intel, power, exchange) {
 
   // ── Tier 3: confirmation only ──
   if (isTotal && under) add(3, 'under_bias', 'Structural Under edge (public over-bets Overs)');
+  // NFL model leans (scoring environment + curated pace map) — CONFIRMATION
+  // only, never qualifies a play; promoted only if their per-signal CLV proves
+  // they beat the close (same rule as every model lean).
+  if (isTotal && game.sport === 'NFL') {
+    const nt = getNflTotals();
+    const tl = nt && (nt.leans || []).find((l) => l.game_id === game.game_id);
+    if (tl && ((tl.side === 'Under') === under)) add(3, 'nfl_env', `Scoring model ${tl.side} (proj ${tl.proj} vs ${tl.posted})`);
+    const np = getNflPace();
+    const pl = np && (np.live || []).find((l) => l.game_id === game.game_id);
+    if (pl && ((pl.lean === 'under') === under)) add(3, 'nfl_pace', `Pace map leans ${pl.lean === 'under' ? 'Under' : 'Over'}`);
+  }
 
   // Exchange (Polymarket/Kalshi) edge — ML only, supporting. Recorded always so
   // its CLV accrues; adds points (Tier 2) ONLY once it's proven to beat the

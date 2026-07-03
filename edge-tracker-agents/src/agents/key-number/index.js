@@ -14,6 +14,12 @@ import { fmtOdds } from '../shared/odds-math.js';
 const FOOTBALL = new Set(['NFL', 'NCAAF']);
 // Keys in priority order; importance drives sort + display.
 const KEYS = [{ k: 3, imp: 'high' }, { k: 7, imp: 'high' }, { k: 6, imp: 'med' }, { k: 10, imp: 'med' }, { k: 14, imp: 'med' }, { k: 4, imp: 'med' }];
+// Long-run share (%) of NFL games whose final margin lands EXACTLY on each
+// number — well-established public constants; run scripts/nfl-backtest.js to
+// recalibrate from last season's finals. Crossing a key is worth roughly HALF
+// its landing frequency in win probability (the push flips to a win/loss on
+// one side of the number), so ev_pct ≈ LAND_PCT/2.
+const LAND_PCT = { 3: 15, 7: 9, 6: 5.5, 10: 5, 14: 4.5, 4: 4.5 };
 const MIN_BOOKS = 3;
 
 function collect(game, team) {
@@ -51,7 +57,8 @@ async function run() {
     for (const { k, imp } of KEYS) {
       if (favPts < k && consPts >= k) {
         rows.push({ sport: g.sport, game_id: g.game_id, commence_time: g.commence_time, matchup: `${g.away} @ ${g.home}`,
-          side: favTeam, role: 'fav', book: bestFav.book, line: bestFav.line, consensus: consH, key: k, importance: imp, price: bestFav.price });
+          side: favTeam, role: 'fav', book: bestFav.book, line: bestFav.line, consensus: consH, key: k, importance: imp,
+          ev_pct: Math.round((LAND_PCT[k] || 3) * 5) / 10, price: bestFav.price });
         break;
       }
     }
@@ -59,14 +66,15 @@ async function run() {
     for (const { k, imp } of KEYS) {
       if (dogPts > k && consPts <= k) {
         rows.push({ sport: g.sport, game_id: g.game_id, commence_time: g.commence_time, matchup: `${g.away} @ ${g.home}`,
-          side: dogTeam, role: 'dog', book: bestDog.book, line: bestDog.line, consensus: -consH, key: k, importance: imp, price: bestDog.price });
+          side: dogTeam, role: 'dog', book: bestDog.book, line: bestDog.line, consensus: -consH, key: k, importance: imp,
+          ev_pct: Math.round((LAND_PCT[k] || 3) * 5) / 10, price: bestDog.price });
         break;
       }
     }
   }
 
-  const rank = { high: 0, med: 1 };
-  rows.sort((a, b) => (rank[a.importance] - rank[b.importance]) || (b.key - a.key));
+  // Rank by what the half-point is actually WORTH (win-prob %), not just label.
+  rows.sort((a, b) => (b.ev_pct || 0) - (a.ev_pct || 0) || (b.key - a.key));
   setKeyNumbers(rows);
 
   if (rows.length) {
@@ -75,7 +83,7 @@ async function run() {
       await db.insert('line_signals', rows.map((r) => ({
         type: 'key', sport: r.sport, game_id: r.game_id, matchup: r.matchup, market: 'spread',
         side: r.side, book: r.book, line: r.line, consensus: r.consensus, pts: r.key, aligned: r.importance === 'high',
-        detail: `${r.side} ${r.line > 0 ? '+' + r.line : r.line} @ ${r.book} crosses key ${r.key} (field ${r.consensus > 0 ? '+' + r.consensus : r.consensus}, ${fmtOdds(r.price)})`, fetched_at: now,
+        detail: `${r.side} ${r.line > 0 ? '+' + r.line : r.line} @ ${r.book} crosses key ${r.key} (~+${r.ev_pct}% win prob; field ${r.consensus > 0 ? '+' + r.consensus : r.consensus}, ${fmtOdds(r.price)})`, fetched_at: now,
       })));
     } catch (e) { logger.warn('key-number', e.message); }
   }

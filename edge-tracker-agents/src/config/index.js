@@ -145,6 +145,8 @@ const AGENT_DEFS = {
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
   'nfl-derivatives': { label: 'NFL Derivatives (team totals)', emoji: '🧩', min: 20 },
   'nfl-pace': { label: 'NFL Coaching/Pace', emoji: '⏱️', min: 1440 },
+  // QB-status speed monitor (free ESPN injuries; dormant outside Aug–Feb).
+  'nfl-qb': { label: 'NFL QB Status Watch', emoji: '🎯', min: 20 },
   // MLB home-plate umpire totals tendency (self-learned, free StatsAPI).
   'mlb-umpire': { label: 'MLB Umpire Totals', emoji: '⚾', min: 360 },
   // MLB late starting-pitcher scratch monitor (speed edge, free StatsAPI).
