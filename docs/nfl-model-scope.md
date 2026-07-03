@@ -33,8 +33,20 @@ line-vs-public. Under bias applies to totals.
   promoted only if the per-signal CLV scorecard shows it beats the close.
 
 ## Next up (recommended order)
-1. Wire `nfl-totals` projection into the signal engine as a T3 totals
-   confirmation once NFL games are on the slate (currently reference-only).
-2. Injury/inactives-speed (#9) — high-value, reliable ESPN data.
-3. Key-number EV quantification (#5 enhancement).
-4. Derivative ingestion (#10) — only if the credit budget allows.
+1. ✅ Wired: `nfl-totals` + `nfl-pace` leans → signal engine as T3 confirmation.
+2. ✅ Built: injury/inactives-speed (#9) + QB-status monitor (`nfl-qb`).
+3. ✅ Built: key-number EV quantification (#5), calibrated from 2025 finals.
+4. Derivative ingestion (#10) — flip on at Week 1 under the credit governor.
+
+## Props model backtest findings (2025 season, scripts/nfl-props-backtest.js)
+- **Baselines are reference-only, permanently.** Prior-year volume predicts
+  early-season output too loosely to price lines (best market: pass yds, 77%
+  within ±25% — i.e. ±57 yds). Never wire baselines as a scored signal.
+- **Yardage props are near-random game to game** (rush/rec yds CV ~81%);
+  pass yds (35%) and volume stats (52-55%) are the model-trustable markets.
+  Prop flags now require 3+ books for a real consensus.
+- **Rolling-usage model: KILLED by the data.** Usage shifts do NOT persist
+  (receptions 48%, rush att 55% — at/below the validation bar). Books are
+  right to be slow on usage changes; there is no edge there. Do not build.
+- The prop edge remains PRICE (stale book vs 3+-book consensus at trigger
+  moments) validated live via prop close-capture → CLV, not prediction.

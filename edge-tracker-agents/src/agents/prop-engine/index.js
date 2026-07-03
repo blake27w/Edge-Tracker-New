@@ -84,7 +84,9 @@ function flagEdges(data, sport, game) {
   const sportThr = LINE_EDGE[sport];
   const edges = [];
   for (const [key, rows] of groups) {
-    if (rows.length < 2) continue;
+    // 3+ books required: prop lines are volatile (yardage CV ~80%, per the 2025
+    // props backtest), so a 2-book "consensus" is just disagreement, not a market.
+    if (rows.length < 3) continue;
     const [player, market, side] = key.split('|');
     const thr = (sportThr && typeof sportThr === 'object' ? sportThr[market] : sportThr) || 0.5;
     const med = median(rows.map((r) => r.line));
