@@ -6282,6 +6282,10 @@ function renderAgentsContent(){
   var wt=state.agentsNflWinTotals||[],nsch=state.agentsNflSchedule||[],npr=state.agentsNflProps||[],nia=state.agentsNflInactives||[];
   h+='<div style="background:rgba(230,187,70,.1);border:1px solid var(--brass);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">🏈 NFL PREP — OFFSEASON</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Win-totals model vs posted, situational schedule spots, and prior-year prop workload baselines. Reference / observational — graded once the season runs.</div></div>';
 
+  // Team schedules & standings (lazy-loaded on first open).
+  h+='<div class="card" style="padding:10px 13px;margin:0 0 10px;cursor:pointer" onclick="nflBoardToggle()"><div style="font-family:var(--H);font-size:10px;letter-spacing:1px;color:var(--brass);font-weight:600">📅 TEAM SCHEDULES & STANDINGS '+(state.nflBoardOpen?'▾':'▸')+'</div></div>';
+  if(state.nflBoardOpen)h+=renderNflBoard();
+
   // Live inactives-speed (only shows in-season, near kickoff; dormant otherwise).
   if(nia.length){
     h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🚑 INACTIVES — KEY OUT NEAR KICKOFF</div>';
@@ -7182,6 +7186,60 @@ function renderSplitsBoard(){
     h+='</div>';
   });
   h+='<div style="height:8px"></div>';
+  return h;
+}
+// ── NFL team schedules & standings (lazy-loaded from /nfl-board) ──
+function nflBoardToggle(){
+  state.nflBoardOpen=!state.nflBoardOpen;
+  if(state.nflBoardOpen&&!state.nflBoard&&!state.nflBoardLoading){
+    state.nflBoardLoading=true;
+    var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+    fetch(api+'/nfl-board').then(function(r){return r.json()}).then(function(j){state.nflBoard=j;state.nflBoardLoading=false;render()})
+      .catch(function(){state.nflBoardLoading=false;state.nflBoard={error:'Could not load — backend unreachable.'};render()});
+  }
+  render();
+}
+window.nflBoardToggle=nflBoardToggle;
+function renderNflBoard(){
+  var b=state.nflBoard;
+  if(state.nflBoardLoading)return '<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:10px">Loading schedules & standings…</div>';
+  if(!b)return '';
+  if(b.error)return '<div class="card" style="text-align:center;font-size:10px;color:var(--wine);margin-bottom:10px">'+esc(b.error)+'</div>';
+  var h='';
+  // Standings by division
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🏆 STANDINGS <span style="font-size:8px;color:var(--muted)">('+b.standingsSeason+' season'+(b.standingsSeason!==b.season?' — final, until '+b.season+' kicks off':'')+')</span></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">';
+  (b.standings||[]).forEach(function(d){
+    h+='<div class="card" style="padding:8px 10px;margin:0">';
+    h+='<div style="font-family:var(--H);font-size:8.5px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">'+esc(d.division)+'</div>';
+    (d.teams||[]).forEach(function(t){
+      var nick=t.team.split(' ').pop();
+      h+='<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px"><span style="color:var(--cream)">'+esc(nick)+'</span><span style="font-family:var(--M);color:var(--muted)">'+t.w+'-'+t.l+(t.t?'-'+t.t:'')+'</span></div>';
+    });
+    h+='</div>';
+  });
+  h+='</div>';
+  // Team schedule picker
+  h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">📅 TEAM SCHEDULE <span style="font-size:8px;color:var(--muted)">('+b.season+')</span></div>';
+  var teams=(b.schedules||[]).map(function(s){return s.team});
+  if(!teams.length)return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:10px">Schedule not posted yet for '+b.season+'.</div>';
+  if(!state.nflSchedTeam||teams.indexOf(state.nflSchedTeam)<0)state.nflSchedTeam=teams[0];
+  h+='<select class="inp" style="width:100%;margin-bottom:8px;font-size:11px;padding:8px" onchange="state.nflSchedTeam=this.value;render()">';
+  teams.forEach(function(t){h+='<option value="'+esc(t)+'"'+(t===state.nflSchedTeam?' selected':'')+'>'+esc(t)+'</option>'});
+  h+='</select>';
+  var s=(b.schedules||[]).find(function(x){return x.team===state.nflSchedTeam});
+  if(s){
+    h+='<div class="card" style="padding:9px 12px;margin:0 0 12px">';
+    var byeShown=false;
+    s.games.forEach(function(g){
+      if(s.bye&&!byeShown&&g.week>s.bye){byeShown=true;h+='<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:10px"><span style="color:var(--brass)">Wk '+s.bye+' · BYE</span></div>';}
+      var dt=g.date?(function(){try{return new Date(g.date).toLocaleDateString([],{month:'short',day:'numeric'})}catch(e){return ''}})():'';
+      var res=g.result?('<span style="font-family:var(--M);font-weight:700;color:'+(g.result[0]==='W'?'#34d399':g.result[0]==='L'?'var(--wine)':'var(--muted)')+'">'+esc(g.result)+'</span>'):'<span style="color:var(--muted)">—</span>';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:10px">';
+      h+='<span style="color:var(--muted);width:34px">Wk '+g.week+'</span><span style="flex:1;color:var(--cream)">'+(g.home?'vs ':'@ ')+esc(g.opp)+'</span><span style="color:var(--dim);width:52px">'+dt+'</span><span style="width:64px;text-align:right">'+res+'</span></div>';
+    });
+    h+='</div>';
+  }
   return h;
 }
 // Per-signal CLV scorecard — which signal TYPES actually beat the close.

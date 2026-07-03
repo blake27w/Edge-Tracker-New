@@ -8,6 +8,7 @@ import config from './config/index.js';
 import db from './db/index.js';
 import { detectModel, getFeed, getMetrics, getClaudeUsage, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
+import { getSeasonSchedule, upcomingSeason, lastCompletedSeason } from './agents/shared/nfl.js';
 import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog, getIntel } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook } from './export/index.js';
@@ -188,6 +189,75 @@ async function buildSignalDetail(url) {
 
 // Graded plays behind one "What Works" breakdown bucket (dim+key), e.g.
 // dim=confidence key="80–89", dim=sport key="NBA", dim=signal key=<label>.
+// ── NFL schedules + standings board (free ESPN, cached in shared/nfl.js) ──
+// Divisions are structural (unchanged since 2002) — a static map, not a guess.
+const NFL_DIVISIONS = {
+  'AFC East': ['Buffalo Bills', 'Miami Dolphins', 'New England Patriots', 'New York Jets'],
+  'AFC North': ['Baltimore Ravens', 'Cincinnati Bengals', 'Cleveland Browns', 'Pittsburgh Steelers'],
+  'AFC South': ['Houston Texans', 'Indianapolis Colts', 'Jacksonville Jaguars', 'Tennessee Titans'],
+  'AFC West': ['Denver Broncos', 'Kansas City Chiefs', 'Las Vegas Raiders', 'Los Angeles Chargers'],
+  'NFC East': ['Dallas Cowboys', 'New York Giants', 'Philadelphia Eagles', 'Washington Commanders'],
+  'NFC North': ['Chicago Bears', 'Detroit Lions', 'Green Bay Packers', 'Minnesota Vikings'],
+  'NFC South': ['Atlanta Falcons', 'Carolina Panthers', 'New Orleans Saints', 'Tampa Bay Buccaneers'],
+  'NFC West': ['Arizona Cardinals', 'Los Angeles Rams', 'San Francisco 49ers', 'Seattle Seahawks'],
+};
+
+function nflRecords(games) {
+  const R = {};
+  const g0 = (t) => (R[t] ||= { w: 0, l: 0, t: 0, pf: 0, pa: 0 });
+  for (const g of games) {
+    if (!g.completed || g.hs == null || g.as == null) continue;
+    const h = g0(g.home), a = g0(g.away);
+    h.pf += g.hs; h.pa += g.as; a.pf += g.as; a.pa += g.hs;
+    if (g.hs > g.as) { h.w++; a.l++; } else if (g.hs < g.as) { h.l++; a.w++; } else { h.t++; a.t++; }
+  }
+  return R;
+}
+
+async function buildNflBoard() {
+  // Current season's schedule; standings from its completed games, falling back
+  // to LAST season's final standings until the new season has results.
+  const season = upcomingSeason();
+  const sched = await getSeasonSchedule(season);
+  let recGames = sched, recSeason = season;
+  if (!sched.some((g) => g.completed)) {
+    recSeason = lastCompletedSeason();
+    recGames = await getSeasonSchedule(recSeason);
+  }
+  const R = nflRecords(recGames);
+  const standings = Object.entries(NFL_DIVISIONS).map(([division, teams]) => ({
+    division,
+    teams: teams.map((t) => {
+      const r = R[t] || { w: 0, l: 0, t: 0, pf: 0, pa: 0 };
+      const dec = r.w + r.l + r.t;
+      return { team: t, ...r, pct: dec ? Math.round(((r.w + r.t / 2) / dec) * 1000) / 1000 : 0 };
+    }).sort((a, b) => b.pct - a.pct || (b.pf - b.pa) - (a.pf - a.pa)),
+  }));
+
+  // Per-team schedule (week order, bye marked, results when completed).
+  const byTeam = {};
+  for (const g of sched) {
+    for (const [team, opp, home] of [[g.home, g.away, true], [g.away, g.home, false]]) {
+      if (!team) continue;
+      (byTeam[team] ||= []).push({
+        week: g.week, opp, home, date: g.date,
+        result: g.completed && g.hs != null
+          ? `${(home ? g.hs > g.as : g.as > g.hs) ? 'W' : (g.hs === g.as ? 'T' : 'L')} ${home ? g.hs + '-' + g.as : g.as + '-' + g.hs}`
+          : null,
+      });
+    }
+  }
+  const schedules = Object.keys(byTeam).sort().map((team) => {
+    const games = byTeam[team].sort((a, b) => a.week - b.week);
+    const weeks = new Set(games.map((x) => x.week));
+    let bye = null;
+    for (let w = 1; w <= 18; w++) if (!weeks.has(w)) { bye = w; break; }
+    return { team, bye, games };
+  });
+
+  return { season, standingsSeason: recSeason, standings, schedules };
+}
+
 // Live betting splits (public bets%/handle%) + per-book line board per game.
 function buildSplits(url) {
   const want = String(url.searchParams.get('sport') || '').toUpperCase();
@@ -359,6 +429,9 @@ const server = http.createServer(async (req, res) => {
     case '/splits':
       try { return json(res, 200, buildSplits(url)); }
       catch (e) { logger.error('splits', e.message); return json(res, 500, { error: 'splits failed', detail: e.message }); }
+    case '/nfl-board':
+      try { return json(res, 200, await buildNflBoard()); }
+      catch (e) { logger.error('nfl-board', e.message); return json(res, 500, { error: 'nfl-board failed', detail: e.message }); }
     case '/games': {
       try {
         const board = await buildGames(url.searchParams.get('sport') || '');
