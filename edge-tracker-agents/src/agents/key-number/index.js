@@ -12,14 +12,17 @@ import { computeMarkets } from '../../games/lines.js';
 import { fmtOdds } from '../shared/odds-math.js';
 
 const FOOTBALL = new Set(['NFL', 'NCAAF']);
-// Keys in priority order; importance drives sort + display.
-const KEYS = [{ k: 3, imp: 'high' }, { k: 7, imp: 'high' }, { k: 6, imp: 'med' }, { k: 10, imp: 'med' }, { k: 14, imp: 'med' }, { k: 4, imp: 'med' }];
-// Long-run share (%) of NFL games whose final margin lands EXACTLY on each
-// number — well-established public constants; run scripts/nfl-backtest.js to
-// recalibrate from last season's finals. Crossing a key is worth roughly HALF
-// its landing frequency in win probability (the push flips to a win/loss on
-// one side of the number), so ev_pct ≈ LAND_PCT/2.
-const LAND_PCT = { 3: 15, 7: 9, 6: 5.5, 10: 5, 14: 4.5, 4: 4.5 };
+// Keys in priority order; importance drives sort + display. Order calibrated
+// from the 2025 season via scripts/nfl-backtest.js: 4 outlands 6/10/14; 17
+// (two scores) added as a secondary key.
+const KEYS = [{ k: 3, imp: 'high' }, { k: 7, imp: 'high' }, { k: 4, imp: 'med' }, { k: 6, imp: 'med' }, { k: 14, imp: 'med' }, { k: 17, imp: 'med' }, { k: 10, imp: 'med' }];
+// Share (%) of NFL games whose final margin lands EXACTLY on each number.
+// MEASURED from the 2025 season (n=271, scripts/nfl-backtest.js): 3→15.1,
+// 7→9.6, 4→5.5, 6→4.1, 14→4.1, 10→3.7. 17 measured 5.9% but long-run is
+// ~3.3%, so it's set conservatively at 4. Rerun the script each offseason.
+// Crossing a key is worth roughly HALF its landing frequency in win prob
+// (the push flips to a win/loss on one side), so ev_pct ≈ LAND_PCT/2.
+const LAND_PCT = { 3: 15.1, 7: 9.6, 4: 5.5, 6: 4.1, 14: 4.1, 17: 4, 10: 3.7 };
 const MIN_BOOKS = 3;
 
 function collect(game, team) {
