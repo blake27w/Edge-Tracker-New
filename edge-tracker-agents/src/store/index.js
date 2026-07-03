@@ -39,6 +39,7 @@ const store = {
   nflLineMove: null,  // NFL opener→close line-movement tracker (in-season; dormant offseason)
   nflDerivs: [],      // NFL derivative edges (team totals; off unless enabled)
   nflPace: null,      // NFL coaching/pace tempo map + totals leans (reference)
+  nflStyle: [],       // NFL measured style fingerprints + defensive funnels
   predMarket: null,   // prediction-market (Polymarket/Kalshi) reference + exchange edges
   fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
   clvReport: null,    // aggregated closing-line-value dashboard
