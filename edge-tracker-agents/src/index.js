@@ -266,7 +266,7 @@ function buildSplits(url) {
   const now = Date.now();
   const out = games.map((g) => {
     const gs = splits.filter((s) => s.game_id === g.game_id)
-      .map((s) => ({ market: s.market, side: s.side, bets_pct: s.bets_pct, handle_pct: s.handle_pct, divergence: s.divergence, rlm: s.rlm }));
+      .map((s) => ({ market: s.market, side: s.side, bets_pct: s.bets_pct, handle_pct: s.handle_pct, divergence: s.divergence, rlm: s.rlm, freeze: s.freeze, pileon: s.pileon }));
     const books = [];
     for (const [bk, b] of Object.entries(g.books || {})) {
       const mk = b.markets || {};
