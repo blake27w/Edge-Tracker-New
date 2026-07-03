@@ -69,8 +69,12 @@ async function run() {
   if (db.isConnected()) {
     const probes = [
       ['monitor_scores', 'anomaly'], ['monitor_scores', 'player'],
+      ['monitor_scores', 'price'], ['monitor_scores', 'live'],
       ['opp_results', 'id'], ['line_signals', 'id'], ['ev_opportunities', 'id'],
+      ['ev_opportunities', 'quote_age_min'], ['line_snapshots', 'last_update'],
       ['arb_opportunities', 'id'], ['research_notes', 'id'], ['fair_line_log', 'game_id'],
+      ['pred_market_edges', 'id'], ['umpire_runs', 'umpire'], ['pitcher_changes', 'id'],
+      ['weather_changes', 'id'], ['nfl_qb_status', 'id'],
     ];
     const missing = [];
     for (const [t, c] of probes) {
