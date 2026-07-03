@@ -71,11 +71,17 @@ const SPORTS = {
   GOLF: { key: 'golf', emoji: '⛳', hasTotals: false, oddsSkip: true },
 };
 
-const BOOKS = ['fanduel', 'draftkings', 'williamhill_us', 'betmgm', 'pointsbetus', 'betrivers', 'fanatics'];
+// The Odds API bills by market × region, NOT by bookmaker — so every book here
+// is FREE edge surface: more books = more chances one is slow (stale lines,
+// arbs, +EV) and a sharper consensus median. Licensed US retail books only
+// (offshore books would flag "edges" you can't bet). Defunct/unknown keys are
+// harmlessly ignored by the API.
+const BOOKS = ['fanduel', 'draftkings', 'williamhill_us', 'betmgm', 'pointsbetus', 'betrivers', 'fanatics', 'espnbet', 'hardrockbet', 'ballybet', 'betparx'];
 // Human labels for the books we track (williamhill_us == Caesars on The Odds API).
 const BOOK_LABELS = {
   fanduel: 'FanDuel', draftkings: 'DraftKings', williamhill_us: 'Caesars',
   betmgm: 'BetMGM', pointsbetus: 'PointsBet', betrivers: 'BetRivers', fanatics: 'Fanatics',
+  espnbet: 'ESPN BET', hardrockbet: 'Hard Rock', ballybet: 'Bally Bet', betparx: 'betPARX',
 };
 
 // ── Agent schedules ─────────────────────────────────────────────
