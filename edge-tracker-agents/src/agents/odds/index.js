@@ -11,7 +11,7 @@
 import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
-import { setGames, setIntel } from '../../store/index.js';
+import { getGames, setGames, setIntel } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 
 const { oddsApi, SPORTS, BOOKS, BOOK_LABELS } = config;
@@ -99,15 +99,54 @@ async function persistBudget() {
   } catch (e) { /* ignore */ }
 }
 
-function recordSpend(sport, remainingHeader) {
-  budget.used += 1;
-  budget.bySport[sport] = (budget.bySport[sport] || 0) + 1;
-  // Reconcile with the API's own counter when available (source of truth).
-  if (remainingHeader != null && Number.isFinite(+remainingHeader)) {
-    budget.remaining = +remainingHeader;
-  } else {
-    budget.remaining = Math.max(0, oddsApi.monthlyBudget - budget.used);
+// Each call costs CREDITS = markets × regions (3 here: h2h,spreads,totals × us),
+// not 1 — the old count-by-request made the budget look 3× healthier than it was
+// and let the per-sport caps never bind. Prefer the API's own per-call cost
+// header, and reconcile totals with its account-wide counters so spend by the
+// OTHER consumers (props, tennis, derivatives) is captured too.
+function recordSpend(sport, hdr) {
+  const cost = hdr && Number.isFinite(+hdr.last) ? Math.max(1, Math.round(+hdr.last)) : 3;
+  budget.used += cost;
+  budget.bySport[sport] = (budget.bySport[sport] || 0) + cost;
+  if (hdr && Number.isFinite(+hdr.used)) budget.used = Math.max(budget.used, Math.round(+hdr.used));
+  if (hdr && Number.isFinite(+hdr.remaining)) budget.remaining = +hdr.remaining;
+  else budget.remaining = Math.max(0, oddsApi.monthlyBudget - budget.used);
+}
+
+// ── Adaptive pacing: fetch fast only when it matters ─────────────
+// A key is fetched on a cadence set by how close its sport's games are:
+//   NEAR (a game is live or starts within 60m) → every 10 min
+//   MID  (a game starts within 12h)            → every 30 min
+//   IDLE (nothing near)                        → every 3h (slate discovery)
+// On top, a pace governor stretches every interval when the month's burn is
+// ahead of linear pace — self-correcting toward the monthly budget.
+const NEAR_MIN = Number(process.env.ODDS_NEAR_MIN) || 10;
+const MID_MIN = Number(process.env.ODDS_MID_MIN) || 30;
+const IDLE_MIN = Number(process.env.ODDS_IDLE_MIN) || 180;
+const lastKeyFetch = new Map(); // odds-api league key -> ms of last fetch
+
+function paceMult() {
+  const now = new Date();
+  const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getUTCDate();
+  const dayFrac = Math.max(0.02, (now.getUTCDate() - 1 + now.getUTCHours() / 24) / daysInMonth);
+  const target = oddsApi.monthlyBudget * dayFrac;
+  if (!target || budget.used <= target) return 1;
+  const r = budget.used / target;
+  return r <= 1.25 ? 1.5 : r <= 1.6 ? 2.5 : 4;
+}
+
+function sportIntervalMin(sport) {
+  const now = Date.now();
+  let best = IDLE_MIN;
+  for (const g of getGames()) {
+    if (g.sport !== sport) continue;
+    const t = Date.parse(g.commence_time || '');
+    if (!Number.isFinite(t)) continue;
+    const dt = t - now;
+    if (dt <= 60 * 60_000 && dt >= -4 * 3600_000) return NEAR_MIN; // live or <60m out
+    if (dt > 0 && dt <= 12 * 3600_000) best = Math.min(best, MID_MIN);
   }
+  return best;
 }
 
 // ── In-memory last-line map for movement detection ──────────────
@@ -131,14 +170,18 @@ async function fetchOdds(sportKey) {
   });
   const url = `${oddsApi.base}/sports/${sportKey}/odds?${params}`;
   const res = await fetch(url);
-  const remaining = res.headers.get('x-requests-remaining');
-  if (res.status === 422) return { games: [], remaining }; // no events in window
+  const hdr = {
+    remaining: res.headers.get('x-requests-remaining'),
+    used: res.headers.get('x-requests-used'),
+    last: res.headers.get('x-requests-last'), // credits this call actually cost
+  };
+  if (res.status === 422) return { games: [], hdr }; // no events in window
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Odds API ${res.status} for ${sportKey}: ${body.slice(0, 120)}`);
   }
   const data = await res.json();
-  return { games: data, remaining };
+  return { games: data, hdr };
 }
 
 // Free, non-billed endpoint: which sports are currently in season.
@@ -214,29 +257,63 @@ async function run() {
   let calls = 0;
   let skippedSeason = 0;
   let skippedBudget = 0;
+  let skippedPaced = 0;
+
+  // Reallocate the month's budget among IN-SEASON sports only — the static
+  // shares sum to 1.0 across all 12 sports, which starves in-season ones while
+  // out-of-season budget sits idle. 15% held back for the event-endpoint
+  // consumers (props, tennis, derivatives).
+  const isActive = (sport, meta) => {
+    if (meta.oddsSkip) return false;
+    if (!active) return true;
+    return (meta.leagues || [meta.key]).some((k) => active.has(k));
+  };
+  const actives = Object.entries(SPORTS).filter(([s, m]) => isActive(s, m)).map(([s]) => s);
+  const sumAlloc = actives.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0) || 1;
+  const capOf = (sport) => (actives.includes(sport)
+    ? Math.floor(oddsApi.monthlyBudget * 0.85 * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc))
+    : sportCap(sport));
+  const mult = paceMult();
 
   for (const [sport, meta] of Object.entries(SPORTS)) {
     // The Odds API has no bare golf/tennis key (event-specific only) — skip to avoid 404s.
     if (meta.oddsSkip) continue;
     const keys = meta.leagues || [meta.key];
-    // Per-sport monthly cap.
-    if ((budget.bySport[sport] || 0) >= sportCap(sport)) { skippedBudget++; continue; }
+    // Per-sport monthly cap (in credits).
+    if ((budget.bySport[sport] || 0) >= capOf(sport)) { skippedBudget++; continue; }
+    // How often this sport's keys deserve a refresh right now.
+    const ivMs = sportIntervalMin(sport) * mult * 60_000;
 
     for (const key of keys) {
       if (active && !active.has(key) && key !== 'golf' && key !== 'tennis') { skippedSeason++; continue; }
       if (budget.remaining <= 0) { skippedBudget++; break; }
-      if ((budget.bySport[sport] || 0) >= sportCap(sport)) { skippedBudget++; break; }
+      if ((budget.bySport[sport] || 0) >= capOf(sport)) { skippedBudget++; break; }
+      if (Date.now() - (lastKeyFetch.get(key) || 0) < ivMs) { skippedPaced++; continue; }
 
       try {
-        const { games, remaining } = await fetchOdds(key);
-        recordSpend(sport, remaining);
+        const { games, hdr } = await fetchOdds(key);
+        recordSpend(sport, hdr);
+        lastKeyFetch.set(key, Date.now());
         calls++;
         for (const ev of games) allGames.push(normalize(sport, ev, snapshots, movements));
       } catch (e) {
         logger.warn('odds', e.message);
         // Count the spend even on error (the request was made), reconcile loosely.
         recordSpend(sport, null);
+        lastKeyFetch.set(key, Date.now());
       }
+    }
+  }
+
+  // Keep previously-known games whose key was paced-skip this run, so downstream
+  // agents never lose the slate between refreshes (drop long-finished games).
+  {
+    const seen = new Set(allGames.map((g) => g.game_id));
+    const cutoff = Date.now() - 6 * 3600_000;
+    for (const g of getGames()) {
+      if (seen.has(g.game_id)) continue;
+      const t = Date.parse(g.commence_time || '');
+      if (Number.isFinite(t) && t > cutoff) allGames.push(g);
     }
   }
 
@@ -276,7 +353,7 @@ async function run() {
   setIntel('movements', movements);
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · API ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}`,
     gamesMonitored: allGames.length,
     data: { games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls, budget: getOddsBudget() },
   };

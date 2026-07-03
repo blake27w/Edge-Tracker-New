@@ -26,7 +26,7 @@ const PROP_MARKETS = {
 const LINE_EDGE = { MLB: 1, NBA: 2.5, NHL: 1, NFL: 15 };
 
 const MAX_PER_RUN = num(process.env.PROP_MAX_GAMES_PER_RUN, 6);
-const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 40);
+const MAX_PER_DAY = num(process.env.PROP_MAX_SCANS_PER_DAY, 20); // each scan = a multi-market event call (several credits)
 
 // Classify a prop play by the trigger that surfaced it (tag from the real
 // source — never a guess). The underlying mechanism is always a cross-book
