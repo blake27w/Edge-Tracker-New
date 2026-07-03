@@ -756,6 +756,11 @@ create table if not exists pitcher_changes (
 );
 create index if not exists pitcher_changes_idx on pitcher_changes (detected_at desc);
 
+-- ── Public-splits upgrade: freeze / pile-on tells + the measured net move ──
+alter table public_splits add column if not exists freeze boolean default false;
+alter table public_splits add column if not exists pileon boolean default false;
+alter table public_splits add column if not exists net_move numeric;
+
 -- ── NFL QB status changes (speed edge; biggest line-mover in the sport) ──
 create table if not exists nfl_qb_status (
   id          uuid primary key default gen_random_uuid(),

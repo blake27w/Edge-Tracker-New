@@ -131,6 +131,7 @@ const SIG_LABELS = {
   umpire: 'Umpire Under', umpire_over: 'Umpire Over', pitcher_change: 'SP change Under', pitcher_change_over: 'SP change Over',
   bullpen_fatigue: 'Gassed bullpen Over', exchange: 'Exchange edge (Poly/Kalshi)',
   nfl_env: 'NFL scoring model', nfl_pace: 'NFL pace map', qb_change: 'QB change cascade',
+  fade: 'Public fade', fade_rlm: 'Fade: RLM', fade_handle: 'Fade: handle<bets', fade_freeze: 'Fade: line freeze',
 };
 
 // PER-SIGNAL CLV SCORECARD — the key analytic: which signal TYPES actually beat
@@ -209,8 +210,10 @@ async function run() {
   const FIGHT = new Set(['UFC', 'BOXING']);
   const allGraded = rows.slice(); // full set (incl observational) for the per-market validation panel
   const observational = rows.filter((r) => r.observational);
+  const isFade = (r) => Array.isArray(r.signals) && r.signals.some((s) => s && s.id === 'fade');
   const combatRows = observational.filter((r) => FIGHT.has(r.sport));
-  const probTotals = observational.filter((r) => !FIGHT.has(r.sport) && r.market === 'total'); // totals on probation (keyed on market, so tennis/other can't leak in)
+  const fadeRows = observational.filter((r) => !FIGHT.has(r.sport) && isFade(r)); // public-fade engine (own bucket)
+  const probTotals = observational.filter((r) => !FIGHT.has(r.sport) && r.market === 'total' && !isFade(r)); // totals on probation (keyed on market, so tennis/fades can't leak in)
   const tennisObs = observational.filter((r) => r.sport === 'TENNIS'); // tennis (observational until validated)
   rows = rows.filter((r) => !r.observational);
 
@@ -277,6 +280,12 @@ async function run() {
     const a = blank();
     for (const r of combatRows) { a.staked += config.rules.unitDollars; tally(a, { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
     report.combat = { ...finalize(a), gate: 50, gated: combatRows.length < 50 };
+  }
+  // Public-fade engine (observational) — the fade thesis, graded honestly.
+  {
+    const a = blank();
+    for (const r of fadeRows) tally(a, r);
+    report.fades = { ...finalize(a), bySignal: group(fadeRows, signalIds, { min: 1 }) };
   }
   // Totals on probation (observational) — kept out of the headline; broken down
   // by sub-signal so we can see if ANY totals trigger beats the close.

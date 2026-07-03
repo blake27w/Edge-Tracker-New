@@ -5763,7 +5763,7 @@ var AGENTS_META=[
   {name:'weather',icon:'🌦️',label:'Weather Intelligence',cadence:'every 45 min'},
   {name:'sharp',icon:'💰',label:'Sharp Money Detection',cadence:'every 2 min'},
   {name:'power',icon:'📊',label:'Power Ratings',cadence:'Mon & Thu 08:00'},
-  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 8 hrs'},
+  {name:'public-splits',icon:'📈',label:'Public Betting Splits',cadence:'every 4 hrs'},
   {name:'schedule-spot',icon:'🗓️',label:'Schedule Spot',cadence:'every 30 min'},
   {name:'mlb-context',icon:'⚾',label:'MLB Context',cadence:'every 60 min'},
   {name:'signal',icon:'🧠',label:'Signal Engine',cadence:'every 2 min'},
@@ -5807,7 +5807,7 @@ var AGENTS_META=[
   {name:'pred-market',icon:'🔮',label:'Prediction Markets (Poly/Kalshi)',cadence:'every 10m (if enabled)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':28800000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':14400000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -6013,6 +6013,7 @@ function renderResultsContent(){
     if(bt.variance&&bt.variance.losses){var v=bt.variance;var bad=v.overtime+v.hook+v.close;if(bad)h+='<div class="card" style="padding:9px 13px;margin-bottom:8px;border-left:3px solid var(--brass);font-size:10px;color:var(--cream)">🎲 '+bad+' of '+v.losses+' losses were variance — '+v.overtime+' OT, '+v.hook+' hook, '+v.close+' close. Bad beats, not bad reads.</div>';}
     h+=renderBtOverall(bt);
     h+=renderMarketValidation(bt);
+    if(bt.fades&&bt.fades.n){var fd0=bt.fades;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;border-left:3px solid var(--brass)"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">🎭 PUBLIC FADES (OBSERVATIONAL)</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+fd0.w+'-'+fd0.l+(fd0.p?'-'+fd0.p:'')+' · '+fd0.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(fd0.roi)+'">'+(fd0.roi>=0?'+':'')+fd0.roi+'%</div></div><div style="font-size:8px;color:var(--muted);margin-top:3px;font-style:italic">The fade-the-public thesis, graded honestly — promoted only if its CLV proves out.</div></div>';}
     if(bt.combat&&bt.combat.n){var cm=bt.combat;h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;border-left:3px solid var(--brass)"><div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:4px">🥊 COMBAT (OBSERVATIONAL)</div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--cream)">'+cm.w+'-'+cm.l+(cm.p?'-'+cm.p:'')+' · '+cm.winPct+'% win</div><div style="font-family:var(--M);font-size:12px;font-weight:700;color:'+btColor(cm.roi)+'">'+(cm.roi>=0?'+':'')+cm.roi+'%</div></div>'+(cm.gated?'<div style="font-size:8px;color:var(--muted);margin-top:3px;font-style:italic">Not counted in the verdict until '+cm.gate+' graded ('+cm.n+' so far) — combat variance is brutal.</div>':'')+'</div>';}
   } else if(V==='breakdown'){
     h+=renderBtBreakdowns(bt);
@@ -7180,7 +7181,7 @@ function renderSplitsBoard(){
       h+='<div style="margin-top:6px">';
       g.splits.forEach(function(s){
         var div=s.divergence;var sharp=(div!=null&&div<=-5)?' · <span style="color:#34d399">sharp OFF this side</span>':(div!=null&&div>=5)?' · <span style="color:#34d399">money agrees</span>':'';
-        h+='<div style="font-size:9px;color:var(--cream);margin-top:2px"><span style="color:var(--leather);text-transform:uppercase">'+esc(s.market||'')+'</span> '+esc(s.side||'')+' · <span style="font-family:var(--M)">'+(s.bets_pct!=null?s.bets_pct+'% bets':'')+(s.handle_pct!=null?' / '+s.handle_pct+'% money':'')+'</span>'+(s.rlm?' <span style="color:var(--wine);font-weight:700">RLM</span>':'')+sharp+'</div>';
+        h+='<div style="font-size:9px;color:var(--cream);margin-top:2px"><span style="color:var(--leather);text-transform:uppercase">'+esc(s.market||'')+'</span> '+esc(s.side||'')+' · <span style="font-family:var(--M)">'+(s.bets_pct!=null?s.bets_pct+'% bets':'')+(s.handle_pct!=null?' / '+s.handle_pct+'% money':'')+'</span>'+(s.rlm?' <span style="color:var(--wine);font-weight:700">RLM</span>':'')+(s.freeze?' <span style="color:var(--brass);font-weight:700">FREEZE</span>':'')+(s.pileon?' <span style="color:var(--dim);font-weight:700">PILE-ON</span>':'')+sharp+'</div>';
       });
       h+='</div>';
     } else { h+='<div style="font-size:8px;color:var(--muted);font-style:italic;margin-top:5px">No public-split data for this game yet.</div>'; }

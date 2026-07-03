@@ -107,7 +107,9 @@ const AGENT_DEFS = {
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
   sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
   power: { label: 'Power Ratings', emoji: '📊', times: ['08:00'], days: [1, 4] },
-  'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 480 },
+  // 4h (was 8h): RLM/freeze/pile-on are TIMING tells — 8h was blind most of the
+  // day. Cost is one Claude web-search call per run (~6/day, pennies).
+  'public-splits': { label: 'Public Betting Splits', emoji: '📈', min: 240 },
   'schedule-spot': { label: 'Schedule Spot', emoji: '🗓️', min: 30 },
   'mlb-context': { label: 'MLB Context (Umpire + Bullpen)', emoji: '⚾', min: 60 },
   signal: { label: 'Signal Engine', emoji: '🧠', min: 2 },
