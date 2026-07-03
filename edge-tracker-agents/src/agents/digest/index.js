@@ -7,10 +7,25 @@
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
 import { logger, notifyAll, getClaudeUsage } from '../../utils/index.js';
-import { getPlays, getPropPlays, getEvPlays, getArbPlays, getStaleLines, getDivergence, getBacktest } from '../../store/index.js';
+import { getPlays, getPropPlays, getEvPlays, getArbPlays, getStaleLines, getDivergence, getBacktest, getWatchdog } from '../../store/index.js';
 import { getOddsBudget } from '../odds/index.js';
 
 const sign = (n) => (n >= 0 ? '+' + n : '' + n);
+
+// Clean CLV records added in the last 24h, by market — the number that
+// actually unlocks "bettable", so the report card tracks it daily.
+async function freshClv() {
+  if (!db.isConnected()) return null;
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  let rows = [];
+  try { rows = await db.select('clv_records', 'bet_market,suspect', { gte: { recorded_at: since }, limit: 500 }); }
+  catch (_) { return null; }
+  const clean = rows.filter((r) => !r.suspect);
+  if (!clean.length) return null;
+  const by = {};
+  for (const r of clean) by[r.bet_market || '?'] = (by[r.bet_market || '?'] || 0) + 1;
+  return `+${clean.length} (${Object.entries(by).map(([k, n]) => `${k} ${n}`).join(', ')})`;
+}
 
 async function recentResults() {
   if (!db.isConnected()) return null;
@@ -70,10 +85,26 @@ async function run() {
   const clv = await clvSummary();
   if (clv) L.push(`CLV (30d): ${sign(clv.avg)} avg · ${clv.beatPct}% beat close (${clv.n})`);
 
+  // ── Report card: the path to "bettable" ──
+  // Per-market validation verdicts + how much clean CLV arrived in 24h (the
+  // number that unlocks a ✅), the fade thesis's own score, and any watchdog
+  // issues — so drift shows up in your inbox, not weeks later.
+  const mv = bt && bt.marketValidation;
+  if (mv && mv.length) {
+    const em = { validated: '✅', losing: '⛔', unproven: '⏳' };
+    L.push('Validation: ' + mv.map((m) => `${em[m.verdict] || '⏳'} ${m.market}${m.clvN ? ` (${m.clvN} clv)` : ''}`).join(' · '));
+  }
+  const fresh = await freshClv();
+  if (fresh) L.push(`Clean CLV +24h: ${fresh}`);
+  if (bt && bt.fades && bt.fades.n) L.push(`Fades (obs): ${bt.fades.w}-${bt.fades.l}${bt.fades.p ? '-' + bt.fades.p : ''} · ${sign(bt.fades.roi)}% ROI (${bt.fades.n})`);
+  const wd = getWatchdog();
+  if (wd && wd.issues && wd.issues.length) L.push(`⚠ Watchdog: ${wd.issues.length} issue(s) — ${wd.issues.slice(0, 2).map((i) => i.label).join('; ')}`);
+
   try {
     const ob = getOddsBudget();
     const cu = await getClaudeUsage();
-    L.push(`Cost: odds ${ob.used}/${ob.budget} credits · Claude $${cu.cost} MTD (~$${cu.projectedMonthly}/mo)`);
+    const pace = ob.paceRatio != null ? ` (pace ×${ob.paceRatio}${ob.paceRatio > 1.05 ? ' — governor throttling' : ' ✓'})` : '';
+    L.push(`Cost: odds ${ob.used}/${ob.budget} credits${pace} · Claude $${cu.cost} MTD (~$${cu.projectedMonthly}/mo)`);
   } catch (_) { /* ignore */ }
 
   const body = L.join('\n');
