@@ -11,7 +11,7 @@ import orchestrator from './orchestrator/index.js';
 import { getSeasonSchedule, upcomingSeason, lastCompletedSeason } from './agents/shared/nfl.js';
 import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog, getIntel } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
-import { buildWorkbook } from './export/index.js';
+import { buildWorkbook, buildCsv, CSV_SHEETS } from './export/index.js';
 import { buildGames } from './games/index.js';
 import { listResearch, addResearch, deleteResearch } from './research/index.js';
 import { median } from './agents/shared/odds-math.js';
@@ -357,6 +357,23 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
   const url = new URL(req.url, 'http://localhost');
+
+  // Live CSV feeds — a Google Sheet imports each with =IMPORTDATA(...) and
+  // auto-refreshes (~hourly): the self-updating research doc. No sheet param →
+  // list the available feeds.
+  if (url.pathname === '/csv') {
+    try {
+      const which = url.searchParams.get('sheet');
+      if (!which) return json(res, 200, { sheets: CSV_SHEETS, usage: '/csv?sheet=<name>' });
+      const csv = await buildCsv(which);
+      if (csv == null) return json(res, 404, { error: 'unknown sheet', sheets: CSV_SHEETS });
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+      return res.end(csv);
+    } catch (e) {
+      logger.error('csv', e.message);
+      return json(res, 500, { error: 'csv failed', detail: e.message });
+    }
+  }
 
   // Excel export — builds a multi-sheet .xlsx from Supabase and downloads it.
   if (url.pathname === '/export' || url.pathname === '/export.xlsx') {

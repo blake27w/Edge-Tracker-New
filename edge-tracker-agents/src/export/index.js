@@ -87,11 +87,9 @@ function summarySheet(wb, plays) {
 }
 
 // Research Findings — the documented conclusions from our backtests/research
-// scripts, with the numbers. Update when a new script run changes a verdict.
-function findingsSheet(wb) {
-  const ws = wb.addWorksheet('Research Findings');
-  ws.columns = [{ header: 'Topic', width: 26 }, { header: 'Finding', width: 95 }, { header: 'Source', width: 26 }];
-  const rows = [
+// scripts, with the numbers. Lives in CODE so the live CSV feed and the
+// workbook both update automatically when a new script run changes a verdict.
+export const FINDINGS = [
     ['Key numbers (NFL)', 'Measured margin-landing % (2025, n=271): 3→15.1, 7→9.6, 4→5.5, 6→4.1, 14→4.1, 10→3.7, 17→5.9 (long-run ~3.3). The 4 outlands 6/10/14. Key-number EVs now use these.', 'nfl-backtest.js'],
     ['Power ratings', 'Frozen preseason Elo graded 56.8% straight-up vs a 62-67% floor — it never learned. Fixed: nfl-power now updates weekly from finals in-season.', 'nfl-backtest.js'],
     ['NFL scoring model', '24/39 (61.5%) total leans vs reality — above breakeven but not significant, and untested vs the close. Stays Tier-3 until CLV proves it.', 'nfl-backtest.js'],
@@ -102,8 +100,12 @@ function findingsSheet(wb) {
     ['Defensive funnels', 'Real within a season, perishable across seasons (r≈.25). Recomputed in-season only by nfl-style; never carried across years.', 'nfl-style-research.js'],
     ['Totals market', 'LOSING on both results and CLV (81-79-2, -4.5% ROI; 13.6% beat close). On probation/observational — do not bet totals.', 'live record + CLV'],
     ['Core thesis', 'Prediction models keep grading mediocre; price/speed mechanisms keep surviving. The edge is price + speed + discipline, validated by CLV — not out-predicting the market.', 'all of the above'],
-  ];
-  for (const r of rows) ws.addRow(r);
+];
+
+function findingsSheet(wb) {
+  const ws = wb.addWorksheet('Research Findings');
+  ws.columns = [{ header: 'Topic', width: 26 }, { header: 'Finding', width: 95 }, { header: 'Source', width: 26 }];
+  for (const r of FINDINGS) ws.addRow(r);
   ws.getRow(1).font = { bold: true };
   ws.views = [{ state: 'frozen', ySplit: 1 }];
   for (let i = 2; i <= ws.rowCount; i++) ws.getRow(i).alignment = { wrapText: true, vertical: 'top' };
@@ -195,4 +197,99 @@ export async function buildWorkbook() {
   return wb;
 }
 
-export default { buildWorkbook };
+// ══════════════════════════════════════════════════════════════
+// Live CSV feeds — GET /csv?sheet=<name>. A Google Sheet imports each with
+// =IMPORTDATA("…/csv?sheet=validation") and Google auto-refreshes it (~hourly),
+// so the research document UPDATES ITSELF: no manual export, no credentials,
+// no push agent. Findings live in code, so verdict changes flow automatically.
+// ══════════════════════════════════════════════════════════════
+const csvEsc = (v) => {
+  let s = v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+  if (/^[=+\-@]/.test(s)) s = "'" + s; // formula-injection guard
+  if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+};
+function toCsv(rows, order = []) {
+  if (!rows || !rows.length) return 'status\nno data yet\n';
+  const keys = Object.keys(rows[0]);
+  const cols = [...order.filter((k) => keys.includes(k)), ...keys.filter((k) => !order.includes(k))];
+  return [cols.join(','), ...rows.map((r) => cols.map((k) => csvEsc(r[k])).join(','))].join('\n') + '\n';
+}
+
+export const CSV_SHEETS = ['summary', 'findings', 'validation', 'signal-clv', 'plays', 'clv', 'opps', 'book-edges', 'fades', 'splits', 'exchange', 'umpires', 'pitcher-changes', 'weather-shifts', 'qb-status', 'prop-flags', 'nfl-power', 'nfl-win-totals'];
+
+export async function buildCsv(name) {
+  const bt = getBacktest();
+  switch (String(name || '').toLowerCase()) {
+    case 'findings':
+      return toCsv(FINDINGS.map(([topic, finding, source]) => ({ topic, finding, source })));
+    case 'validation':
+      return toCsv((bt?.marketValidation || []).map((m) => ({
+        market: m.market, verdict: m.verdict, graded: m.n, record: `${m.w}-${m.l}${m.p ? '-' + m.p : ''}`,
+        win_pct: m.winPct, roi_pct: m.roi, clv_records: m.clvN, avg_clv: m.avgClv, beat_close_pct: m.beatPct,
+      })));
+    case 'signal-clv':
+      return toCsv((bt?.signalClv || []).map((s) => ({
+        signal: s.label, plays_tracked: s.n, beat_close_pct: s.beatPct, avg_clv: s.avgClv,
+        graded: s.graded, win_pct: s.winPct, roi_pct: s.roi, flag: s.flag ? 'REVIEW' : '',
+      })));
+    case 'summary': {
+      const rows = [];
+      const push = (metric, value) => rows.push({ metric, value });
+      push('generated_utc', new Date().toISOString());
+      const o = bt?.overall;
+      if (o) { push('headline_record', `${o.w}-${o.l}-${o.p}`); push('headline_win_pct', o.winPct); push('headline_roi_pct', o.roi); push('headline_pnl_$', o.pnl); push('graded', o.n); }
+      if (bt?.verdict) push('verdict', bt.verdict.headline);
+      if (bt?.clv) { push('clv_avg', bt.clv.avg); push('clv_beat_close_pct', bt.clv.beatPct); push('clv_records', bt.clv.n); }
+      if (bt?.fades?.n) push('fades_observational', `${bt.fades.w}-${bt.fades.l} (${bt.fades.roi}% ROI)`);
+      if (bt?.totals?.n) push('totals_probation', `${bt.totals.w}-${bt.totals.l}-${bt.totals.p} (${bt.totals.roi}% ROI)`);
+      return toCsv(rows);
+    }
+    case 'plays':
+      return toCsv(await grab('monitor_scores', { order: { column: 'scored_at', ascending: false }, limit: 2000 }),
+        ['scored_at', 'sport', 'matchup', 'market', 'side', 'line', 'price', 'score', 'tier', 'unit_dollars', 't1_count', 'observational', 'live', 'status', 'result_score', 'pnl', 'graded_at']);
+    case 'clv':
+      return toCsv(await grab('clv_records', { order: { column: 'recorded_at', ascending: false }, limit: 2000 }),
+        ['recorded_at', 'sport', 'bet_market', 'side', 'line_logged', 'line_close', 'clv', 'beat_close', 'suspect']);
+    case 'opps':
+      return toCsv(await grab('opp_results', { order: { column: 'graded_at', ascending: false }, limit: 2000 }),
+        ['graded_at', 'type', 'sport', 'matchup', 'market', 'side', 'line', 'price', 'status', 'pnl', 'detail']);
+    case 'book-edges':
+      return toCsv(await grab('book_edge_log', { order: { column: 'detected_at', ascending: false }, limit: 2000 }),
+        ['detected_at', 'type', 'sport', 'book', 'market', 'side', 'consensus_line', 'outlier_line', 'pts', 'price', 'corrected_at', 'window_sec']);
+    case 'fades':
+      return toCsv(await grab('public_fades', { order: { column: 'detected_at', ascending: false }, limit: 1000 }),
+        ['detected_at', 'sport', 'matchup', 'market', 'public_side', 'fade_side', 'bets_pct', 'handle_pct', 'divergence', 'rlm', 'score', 'reasons']);
+    case 'splits':
+      return toCsv(await grab('public_splits', { order: { column: 'fetched_at', ascending: false }, limit: 1500 }),
+        ['fetched_at', 'sport', 'market', 'side', 'bets_pct', 'handle_pct', 'divergence', 'rlm', 'freeze', 'pileon', 'net_move']);
+    case 'exchange':
+      return toCsv(await grab('pred_market_edges', { order: { column: 'detected_at', ascending: false }, limit: 1000 }),
+        ['detected_at', 'sport', 'matchup', 'side', 'price', 'exch_prob', 'book_prob', 'edge_pct', 'source', 'vol']);
+    case 'umpires':
+      return toCsv(await grab('umpire_runs', { order: { column: 'run_index', ascending: false }, limit: 300 }),
+        ['umpire', 'games', 'avg_runs', 'run_index', 'league_avg', 'updated_at']);
+    case 'pitcher-changes':
+      return toCsv(await grab('pitcher_changes', { order: { column: 'detected_at', ascending: false }, limit: 500 }),
+        ['detected_at', 'matchup', 'team', 'old_pitcher', 'new_pitcher', 'old_era', 'new_era', 'lean']);
+    case 'weather-shifts':
+      return toCsv(await grab('weather_changes', { order: { column: 'detected_at', ascending: false }, limit: 500 }),
+        ['detected_at', 'sport', 'matchup', 'lean', 'first_wind', 'cur_wind', 'opener_total', 'cur_total', 'note']);
+    case 'qb-status':
+      return toCsv(await grab('nfl_qb_status', { order: { column: 'detected_at', ascending: false }, limit: 500 }),
+        ['detected_at', 'team', 'player', 'old_status', 'new_status']);
+    case 'prop-flags':
+      return toCsv(await grab('prop_snapshots', { order: { column: 'fetched_at', ascending: false }, limit: 1000 }),
+        ['fetched_at', 'sport', 'player', 'stat_type', 'side', 'line', 'price', 'book', 'trigger']);
+    case 'nfl-power':
+      return toCsv(await grab('nfl_power_ratings', { order: { column: 'rating', ascending: false }, limit: 40 }),
+        ['season', 'team', 'rating', 'end_of_season', 'notes', 'updated_at']);
+    case 'nfl-win-totals':
+      return toCsv(await grab('nfl_win_totals', { order: { column: 'edge', ascending: false }, limit: 40 }),
+        ['season', 'team', 'posted_total', 'model_wins', 'edge', 'side', 'fair_over_pct']);
+    default:
+      return null;
+  }
+}
+
+export default { buildWorkbook, buildCsv, CSV_SHEETS, FINDINGS };
