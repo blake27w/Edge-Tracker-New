@@ -95,7 +95,11 @@ const BOOK_LABELS = {
 // free (500/mo) polls slowly; paid tiers poll near real-time. Override with
 // INTERVAL_ODDS. Frequent polling is what powers line-movement / steam / RLM
 // detection — the free tier is really for testing; use Starter+ for live edges.
-const ODDS_MIN_BY_TIER = { free: 180, starter: 5, pro: 2 };
+// Agent WAKE cadence (min). The odds agent self-paces which league keys it
+// actually fetches per wake (strike 4m / near 10m / mid 30m / idle 3h), so a
+// faster wake only enables the strike window — idle/mid keys still wait their
+// full interval via the per-key dedup, so it does NOT add spend.
+const ODDS_MIN_BY_TIER = { free: 180, starter: 3, pro: 2 };
 // Timezone for clock-scheduled agents (injury). Game-day report windows are
 // local-time concepts, so default to US Eastern.
 const SCHEDULE_TZ = env.SCHEDULE_TZ || 'America/New_York';

@@ -114,12 +114,16 @@ function recordSpend(sport, hdr) {
 }
 
 // ── Adaptive pacing: fetch fast only when it matters ─────────────
-// A key is fetched on a cadence set by how close its sport's games are:
-//   NEAR (a game is live or starts within 60m) → every 10 min
-//   MID  (a game starts within 12h)            → every 30 min
-//   IDLE (nothing near)                        → every 3h (slate discovery)
-// On top, a pace governor stretches every interval when the month's burn is
-// ahead of linear pace — self-correcting toward the monthly budget.
+// A key's cadence is set by how close its sport's games are:
+//   STRIKE (live or starts within 30m) → every 4 min  — PROTECTED
+//   NEAR   (starts within 90m)         → every 10 min — PROTECTED
+//   MID    (starts within 12h)         → every 30 min
+//   IDLE   (nothing near)              → every 3h (slate discovery)
+// The pace governor stretches MID/IDLE when the month's burn runs hot — but it
+// NEVER throttles STRIKE/NEAR, because that's the window where plays have to
+// appear in time to actually bet them. One call covers a whole league's slate,
+// so the fast window is cheap (a few calls per game-cluster, not per game).
+const STRIKE_MIN = Number(process.env.ODDS_STRIKE_MIN) || 4;
 const NEAR_MIN = Number(process.env.ODDS_NEAR_MIN) || 10;
 const MID_MIN = Number(process.env.ODDS_MID_MIN) || 30;
 const IDLE_MIN = Number(process.env.ODDS_IDLE_MIN) || 180;
@@ -135,18 +139,23 @@ function paceMult() {
   return r <= 1.25 ? 1.5 : r <= 1.6 ? 2.5 : 4;
 }
 
-function sportIntervalMin(sport) {
+// Fetch interval (minutes) for a sport's key. Governor (mult) applies to MID/IDLE
+// ONLY — the strike/near windows stay fast no matter how stressed the budget is.
+function sportIntervalMin(sport, mult) {
   const now = Date.now();
-  let best = IDLE_MIN;
+  let tier = 3; // 3 idle · 2 mid · 1 near · 0 strike
   for (const g of getGames()) {
     if (g.sport !== sport) continue;
     const t = Date.parse(g.commence_time || '');
     if (!Number.isFinite(t)) continue;
     const dt = t - now;
-    if (dt <= 60 * 60_000 && dt >= -4 * 3600_000) return NEAR_MIN; // live or <60m out
-    if (dt > 0 && dt <= 12 * 3600_000) best = Math.min(best, MID_MIN);
+    if (dt <= 30 * 60_000 && dt >= -3.5 * 3600_000) return STRIKE_MIN;      // live or <30m — fastest, protected
+    if (dt <= 90 * 60_000 && dt >= -3.5 * 3600_000) { tier = Math.min(tier, 1); continue; }
+    if (dt > 0 && dt <= 12 * 3600_000) tier = Math.min(tier, 2);
   }
-  return best;
+  if (tier === 1) return NEAR_MIN;        // protected from the governor
+  if (tier === 2) return MID_MIN * mult;
+  return IDLE_MIN * mult;
 }
 
 // ── In-memory last-line map for movement detection ──────────────
@@ -281,8 +290,9 @@ async function run() {
     const keys = meta.leagues || [meta.key];
     // Per-sport monthly cap (in credits).
     if ((budget.bySport[sport] || 0) >= capOf(sport)) { skippedBudget++; continue; }
-    // How often this sport's keys deserve a refresh right now.
-    const ivMs = sportIntervalMin(sport) * mult * 60_000;
+    // How often this sport's keys deserve a refresh right now (governor applies
+    // to mid/idle only; strike/near stay fast).
+    const ivMs = sportIntervalMin(sport, mult) * 60_000;
 
     for (const key of keys) {
       if (active && !active.has(key) && key !== 'golf' && key !== 'tennis') { skippedSeason++; continue; }
