@@ -152,6 +152,7 @@ const AGENT_DEFS = {
   'nfl-totals': { label: 'NFL Scoring/Totals Model', emoji: '🏈', min: 720 },
   // Self-gates to NFL games near kickoff — dormant (cheap no-op) in the offseason.
   'nfl-inactives': { label: 'NFL Inactives-Speed', emoji: '🚑', min: 10 },
+  'nfl-live': { label: 'NFL Live In-Game', emoji: '🔴', min: 1 },
   // Self-gates to NFL games — dormant (cheap no-op) in the offseason.
   'nfl-line-move': { label: 'NFL Opener→Close Lines', emoji: '📐', min: 30 },
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
