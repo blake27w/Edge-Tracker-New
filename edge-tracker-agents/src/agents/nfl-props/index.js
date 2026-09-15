@@ -1,77 +1,57 @@
 // ══════════════════════════════════════════════════════════════
 // NFL Prop Workload-Regression Baselines. Player props live and die on
 // VOLUME (carries, targets, pass attempts), and last year's volume is
-// the strongest free prior. This pulls prior-season usage leaders from
-// ESPN, converts to a per-game rate, and REGRESSES toward the positional
-// mean (volume is sticky but not fully — role changes, committees). The
-// output is a per-player workload baseline that seeds in-season prop
-// edges once books post lines; it is NOT a bet by itself.
+// the strongest free prior. This pulls per-player usage from nflverse
+// weekly stat lines (ESPN retired its /leaders endpoint), converts to a
+// per-game rate over REAL games played, and REGRESSES toward the
+// positional mean (volume is sticky but not fully — role changes,
+// committees). The output is a per-player workload baseline that seeds
+// in-season prop edges once books post lines; it is NOT a bet by itself.
 //   projected/g = mean + (lastYear/g − mean) × carryover
-// Reference data, refreshed weekly. $0 — free ESPN leaders.
+// Per the props backtest (#119): baselines only — no rolling in-season
+// usage model. Reference data, refreshed weekly. $0 — free nflverse.
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setNflProps } from '../../store/index.js';
-import { lastCompletedSeason } from '../shared/nfl.js';
+import { upcomingSeason } from '../shared/nfl.js';
+import { playerUsage } from '../shared/nflverse.js';
 
-const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 const CARRY = Number(process.env.NFL_PROP_CARRYOVER) || 0.70; // volume stickiness year to year
-// ESPN leader category → our normalized workload stat. Multiple candidate
-// names per stat (ESPN naming drifts); first that resolves wins.
+const MIN_GAMES = Number(process.env.NFL_PROP_MIN_GAMES) || 4; // below this a per-game rate is noise
 const WANTED = [
-  { stat: 'rush_att', label: 'Rush Attempts', cats: ['rushingAttempts'] },
-  { stat: 'targets', label: 'Targets', cats: ['receivingTargets', 'receptions'] },
-  { stat: 'pass_att', label: 'Pass Attempts', cats: ['passingAttempts'] },
+  { stat: 'rush_att', label: 'Rush Attempts' },
+  { stat: 'targets', label: 'Targets' },
+  { stat: 'pass_att', label: 'Pass Attempts' },
 ];
 
-async function fetchLeaders(season) {
-  const res = await fetch(`${BASE}/leaders?season=${season}&seasontype=2`);
-  if (!res.ok) throw new Error(`ESPN leaders ${res.status}`);
-  const data = await res.json();
-  const cats = data?.leaders?.categories || data?.categories || [];
-  const map = {}; // category name -> [{ name, team, value, games }]
-  for (const c of cats) {
-    const name = c.name || c.abbreviation;
-    if (!name) continue;
-    map[name] = (c.leaders || []).map((l) => {
-      const a = l.athlete || {};
-      return {
-        name: a.displayName || a.shortName || '',
-        team: (l.team || a.team || {}).abbreviation || (l.team || {}).displayName || '',
-        value: Number(l.value),
-        // ESPN sometimes nests games played in the athlete statistics; best-effort.
-        games: Number(a.gamesPlayed) || null,
-      };
-    }).filter((x) => x.name && Number.isFinite(x.value));
-  }
-  return map;
-}
-
 async function run() {
-  const season = lastCompletedSeason();
-  let leaders;
-  try { leaders = await fetchLeaders(season); }
-  catch (e) { return { summary: `ESPN leaders fetch failed: ${e.message}` }; }
+  const season = upcomingSeason();       // the season these baselines are FOR
+  const prior = season - 1;              // the completed season they come FROM
+  let players;
+  try { players = await playerUsage(prior); }
+  catch (e) { return { summary: `nflverse usage fetch failed: ${e.message}` }; }
 
   const now = new Date().toISOString();
   const out = [];
-  for (const { stat, label, cats } of WANTED) {
-    const catName = cats.find((c) => (leaders[c] || []).length);
-    const list = catName ? leaders[catName] : [];
+  for (const { stat, label } of WANTED) {
+    const list = players
+      .filter((p) => p.games >= MIN_GAMES && p[stat] > 0)
+      .map((p) => ({ ...p, pg: p[stat] / p.games }))
+      .sort((a, b) => b.pg - a.pg)
+      .slice(0, 60); // the volume-relevant tier; the mean below is THEIR mean
     if (!list.length) continue;
-    // Per-game rates (÷ games if known, else assume a full 17-game season).
-    const perGame = list.map((p) => ({ ...p, pg: p.value / (p.games && p.games >= 1 ? p.games : 17) }));
-    const mean = perGame.reduce((s, p) => s + p.pg, 0) / perGame.length;
-    for (const p of perGame) {
+    const mean = list.reduce((s, p) => s + p.pg, 0) / list.length;
+    for (const p of list) {
       const projected = Math.round((mean + (p.pg - mean) * CARRY) * 10) / 10;
       out.push({
-        season: season + 1, stat, stat_label: label, player: p.name, team: p.team,
+        season, stat, stat_label: label, player: p.name, team: p.team,
         last_pg: Math.round(p.pg * 10) / 10, projected_pg: projected,
-        games_est: !(p.games >= 1), updated_at: now,
+        games: p.games, position: p.position, updated_at: now,
       });
     }
   }
-  // Keep the volume-relevant players (top by projected per game, per stat).
+  // Keep the top of each stat for the app + DB.
   const top = [];
   for (const { stat } of WANTED) {
     top.push(...out.filter((r) => r.stat === stat).sort((a, b) => b.projected_pg - a.projected_pg).slice(0, 40));
@@ -79,11 +59,11 @@ async function run() {
   setNflProps(top);
 
   if (top.length) {
-    try { await db.upsert('nfl_prop_baselines', top.map(({ games_est, ...r }) => r), 'season,stat,player'); }
+    try { await db.upsert('nfl_prop_baselines', top.map(({ games, position, ...r }) => r), 'season,stat,player'); }
     catch (e) { logger.warn('nfl-props', e.message); }
   }
   const byStat = WANTED.map(({ stat, label }) => `${label}:${out.filter((r) => r.stat === stat).length}`).join(', ');
-  return { summary: out.length ? `workload baselines from ${season} · ${byStat}` : `no leader data for ${season} yet`, data: { players: top.length } };
+  return { summary: out.length ? `workload baselines from ${prior} (nflverse, real games) · ${byStat}` : `no ${prior} usage data yet`, data: { players: top.length } };
 }
 
 export default { name: 'nfl-props', run };

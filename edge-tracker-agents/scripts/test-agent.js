@@ -33,7 +33,8 @@ async function main() {
   }
   await detectModel();
   for (const name of names) {
-    const loader = MODULES[name];
+    // Any agent not in the alias map above loads by its folder name.
+    const loader = MODULES[name] || (() => import(`../src/agents/${name}/index.js`));
     if (!loader) { console.error(`Unknown agent: ${name}`); continue; }
     const mod = (await loader()).default;
     console.log(`\n▶ Running ${name}…`);
