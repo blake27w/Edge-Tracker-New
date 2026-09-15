@@ -284,12 +284,25 @@ async function run() {
     : sportCap(sport));
   const mult = paceMult();
 
+  // Football floor: in football season, hold back the credits NFL/NCAAF have
+  // NOT spent yet so a non-football sport can't drain the month out from under
+  // them before their slate fills (see config's FOOTBALL_PRIORITY).
+  const footballOn = oddsApi.footballPriorityOn();
+  const footballFloor = footballOn
+    ? oddsApi.footballSports.reduce((t, s) => t + Math.max(0, capOf(s) - (budget.bySport[s] || 0)), 0)
+    : 0;
+  const isFootball = (sport) => oddsApi.footballSports.includes(sport);
+  // Credits this sport is actually allowed to touch right now.
+  const spendable = (sport) => (isFootball(sport) ? budget.remaining : budget.remaining - footballFloor);
+  let skippedFootballFloor = 0;
+
   for (const [sport, meta] of Object.entries(SPORTS)) {
     // The Odds API has no bare golf/tennis key (event-specific only) — skip to avoid 404s.
     if (meta.oddsSkip) continue;
     const keys = meta.leagues || [meta.key];
     // Per-sport monthly cap (in credits).
     if ((budget.bySport[sport] || 0) >= capOf(sport)) { skippedBudget++; continue; }
+    if (spendable(sport) <= 0) { skippedFootballFloor++; continue; }
     // How often this sport's keys deserve a refresh right now (governor applies
     // to mid/idle only; strike/near stay fast).
     const ivMs = sportIntervalMin(sport, mult) * 60_000;
@@ -298,6 +311,7 @@ async function run() {
       if (active && !active.has(key) && key !== 'golf' && key !== 'tennis') { skippedSeason++; continue; }
       if (budget.remaining <= 0) { skippedBudget++; break; }
       if ((budget.bySport[sport] || 0) >= capOf(sport)) { skippedBudget++; break; }
+      if (spendable(sport) <= 0) { skippedFootballFloor++; break; }
       if (Date.now() - (lastKeyFetch.get(key) || 0) < ivMs) { skippedPaced++; continue; }
 
       try {
@@ -363,7 +377,7 @@ async function run() {
   setIntel('movements', movements);
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''}`,
     gamesMonitored: allGames.length,
     data: { games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls, budget: getOddsBudget() },
   };

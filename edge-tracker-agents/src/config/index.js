@@ -56,6 +56,27 @@ for (const k of Object.keys(BUDGET_ALLOCATION)) {
 }
 const ODDS_SKIP_SPORTS = new Set(String(env.ODDS_SKIP_SPORTS || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 
+// ── Football priority (Sep–Jan) ─────────────────────────────────
+// The allocation shares above are CEILINGS, and spend is sequential — so a
+// share alone doesn't protect football. In Sep 2026 MLB (3846) and soccer
+// (1704) drained the month's 20k by day 15 while NFL had used 1064 of its
+// ~7450 ceiling: football's share was never spent because the global pool was
+// already gone. So in football season NFL + NCAAF also get a FLOOR — the
+// credits they haven't spent yet are held back, and non-football sports may
+// not dip into them.
+// FOOTBALL_PRIORITY = auto (default, on Sep–Jan) | true (always) | false (off).
+const FOOTBALL_SPORTS = ['NFL', 'NCAAF'];
+const FOOTBALL_SEASON_MONTHS = new Set([8, 9, 10, 11, 0]); // Sep, Oct, Nov, Dec, Jan
+const FOOTBALL_PRIORITY = (() => {
+  const v = String(env.FOOTBALL_PRIORITY || 'auto').trim().toLowerCase();
+  return v === 'true' ? true : v === 'false' ? false : 'auto';
+})();
+// Evaluated per call, not frozen at boot — a long-running process crosses months.
+function footballPriorityOn(now = new Date()) {
+  return FOOTBALL_PRIORITY === true
+    || (FOOTBALL_PRIORITY === 'auto' && FOOTBALL_SEASON_MONTHS.has(now.getMonth()));
+}
+
 // The Odds API sport keys. Soccer covers 7 leagues we care about.
 const SPORTS = {
   MLB: { key: 'baseball_mlb', emoji: '⚾', hasTotals: true },
@@ -250,6 +271,9 @@ const config = {
     tier: ODDS_API_TIER,
     monthlyBudget: ODDS_MONTHLY_BUDGET,
     allocation: BUDGET_ALLOCATION,
+    footballSports: FOOTBALL_SPORTS,
+    footballPriority: FOOTBALL_PRIORITY,
+    footballPriorityOn,
     base: 'https://api.the-odds-api.com/v4',
   },
 

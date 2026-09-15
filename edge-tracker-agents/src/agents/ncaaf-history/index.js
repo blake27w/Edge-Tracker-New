@@ -13,6 +13,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
+import { coreClosingOdds } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const FROM_SEASON = Number(process.env.NCAAF_HISTORY_FROM) || 2024;
@@ -75,6 +76,8 @@ async function closingLine(g) {
     const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
     if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null };
   }
+  // ESPN empties pickcenter for older games; the core API still has them.
+  if (!best) best = await coreClosingOdds('college-football', g.id);
   return best;
 }
 
@@ -138,7 +141,7 @@ async function run() {
   let known = new Map();
   try { const ex = await db.select('ncaaf_closing_lines', '*', { limit: 5000 }); for (const r of ex) known.set(r.event_id, r); } catch (_) { /* fresh */ }
   const rows = [];
-  let fetched = 0, missing = 0, total = 0;
+  let fetched = 0, noLine = 0, errors = 0, total = 0;
   for (let s = FROM_SEASON; s <= thisSeason; s++) {
     let finals = [];
     try { finals = await seasonFinals(s); } catch (e) { logger.warn('ncaaf-history', `${s}: ${e.message}`); }
@@ -147,10 +150,18 @@ async function run() {
       g.slot = slotOf(g.date);
       if (known.has(g.id)) { rows.push(known.get(g.id)); continue; }
       if (!cache.has(g.id)) {
-        try { const line = await closingLine(g); fetched++; cache.set(g.id, line ? grade(g, line) : null); } catch (_) { cache.set(g.id, null); }
+        try {
+          const line = await closingLine(g);
+          fetched++;
+          cache.set(g.id, line ? grade(g, line) : null);   // null = ESPN has no line on record
+        } catch (e) {
+          errors++;
+          if (errors <= 3) logger.warn('ncaaf-history', `${g.id}: ${e.message}`);
+          continue;                                        // leave uncached so next run retries
+        }
       }
       const r = cache.get(g.id);
-      if (r) rows.push(r); else missing++;
+      if (r) rows.push(r); else noLine++;
     }
   }
   const report = rollup(rows);
@@ -162,8 +173,8 @@ async function run() {
   }
   const tp = report.top25Primetime;
   return {
-    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
-    data: { games: rows.length, missing, top25Primetime: tp },
+    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
+    data: { games: rows.length, noLine, errors, top25Primetime: tp },
   };
 }
 
