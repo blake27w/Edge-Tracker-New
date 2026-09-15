@@ -88,6 +88,8 @@ async function handleMcp(req, res, url) {
           market: { type: 'string', description: 'pick only: total | ml | spread' },
           side: { type: 'string', description: 'pick only: Over/Under or the team name' },
           line: { type: 'number' }, odds: { type: 'number' }, confidence: { type: 'number' },
+          signals: { type: 'string', description: 'comma-separated signal ids, e.g. dog,key,buyback' },
+          player: { type: 'string', description: 'prop picks: player name' }, stat: { type: 'string', description: 'prop picks: rush_yds | rec_yds | receptions | rush_att | targets | pass_yds' },
         }, required: ['body'] },
       }] });
     case 'tools/call': {
@@ -427,7 +429,8 @@ const server = http.createServer(async (req, res) => {
         system: systemHealth(),
       });
     case '/plays':
-      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs(), pace: getNflPace(), style: getIntel('nflStyle') }, predMarket: getPredMarket(), weatherChanges: getIntel('weatherChange'), nflLive: getIntel('nflLive'), watchdog: getWatchdog() });
+      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs(), pace: getNflPace(), style: getIntel('nflStyle') }, predMarket: getPredMarket(), weatherChanges: getIntel('weatherChange'), nflLive: getIntel('nflLive'),
+      ncaaf: getIntel('ncaaf'), propLogs: getIntel('propLogs'), history: getIntel('history'), ncaafHistory: getIntel('ncaafHistory'), watchdog: getWatchdog() });
     case '/opportunity':
       try { return json(res, 200, await buildOpportunity(url)); }
       catch (e) { logger.error('opportunity', e.message); return json(res, 500, { error: 'opportunity failed', detail: e.message }); }

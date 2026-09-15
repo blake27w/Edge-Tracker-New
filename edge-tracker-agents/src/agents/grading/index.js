@@ -65,6 +65,8 @@ function lossAnomaly(p, f) {
 
 // ── Player-prop grading from ESPN box scores ─────────────────────
 // stat_type → { labels: ESPN stat abbreviations, category?: stat group, altGA? }
+// Short stat ids used by research prop picks (nfl-props baselines) → grading stat_type.
+const RESEARCH_STAT = { rush_yds: 'player_rush_yds', rec_yds: 'player_reception_yds', receptions: 'player_receptions', pass_yds: 'player_pass_yds', rush_att: 'player_rush_att', targets: 'player_targets', pass_att: 'player_pass_att' };
 const STAT = {
   player_points: { labels: ['PTS'], altGA: true },          // NBA PTS; NHL falls back to G+A
   player_rebounds: { labels: ['REB'] },
@@ -74,6 +76,9 @@ const STAT = {
   player_rush_yds: { labels: ['YDS'], category: 'rushing' },
   player_reception_yds: { labels: ['YDS'], category: 'receiving' },
   player_receptions: { labels: ['REC'], category: 'receiving' },
+  player_rush_att: { labels: ['CAR'], category: 'rushing' },
+  player_targets: { labels: ['TGTS'], category: 'receiving' },
+  player_pass_att: { labels: ['C/ATT'], category: 'passing', att: true },
   batter_hits: { labels: ['H'], category: 'batting' },
   pitcher_strikeouts: { labels: ['K', 'SO'], category: 'pitching' },
 };
@@ -103,7 +108,7 @@ function statValue(box, player, spec) {
       if (!ath) continue;
       for (const w of spec.labels) {
         const i = labels.indexOf(w);
-        if (i >= 0) { const v = statNum(ath.stats?.[i]); if (v != null) return v; }
+        if (i >= 0) { if (spec.att) { const m = /(\d+)\s*\/\s*(\d+)/.exec(String(ath.stats?.[i] || '')); if (m) return Number(m[2]); continue; } const v = statNum(ath.stats?.[i]); if (v != null) return v; }
       }
       if (spec.altGA) { // NHL points = goals + assists
         const gi = labels.indexOf('G'), ai = labels.indexOf('A');
@@ -276,7 +281,11 @@ async function run() {
     const awayName = norm(parts[0]), homeName = norm(parts[1]);
     const f = (finalsBySport[p.sport] || []).find((x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick));
     if (!f) continue;
-    const result = gradePlay(p, f);
+    let result;
+    if (p.market === 'prop' && p.player && p.stat) {
+      const stat_type = RESEARCH_STAT[p.stat] || p.stat;
+      result = await gradeProp({ ...p, stat_type }, f, ESPN_PATH[p.sport] || 'football/nfl');
+    } else result = gradePlay(p, f);
     if (!result) continue;
     const stake = config.rules.unitDollars;
     const pnl = result === 'win' ? Math.round(stake * profitPerUnit(p.odds || -110) * 100) / 100

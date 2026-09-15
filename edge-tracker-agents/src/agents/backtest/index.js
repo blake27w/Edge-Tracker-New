@@ -234,11 +234,16 @@ async function run() {
   };
   // Research picks get their own scorecard (separate from the signal track record).
   try {
-    const rr = await db.select('research_notes', 'status,pnl', { match: { type: 'pick' }, in: { status: ['win', 'loss', 'push'] }, limit: 2000 });
+    const rr = await db.select('research_notes', 'status,pnl,signals,market,sport,confidence', { match: { type: 'pick' }, in: { status: ['win', 'loss', 'push'] }, limit: 2000 });
     if (rr.length) {
       const a = blank();
-      for (const r of rr) { a.staked += config.rules.unitDollars; tally(a, { status: r.status, pnl: r.pnl, unit_dollars: 0 }); }
-      report.research = finalize(a);
+      const rrows = rr.map((r) => ({ status: r.status, pnl: r.pnl, unit_dollars: 0, signals: r.signals, market: r.market, sport: r.sport, confidence: r.confidence }));
+      for (const r of rrows) { a.staked += config.rules.unitDollars; tally(a, r); }
+      // Manual-read learning loop: which tagged signals, markets, and sports are actually winning.
+      report.research = { ...finalize(a),
+        bySignal: group(rrows, (r) => Array.isArray(r.signals) ? r.signals : [], { min: 1 }),
+        byMarket: group(rrows, (r) => r.market || 'other', { min: 1 }),
+        bySport: group(rrows, (r) => r.sport || 'other', { min: 1 }) };
     } else report.research = finalize(blank());
   } catch (_) { report.research = finalize(blank()); }
 

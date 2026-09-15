@@ -34,6 +34,10 @@ export async function addResearch(d = {}) {
     line: isPick && d.line != null && d.line !== '' ? Number(d.line) : null,
     odds: isPick && d.odds != null && d.odds !== '' ? parseInt(d.odds, 10) : null,
     confidence: d.confidence != null && d.confidence !== '' ? Number(d.confidence) : null,
+    // Signal tags (e.g. "dog,key,buyback") so manual reads build per-signal records like model plays.
+    signals: Array.isArray(d.signals) ? d.signals.map(String) : (d.signals ? String(d.signals).split(/[,\s]+/).filter(Boolean) : null),
+    player: isPick && d.player ? String(d.player) : null,   // prop picks: player name
+    stat: isPick && d.stat ? String(d.stat) : null,         // prop picks: rush_yds | rec_yds | receptions | ...
     status: isPick ? 'pending' : 'active',
     created_at: new Date().toISOString(),
   };

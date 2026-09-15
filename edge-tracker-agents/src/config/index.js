@@ -33,20 +33,28 @@ const ODDS_MONTHLY_BUDGET = ODDS_TIER_BUDGETS[ODDS_API_TIER] ?? ODDS_TIER_BUDGET
 
 // Budget allocation across sports (relative caps; out-of-season sports are
 // skipped automatically, so in-season ones effectively get more). Sums to 1.0.
+// Football-season defaults (Sep–Jan). Override any share with
+// ODDS_ALLOC_<SPORT>=0.xx (e.g. ODDS_ALLOC_SOCCER=0.02); skip a sport entirely
+// with ODDS_SKIP_SPORTS=SOCCER,WNBA (comma-separated).
 const BUDGET_ALLOCATION = {
-  MLB: 0.23,
-  NBA: 0.14,
-  NCAAB: 0.12,
-  NHL: 0.10,
-  NCAAF: 0.08,
-  SOCCER: 0.08,
-  NFL: 0.05,
-  WNBA: 0.05,
-  TENNIS: 0.05,
+  NFL: 0.32,
+  NCAAF: 0.16,
+  MLB: 0.14,
+  NBA: 0.10,
+  NCAAB: 0.06,
+  NHL: 0.06,
+  SOCCER: 0.03,
   UFC: 0.04,
-  BOXING: 0.03,
-  GOLF: 0.03,
+  BOXING: 0.02,
+  WNBA: 0.02,
+  TENNIS: 0.03,
+  GOLF: 0.02,
 };
+for (const k of Object.keys(BUDGET_ALLOCATION)) {
+  const v = Number(env[`ODDS_ALLOC_${k}`]);
+  if (Number.isFinite(v) && v >= 0) BUDGET_ALLOCATION[k] = v;
+}
+const ODDS_SKIP_SPORTS = new Set(String(env.ODDS_SKIP_SPORTS || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 
 // The Odds API sport keys. Soccer covers 7 leagues we care about.
 const SPORTS = {
@@ -70,6 +78,7 @@ const SPORTS = {
   TENNIS: { key: 'tennis', emoji: '🎾', hasTotals: false, oddsSkip: true },
   GOLF: { key: 'golf', emoji: '⛳', hasTotals: false, oddsSkip: true },
 };
+for (const k of ODDS_SKIP_SPORTS) if (SPORTS[k]) SPORTS[k].oddsSkip = true;
 
 // The Odds API bills by market × region, NOT by bookmaker — so every book here
 // is FREE edge surface: more books = more chances one is slow (stale lines,
@@ -153,6 +162,11 @@ const AGENT_DEFS = {
   // Self-gates to NFL games near kickoff — dormant (cheap no-op) in the offseason.
   'nfl-inactives': { label: 'NFL Inactives-Speed', emoji: '🚑', min: 10 },
   'nfl-live': { label: 'NFL Live In-Game', emoji: '🔴', min: 1 },
+  // College football Elo + situational + signal scoring on already-ingested odds ($0). NCAAF_MODEL=true to enable.
+  'ncaaf-model': { label: 'NCAAF Model', emoji: '🏈', min: 360 },
+  // Closing-line history for every NFL game (free ESPN pickcenter) → fav/dog, O/U by slot, div, band. Weekly.
+  'nfl-history': { label: 'NFL Closing-Line History', emoji: '📚', min: 10080 },
+  'ncaaf-history': { label: 'NCAAF Closing-Line History (Top 25)', emoji: '📚', min: 10080 },
   // Self-gates to NFL games — dormant (cheap no-op) in the offseason.
   'nfl-line-move': { label: 'NFL Opener→Close Lines', emoji: '📐', min: 30 },
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
