@@ -277,7 +277,16 @@ async function run() {
     if (!active) return true;
     return (meta.leagues || [meta.key]).some((k) => active.has(k));
   };
-  const actives = Object.entries(SPORTS).filter(([s, m]) => isActive(s, m)).map(([s]) => s);
+  const footballOn = oddsApi.footballPriorityOn();
+  const isFootball = (sport) => oddsApi.footballSports.includes(sport);
+  // Football stays in the denominator for the whole of its season, even on days
+  // the API lists no slate yet. Otherwise its 0.48 share drops out in early
+  // September and every other ceiling inflates to fill the gap: soccer's cap was
+  // ~2040 rather than ~700, so its 1704 never tripped a limit. Nothing was
+  // overspending — the ceilings were just being recomputed loose.
+  const actives = Object.entries(SPORTS)
+    .filter(([s, m]) => isActive(s, m) || (footballOn && isFootball(s) && !m.oddsSkip))
+    .map(([s]) => s);
   const sumAlloc = actives.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0) || 1;
   const capOf = (sport) => (actives.includes(sport)
     ? Math.floor(oddsApi.monthlyBudget * 0.85 * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc))
@@ -287,11 +296,9 @@ async function run() {
   // Football floor: in football season, hold back the credits NFL/NCAAF have
   // NOT spent yet so a non-football sport can't drain the month out from under
   // them before their slate fills (see config's FOOTBALL_PRIORITY).
-  const footballOn = oddsApi.footballPriorityOn();
   const footballFloor = footballOn
     ? oddsApi.footballSports.reduce((t, s) => t + Math.max(0, capOf(s) - (budget.bySport[s] || 0)), 0)
     : 0;
-  const isFootball = (sport) => oddsApi.footballSports.includes(sport);
   // Credits this sport is actually allowed to touch right now.
   const spendable = (sport) => (isFootball(sport) ? budget.remaining : budget.remaining - footballFloor);
   let skippedFootballFloor = 0;
