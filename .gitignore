@@ -1,0 +1,9 @@
+# Claude Code: agent + skill definitions are shared (committed); machine-local
+# settings and scratch state are not.
+.claude/settings.local.json
+.claude/**/*.local.json
+
+# The agents package carries its own .gitignore (node_modules, .env, logs).
+# These cover the repo root, which had none.
+.DS_Store
+*.log
