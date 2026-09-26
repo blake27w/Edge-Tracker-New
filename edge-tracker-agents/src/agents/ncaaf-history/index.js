@@ -13,7 +13,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
-import { coreClosingOdds } from '../shared/espn-odds.js';
+import { coreClosingOdds, pricesOf } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const FROM_SEASON = Number(process.env.NCAAF_HISTORY_FROM) || 2024;
@@ -74,7 +74,7 @@ async function closingLine(g) {
       if (m) { const n = Number(m[2]); spreadHome = m[1] === g.homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
     const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
-    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null };
+    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null, ...pricesOf(p) };
   }
   // ESPN empties pickcenter for older games; the core API still has them.
   if (!best) best = await coreClosingOdds('college-football', g.id);
@@ -88,6 +88,8 @@ function grade(g, line) {
     home: g.home, away: g.away, home_score: g.hs, away_score: g.as, neutral: g.neutral, conference_game: g.conf,
     home_rank: g.homeRank, away_rank: g.awayRank, ranked_teams: (g.homeRank ? 1 : 0) + (g.awayRank ? 1 : 0),
     close_spread_home: line.spreadHome, close_total: line.total, provider: line.provider,
+    over_odds: line.overOdds ?? null, under_odds: line.underOdds ?? null,
+    home_spread_odds: line.homeSpreadOdds ?? null, away_spread_odds: line.awaySpreadOdds ?? null,
     fav: null, fav_size: null, fav_covered: null, home_covered: null, total_result: null, ranked_fav: null, ranked_dog: null,
   };
   if (line.spreadHome != null) {
@@ -148,7 +150,12 @@ async function run() {
     for (const g of finals) {
       total++;
       g.slot = slotOf(g.date);
-      if (known.has(g.id)) { rows.push(known.get(g.id)); continue; }
+      // Rows written before closing prices were captured carry a line but no
+      // odds — re-fetch those once so they backfill. Games ESPN has no price
+      // for will keep re-fetching, which is free but slow; acceptable weekly.
+      const k = known.get(g.id);
+      const priced = k && (k.over_odds != null || k.under_odds != null || k.home_spread_odds != null);
+      if (k && priced) { rows.push(k); continue; }
       if (!cache.has(g.id)) {
         try {
           const line = await closingLine(g);

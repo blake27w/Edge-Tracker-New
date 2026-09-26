@@ -15,6 +15,20 @@
 // ══════════════════════════════════════════════════════════════
 const CORE = 'https://sports.core.api.espn.com/v2/sports/football/leagues';
 
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+
+// The prices attached to a line. Without these a hit rate can't be turned into
+// a return: the same 52.9% is +3.3% at -105, +1.0% at -110 and -1.0% at -115.
+// pickcenter entries and core-API odds items use identical field names here.
+export function pricesOf(o) {
+  return {
+    overOdds: num(o.overOdds),
+    underOdds: num(o.underOdds),
+    homeSpreadOdds: num(o.homeTeamOdds?.spreadOdds),
+    awaySpreadOdds: num(o.awayTeamOdds?.spreadOdds),
+  };
+}
+
 // league: 'nfl' | 'college-football'. Returns { spreadHome, total, provider }
 // or null when ESPN has no line on record. Throws on a failed fetch, so the
 // caller can tell "no line" apart from "couldn't ask".
@@ -34,6 +48,7 @@ export async function coreClosingOdds(league, eventId) {
         total: Number.isFinite(total) ? total : null,
         spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
         provider: it.provider?.name || null,
+        ...pricesOf(it),
       };
     }
   }

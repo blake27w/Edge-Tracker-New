@@ -25,3 +25,16 @@ create table if not exists ncaaf_closing_lines (
   ranked_fav boolean, ranked_dog boolean
 );
 create index if not exists ncaaf_closing_lines_season_idx on ncaaf_closing_lines (season, week);
+
+-- ── Closing prices (2026-09-26) ─────────────────────────────────
+-- The line alone can't be turned into a return: 52.9% is +3.3% at -105,
+-- +1.0% at -110 and -1.0% at -115. ESPN returns these in the same payload.
+alter table nfl_closing_lines   add column if not exists over_odds        numeric;
+alter table nfl_closing_lines   add column if not exists under_odds       numeric;
+alter table nfl_closing_lines   add column if not exists home_spread_odds numeric;
+alter table nfl_closing_lines   add column if not exists away_spread_odds numeric;
+
+alter table ncaaf_closing_lines add column if not exists over_odds        numeric;
+alter table ncaaf_closing_lines add column if not exists under_odds       numeric;
+alter table ncaaf_closing_lines add column if not exists home_spread_odds numeric;
+alter table ncaaf_closing_lines add column if not exists away_spread_odds numeric;

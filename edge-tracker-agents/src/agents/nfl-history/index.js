@@ -14,7 +14,7 @@ import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
 import { getSeasonFinals, upcomingSeason } from '../shared/nfl.js';
-import { coreClosingOdds } from '../shared/espn-odds.js';
+import { coreClosingOdds, pricesOf } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 const FROM_SEASON = Number(process.env.NFL_HISTORY_FROM) || 2024;
@@ -61,7 +61,7 @@ async function closingLine(eventId) {
       if (m) { const fav = m[1], n = Number(m[2]); const homeAbbr = j.boxscore?.teams?.find((t) => t.homeAway === 'home')?.team?.abbreviation; spreadHome = fav === homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
     const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
-    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null };
+    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null, ...pricesOf(p) };
   }
   // ESPN empties pickcenter for older games; the core API still has them.
   if (!best) best = await coreClosingOdds('nfl', eventId);
@@ -74,6 +74,8 @@ function grade(g, line) {
     season: g.season, week: g.week, seasontype: g.seasontype, event_id: g.id, date: g.date, slot: g.slot, primetime: PRIME.has(g.slot),
     home: g.home, away: g.away, home_score: g.hs, away_score: g.as, divisional: !!(DIV[g.home] && DIV[g.home] === DIV[g.away]),
     close_spread_home: line.spreadHome, close_total: line.total, provider: line.provider,
+    over_odds: line.overOdds ?? null, under_odds: line.underOdds ?? null,
+    home_spread_odds: line.homeSpreadOdds ?? null, away_spread_odds: line.awaySpreadOdds ?? null,
     fav: null, fav_size: null, fav_covered: null, home_covered: null, total_result: null,
   };
   if (line.spreadHome != null) {
