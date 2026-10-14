@@ -1,37 +1,141 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-09-16 — learning-loop bundle applied; history closing-line fix; football budget priority.
+Last updated: 2026-10-14 — verified the Oct 1 budget reset (the fixes worked), shipped
+function-first IA phase 1 on a branch, bootstrapped the repo's first automated checks,
+and audited line-movement tracking end to end.
 
 ## Current state
 
-Four commits on `origin/main` this session (direct to main per Blake's instruction — see D2):
+**Branch `feat/function-first-games` — 4 commits, pushed, PR open. Not merged.**
 
-- `812fde1` — learning-loop bundle: NCAAF model, closing-line history (NFL + NCAAF), prop baselines from box scores, signal-tagged research picks. 10 files, 3 new agent dirs.
-- `dfc012c` — `edge-tracker-agents/scripts/migrate-research.sql` (idempotent).
-- `fc75f15` — core-API closing-line fallback + football floor.
-- `7c6571d` — football stays in the cap denominator all season.
+- `a918fc1` — Edge Tracker's `.claude/` pipeline made independent of Pool Room Pro's.
+- `9539bb9` — function-first IA phase 1: consolidated Games view + 6 review fixes.
+- `630d22c` — `tools/smoke.mjs`, the first automated check in this repo.
+- `f455999` — CORS allows local dev origins.
 
-Deploy is live and all four new/changed agents ran. `nfl-props` rewrite works (1395 players off box scores, ESPN `/leaders` no longer used). `ncaaf-model` builds Elo fine (241 teams / 185 games).
+### The Oct 1 reset: the September fixes worked
 
-**The binding constraint is the odds budget, not the agents.** 19915/20000 used by day 15, pace ×1.99, below the 1000 reserve — which is why ~30 agents report "no games on the slate" and `gamesMonitored: 0`. Nothing recovers September; the fixes below take effect at the Oct 1 reset.
+Verified against live production (`/health`, `/budget`, `/data-health`).
 
-## What was fixed and why it was wrong
+| | Sept (day 15) | Oct (day 14) |
+|---|---|---|
+| Used | 19915 / 20000 | 12642 / 20000 |
+| Pace ratio | ×1.99 | ×1.4 |
+| Football's share | 1064 of ~7450 | 6518 of 12642 (51.6%) |
 
-- **History agents graded 124 of 588 games.** Not rate-limiting — ESPN empties `pickcenter` for older games (key stays, array goes to `[]`). Verified against 2024 NFL (5/5) and NCAAF (3/3). The core API still serves them. New `src/agents/shared/espn-odds.js` falls back to it. Providers matching `/live/i` are skipped: on ORE/MSU 2024 the live entry reads 39.5 against a 52.5 close, and unfiltered it would silently corrupt the O/U splits.
-- **Football priority.** Two independent mechanisms, both on `FOOTBALL_PRIORITY=auto|true|false`. See D6 — the short version is that ceilings stop other sports *earning* an inflated share, the floor stops them *spending* football's unspent remainder, and neither alone is sufficient.
+- D4's closing-line fallback is confirmed **in the data**: `nfl-history` now has 634 games
+  with closing lines (was 124 of 588); `ncaaf-history` has 2214/2257 (98.1%). The 43 and 3
+  "no line" are games ESPN genuinely lacks — exactly the distinction D5 built.
+- The Supabase migration was run and the Railway vars were set: 53 agents report **0 errors
+  and 0 consecutive failures**, and SOCCER/WNBA/BOXING have no line items at all.
+- "No games on the slate" is down from ~30 agents to 7.
+- **The floor half of D6 is still unexercised.** `N held for football (floor N)` only prints
+  when `skippedFootballFloor > 0`; football is spending its share, so there is no remainder
+  to protect. The ceiling mechanism alone is carrying it. Correctly idle, not broken.
 
-Note for whoever reads the old session log: an earlier claim in-session that sports were "overshooting their caps" was wrong and was corrected before any code was written. Nothing ever exceeded its cap; the caps were being recomputed loose because football was absent from the denominator.
+### `projectedMonthly` is misleading — do not act on it
 
-## Verified vs unverified
+`/budget` reports `projectedMonthly: 27993` against a 20000 budget, but that is a naive
+linear extrapolation of `perDay` that ignores the per-sport ceilings. `capOf()` multiplies
+the budget by **0.85** before dividing by share, so total spend is capped near 17000 by
+construction. With `sumAlloc` = 0.82 in mid-October, `capOf(sport) = floor(20731.7 × alloc)`:
 
-- **Verified:** `node --check` on every changed file; `coreClosingOdds` smoke-tested live against both leagues, returning the close and not the live number; config loads and `footballPriorityOn()` returns true for Sep/Nov, false for Jul.
-- **Unverified:** the budget changes are arithmetic simulation against the posted `/status` numbers, not a live run — there is no test suite in this repo. Real proof is the Oct 1 reset.
+| Sport | Share | Cap | Spent (d14) | Status |
+|---|---|---|---|---|
+| NFL | 0.32 | 6634 | 3200 | 48% |
+| NCAAF | 0.16 | 3317 | 3318 | **CAPPED** |
+| MLB | 0.14 | 2902 | 2906 | **CAPPED** |
+| NBA | 0.10 | 2073 | 35 | 2% |
+| NHL | 0.06 | 1243 | 1245 | **CAPPED** |
+| UFC | 0.04 | 829 | 831 | **CAPPED** |
+
+The odds agent's own status line reads `4 budget-skips` — exactly those four. October lands
+near **18114, under budget**. No tier change is needed. (The tiny overshoots are one
+in-flight request landing past the check; `recordSpend` adds after the guard.)
+
+**The real problem is shape, not size: NCAAF capped out on day 14 of its peak season** and
+gets no refreshes for 17 days. A bigger tier would not fix this — the ceiling is a *share*,
+so every sport scales together and NCAAF still caps at the same point in the month.
+
+## In flight
+
+Nothing half-written. Two things are built but unproven:
+
+1. **The Games view has never been seen on a phone.** It was verified by me at a 375×812
+   viewport against a stubbed backend (4 rapid taps → 1 request; a 500 latches an error
+   without caching; a healthy sport renders over a failed one; a cached payload beats a
+   stale error; refresh triggers exactly one refetch), plus 21/21 smoke checks. Blake was
+   travelling and has not laid eyes on it. **Next step: merge the PR, then open the
+   deployed PWA and tap the GAMES tile.**
+2. **The CORS fix is unverified against a running server.** Confirming it needs a deploy;
+   starting the orchestrator locally would spend real odds-API credits. After deploy:
+   `curl -s -i -H "Origin: http://localhost:4318" <base>/health | grep -i access-control-allow-origin`
+   should echo the origin back. It currently returns nothing.
 
 ## Next steps
 
-1. **Supabase migration — still owed.** SQL Editor → paste `edge-tracker-agents/scripts/migrate-research.sql` → Run. The history agents write to `nfl_closing_lines` / `ncaaf_closing_lines` and will error until it exists.
-2. **Railway vars → Deploy:** `NCAAF_MODEL=true`, `NFL_LIVE=true`, `ODDS_SKIP_SPORTS=SOCCER,WNBA,BOXING`.
-3. **Watch the Oct 1 reset.** Expect the odds status line to show `N held for football (floor N)` when a non-football sport pushes past its share. If it never appears, the floor isn't biting — check `FOOTBALL_PRIORITY`.
-4. **Re-run the history agents after the migration** and check the new counters (`N no line`, `N fetch errors`). If `no line` is still large, ESPN genuinely lacks those games; if `fetch errors` is large, that's ours.
-5. **Decide on the odds tier.** Even with both fixes, pace ×1.99 means the mix is bigger than a 20k starter plan. Either trim with `ODDS_ALLOC_<SPORT>` or move up a tier.
-6. `HANDOFF.md` / `DECISIONS.md` / `CLAUDE.md` / `.claude/` were untracked stubs before this session — commit them so the next session starts from a real state.
+1. **Reshape the odds allocation for football season** (Railway env vars, then deploy).
+   NCAAF is starved at its seasonal peak:
+   `ODDS_ALLOC_NCAAF=0.26`, `ODDS_ALLOC_MLB=0.04`, `ODDS_ALLOC_NFL=0.30`.
+   Same total; +0.10 to NCAAF, −0.10 from MLB (postseason only now), −0.02 from NFL (at 48%
+   of its cap). **Watch early November:** NCAAB entering season adds 0.06 to `sumAlloc` and
+   silently recomputes every ceiling downward mid-season.
+2. **Merge `feat/function-first-games`**, then check the Games view on a phone (above).
+3. **Fix line-movement tracking — the audit is done, the work is not.** See the findings
+   below; this is the next `/feature`.
+4. **~1107 odds credits are ungoverned.** `used` is 12642 but the `bySport` entries sum to
+   11535. Discretionary consumers (props, tennis, derivatives) go through `hasOddsBudget()`
+   at `odds/index.js:65`, which checks only the global reserve and **no per-sport cap** — so
+   ~9% of spend sits outside the allocation system entirely. A hole in the mechanism, not a
+   tuning issue. Not covered by the data-integrity session.
+5. **Four silent data faults** are being handled in a separate session (clv all-suspect,
+   grading 0, the null `line_snapshots` count, the 36-second `/data-health`). The shared
+   theme is that all four are invisible — 53 agents report no errors and `errorsToday: 0`.
+6. **Phase 2 of the IA reorg** — consolidate the next function. Stats is the natural
+   follow-up but is a real data merge across 5 implementations, not a wrapper. Log is the
+   worst risk profile in the file (9 localStorage arrays). Dashboard needs `state.modelResults`
+   / `propModelResults` / `slateData` keyed by sport first.
+
+## Line-movement audit (2026-10-14) — findings, no code written yet
+
+The capture layer is sound and sport-agnostic. Everything downstream of capture is either
+NFL-only, three-minutes-deep, or reads nothing at all.
+
+1. **`line_movements` is a write-only table.** The only reference in the entire codebase is
+   the INSERT at `odds/index.js:356`. No agent reads it, no route serves it, the PWA never
+   fetches it, and it is not in `/data-health`'s monitored list. Every movement ever detected
+   has been archived and never used. There is no learning loop on this signal.
+2. **Live consumers see only the last ~3 minutes.** `sharp` and `public-splits` both read
+   `getIntel('movements')` — the in-memory array from the most recent odds run. Older
+   movement is invisible to steam/RLM detection despite sitting in Postgres. This is why
+   `sharp` reports "no recent line movement" across 13,028 runs.
+3. **Detection state is in-process.** `lastLines` (`odds/index.js:162`) is a plain Map;
+   movement needs two consecutive fetches of the same book/market/side, so every redeploy
+   wipes the baseline and the next fetch of each key detects zero movement.
+4. **Four sports are currently dark.** Movement is computed only inside `normalize()`, which
+   runs only on a fetch — and NCAAF/MLB/NHL/UFC are budget-capped (`break` at
+   `odds/index.js:320`). Movement tracking is hostage to the allocation shape; see step 1.
+5. **Open→close movement is NFL-only.** `nfl-line-move` self-gates to NFL, but
+   `opening_lines` is written sport-agnostically and live consensus exists for every sport.
+   The raw material is there for 12 sports and used for 1. **Cheapest big win.**
+6. **Resolution is capped by cadence** — idle sampling is 3h × throttle, so a line that moves
+   and returns inside that window never existed.
+
+Suggested order: generalize `nfl-line-move` to all sports (reuses existing data, no new API
+spend) → give `line_movements` a reader so steam queries history instead of a 3-minute
+buffer → persist the movement baseline so restarts do not blind it.
+
+**Checked and fine:** snapshot writing. `odds` writes `last_update` while the base schema has
+`fetched_at`, but `schema.sql:794` adds `last_update` and `fetched_at` defaults to `now()`.
+The null count in `/data-health` is almost certainly a count timing out on the largest table —
+consistent with that endpoint taking 36s — not a broken write.
+
+## Environment notes (cost real time this session)
+
+- **The preview tooling reads Pool Room Pro's `launch.json`**, not this repo's, and offers
+  `prp-dev` / `rackpay-*` / `vantyx-web`. `.claude/launch.json` exists here now but was not
+  picked up; the static server had to be started by hand.
+- **A Pool Room Pro Electron process holds ports 4317–4318**, Vantyx holds 3000, and
+  `npx serve` silently falls back to a random port when its port is taken. Three rounds were
+  spent looking at Pool Room Pro's login screen — correct file over `curl`, wrong app in the
+  browser. `lsof -nP -iTCP -sTCP:LISTEN` is the fast diagnosis.
