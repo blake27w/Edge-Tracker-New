@@ -1,8 +1,8 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-10-14 — verified the Oct 1 budget reset (the fixes worked), shipped
-function-first IA phase 1 on a branch, bootstrapped the repo's first automated checks,
-and audited line-movement tracking end to end.
+Last updated: 2026-10-14 — verified the Oct 1 budget reset (the fixes worked), reshaped the
+odds allocation so NCAAF is no longer starved, shipped function-first IA phase 1 on a branch,
+bootstrapped the repo's first automated checks, and audited line-movement tracking end to end.
 
 ## Current state
 
@@ -57,6 +57,38 @@ in-flight request landing past the check; `recordSpend` adds after the guard.)
 gets no refreshes for 17 days. A bigger tier would not fix this — the ceiling is a *share*,
 so every sport scales together and NCAAF still caps at the same point in the month.
 
+### Allocation reshaped — APPLIED 2026-10-14, live and confirmed
+
+Set on Railway (project **cozy-friendship**, service **Edge-Tracker-New**, production):
+
+```
+ODDS_ALLOC_NCAAF=0.26   ODDS_ALLOC_MLB=0.04   ODDS_ALLOC_NFL=0.30
+```
+
+Same total; +0.10 to NCAAF, −0.10 from MLB (postseason-only and already past its new cap),
+−0.02 from NFL (sitting at 48% of its cap). The service redeployed — the odds agent's `runs`
+reset from 8666 to 1 — and the effect is visible in its own status line:
+
+| | Before | After |
+|---|---|---|
+| budget-skips | 4 | **1** |
+| Snapshots per run | 0 | **1072** |
+| Calls per run | 0 | 5 |
+
+New `sumAlloc` is 0.80, so `capOf = floor(21250 × alloc)`. **NCAAF's cap went 3317 → 5525**
+against 3324 spent — from zero headroom to ~2200 credits for the rest of October, which was
+the entire point. NHL (1243→1275) and UFC (829→850) also came off their caps. MLB stays
+capped at 850 against 2906 already spent — intended; that is where NCAAF's credits came from.
+Total possible spend is still ~17000, so the 0.85 ceiling is intact.
+
+`projectedMonthly` now reads 28115. **Still ignore it** — same naive `perDay` extrapolation
+that ignores the ceilings (D15).
+
+Two artifacts of the restart, neither a problem: the first odds run reported `0 movements`
+(the in-process `lastLines` baseline was wiped — finding 3 of the audit below, demonstrating
+itself live), and the Claude usage counters in `/budget` reset to zero (in-memory state, not
+lost spend; the real figure was $13.50 / 83 calls before the redeploy).
+
 ## In flight
 
 Nothing half-written. Two things are built but unproven:
@@ -74,12 +106,15 @@ Nothing half-written. Two things are built but unproven:
 
 ## Next steps
 
-1. **Reshape the odds allocation for football season** (Railway env vars, then deploy).
-   NCAAF is starved at its seasonal peak:
-   `ODDS_ALLOC_NCAAF=0.26`, `ODDS_ALLOC_MLB=0.04`, `ODDS_ALLOC_NFL=0.30`.
-   Same total; +0.10 to NCAAF, −0.10 from MLB (postseason only now), −0.02 from NFL (at 48%
-   of its cap). **Watch early November:** NCAAB entering season adds 0.06 to `sumAlloc` and
-   silently recomputes every ceiling downward mid-season.
+1. ~~Reshape the odds allocation for football season~~ — **DONE 2026-10-14**, see above.
+   Two follow-ups remain:
+   - **Watch early November.** NCAAB entering season adds 0.06 to `sumAlloc` and silently
+     recomputes every ceiling downward mid-season. With NCAAF now at 0.26 it has more to
+     lose from that recompute than before, so check `/budget` when NCAAB appears in
+     `bySport`.
+   - **Revisit the shares when football season ends (after January).** These are
+     football-season values set against the code's Sep–Jan defaults; MLB at 0.04 will be
+     wrong by spring.
 2. **Merge `feat/function-first-games`**, then check the Games view on a phone (above).
 3. **Fix line-movement tracking — the audit is done, the work is not.** See the findings
    below; this is the next `/feature`.
@@ -95,6 +130,10 @@ Nothing half-written. Two things are built but unproven:
    follow-up but is a real data merge across 5 implementations, not a wrapper. Log is the
    worst risk profile in the file (9 localStorage arrays). Dashboard needs `state.modelResults`
    / `propModelResults` / `slateData` keyed by sport first.
+
+> **Next free decision number is D18.** The line-movement session was briefed that D17 was
+> free; D17 was then taken by the allocation change. If that session also wrote a D17,
+> renumber the later one.
 
 ## Line-movement audit (2026-10-14) — findings, no code written yet
 
