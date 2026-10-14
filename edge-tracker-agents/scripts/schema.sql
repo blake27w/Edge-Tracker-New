@@ -757,7 +757,11 @@ create table if not exists pitcher_changes (
 create index if not exists pitcher_changes_idx on pitcher_changes (detected_at desc);
 
 -- ── Public-splits upgrade: freeze / pile-on tells + the measured net move ──
-alter table public_splits add column if not exists freeze boolean default false;
+-- `freeze` is a RESERVED keyword in Postgres, so it must be quoted in DDL.
+-- Unquoted, this line is a syntax error — which aborted the whole script from
+-- the day it landed (2026-07-03, #123), so nothing below it has ever applied.
+-- PostgREST quotes all identifiers, so the agents need no change.
+alter table public_splits add column if not exists "freeze" boolean default false;
 alter table public_splits add column if not exists pileon boolean default false;
 alter table public_splits add column if not exists net_move numeric;
 
@@ -795,6 +799,14 @@ alter table line_snapshots add column if not exists last_update timestamptz;
 alter table ev_opportunities add column if not exists quote_age_min integer;
 
 -- ── /data-health count indexes ──────────────────────────────────────
+-- ON AN EXISTING, POPULATED DATABASE RUN scripts/migrate-data-health-indexes.sql
+-- FIRST. A plain `create index` takes a SHARE lock that blocks inserts for the
+-- whole build, which on production line_snapshots means the odds agent silently
+-- drops snapshots (and corrupts the CLV data those snapshots feed). That script
+-- builds the same indexes `concurrently`; the `if not exists` below then finds
+-- them present and does nothing. These plain forms are for a FRESH database,
+-- where the tables are empty, the build is instant, and the statement has to
+-- work inside the Supabase SQL editor's transaction (`concurrently` cannot).
 -- /data-health counts "rows written today" per table with a bare
 -- `<ts_col> >= midnight` filter. Every one of these tables had its timestamp
 -- only as the TRAILING column of a composite index (e.g. line_snapshots
