@@ -793,3 +793,37 @@ create index if not exists weather_changes_idx on weather_changes (detected_at d
 -- dead/suspended markets. quote_age_min = minutes since the flagged book moved.
 alter table line_snapshots add column if not exists last_update timestamptz;
 alter table ev_opportunities add column if not exists quote_age_min integer;
+
+-- ── /data-health count indexes ──────────────────────────────────────
+-- /data-health counts "rows written today" per table with a bare
+-- `<ts_col> >= midnight` filter. Every one of these tables had its timestamp
+-- only as the TRAILING column of a composite index (e.g. line_snapshots
+-- (game_id, market, fetched_at desc)), which Postgres cannot use for a filter
+-- on the timestamp alone — so each count was a full sequential scan and the
+-- endpoint took ~36s. These single-column descending indexes turn each
+-- "today" count into a bounded range scan.
+create index if not exists line_snapshots_fetched_idx   on line_snapshots   (fetched_at desc);
+create index if not exists monitor_scores_scored_idx    on monitor_scores   (scored_at desc);
+create index if not exists clv_records_recorded_idx      on clv_records      (recorded_at desc);
+create index if not exists opp_results_graded_idx        on opp_results      (graded_at desc);
+create index if not exists ev_opportunities_fetched_idx  on ev_opportunities (fetched_at desc);
+create index if not exists line_signals_fetched_idx      on line_signals     (fetched_at desc);
+create index if not exists book_edge_log_detected_idx    on book_edge_log    (detected_at desc);
+create index if not exists sharp_signals_detected_idx    on sharp_signals    (detected_at desc);
+create index if not exists injury_updates_fetched_idx    on injury_updates   (fetched_at desc);
+create index if not exists game_weather_fetched_idx      on game_weather     (fetched_at desc);
+create index if not exists public_splits_fetched_idx     on public_splits    (fetched_at desc);
+create index if not exists scan_runs_status_started_idx  on scan_runs        (status, started_at desc);
+
+-- Totals for the big append-only tables are served from the planner estimate
+-- (PostgREST count=estimated → reltuples), which is only as fresh as the last
+-- ANALYZE. Autovacuum normally keeps that current; nothing to do here, but if
+-- a total looks stale, `analyze line_snapshots;` refreshes it.
+
+-- ── CLV: price-aware closing-line value ─────────────────────────────
+-- Line CLV alone scores every "line didn't move" bet as not beating the close,
+-- even when the PRICE on that line improved — which is most of the record on
+-- spreads and totals. clv_odds stores the implied-probability edge in points
+-- so beat_close can break a flat-line tie on price.
+alter table clv_records add column if not exists clv_odds numeric;
+alter table clv_records add column if not exists close_source text;

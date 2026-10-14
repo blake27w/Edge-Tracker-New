@@ -47,6 +47,7 @@ const store = {
   combatDerivs: [],   // combat derivative plays (round totals etc., observational)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
+  degraded: {},       // key -> { key, detail, at } data-integrity degradations (see reportDegraded)
 };
 
 export function setEvPlays(p) { store.evPlays = p || []; }
@@ -117,6 +118,38 @@ export function getHealth() { return store.health; }
 
 export function setWatchdog(w) { store.watchdog = w; }
 export function getWatchdog() { return store.watchdog; }
+
+// ── Data-integrity degradation channel ──────────────────────────
+// An agent that "succeeds" while producing nothing usable is the worst
+// failure mode we have: the orchestrator only marks a run failed when it
+// THROWS, so a swallowed query error or an unmatchable work queue reads as
+// 0 errors / 0 consecutive failures forever. Anything that detects itself
+// producing garbage reports it here; the watchdog turns these into alerts.
+//
+// Entries are self-expiring: a fix stops re-reporting and the issue ages
+// out on its own, so nothing has to remember to clear it.
+const DEGRADED_TTL_MS = Number(process.env.DEGRADED_TTL_MS) || 90 * 60_000;
+
+export function reportDegraded(key, detail) {
+  if (!key) return;
+  const prev = store.degraded[key];
+  store.degraded[key] = {
+    key, detail: String(detail || ''),
+    at: new Date().toISOString(),
+    since: prev?.since || new Date().toISOString(),
+    count: (prev?.count || 0) + 1,
+  };
+}
+
+export function clearDegraded(key) { delete store.degraded[key]; }
+
+export function getDegraded() {
+  const cutoff = Date.now() - DEGRADED_TTL_MS;
+  for (const [k, v] of Object.entries(store.degraded)) {
+    if (new Date(v.at).getTime() < cutoff) delete store.degraded[k];
+  }
+  return Object.values(store.degraded);
+}
 
 export function setTennisGames(g) { store.tennisGames = g || []; }
 export function getTennisGames() { return store.tennisGames; }
