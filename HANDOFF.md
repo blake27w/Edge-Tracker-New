@@ -1,6 +1,6 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-10-14 — four silent data-integrity faults fixed; branch `fix/silent-data-integrity-faults` open as a PR.
+Last updated: 2026-10-14 — four silent data-integrity faults fixed, plus a fifth found while trying to run the migration; branch `fix/silent-data-integrity-faults` open as PR #130. **The migration itself has not been run — it can't be, from here.**
 
 ## Current state
 
@@ -20,11 +20,30 @@ Production is healthy by its own account and was lying about it. The binding the
 - **Verified.** `node --check` on every changed file; the server boots clean and serves `/data-health` (207 + `reason` with no DB, as it should) and `/plays`. The real modules were exercised with stubbed IO: 12 CLV cases, 17 data-health cases, and the grading scenarios all pass. Old-vs-new on identical fixtures reproduces both production strings — the old CLV path reports `close_at` 12.5h early with `entry_at === close_at` on a 1600-row game, and the old grader reports `graded 0 (0W-0L-0P)` with a fresh gradeable play sitting right there. The watchdog chain (agent → `reportDegraded` → issue → alert body) was run end-to-end.
 - **Unverified.** Nothing has run against production Supabase. The `count: 'estimated'` speedup and the new indexes are reasoned from the schema and measured only against a stub — real proof is the deploy. Whether `grading` now actually grades depends on there being gradeable plays in the 10-day window, which can't be known from outside the DB.
 
+## The migration is still owed, and here's why it never ran before
+
+Asked to run it, I couldn't — and found out why nobody else had either.
+
+**`schema.sql` has been un-runnable since 2026-07-03.** `freeze` is a *reserved* keyword in Postgres, so `alter table public_splits add column if not exists freeze boolean` (#123) is a syntax error. The Supabase SQL editor runs a multi-statement script in one transaction, so that one line aborted and rolled back everything after it — the September work and this PR's indexes included. That is the real reason HANDOFF has said "migration owed" for two sessions. Fixed and verified against a real Postgres 16.
+
+**It also caused a fifth silent fault.** `public-splits` writes `freeze`/`pileon`/`net_move`; those columns never existed; the insert is `catch (e) { logger.warn(...) }`. So it has reported `3 splits · 2 freeze` with 0 failures for 103 days while `/data-health` showed `public_splits: today 0, total 671`. The tell was sitting in the payload the whole time — nobody read it. Failed writes now report themselves from `src/db` (one layer, not 92 call sites).
+
+**I cannot execute the migration from this machine.** No credentials here (only `.env.example`), and `supabase-js` cannot run DDL at all — `scripts/migrate.js` says so itself and only reports which tables are missing. DDL needs either the SQL editor or a direct Postgres connection string, which is a secret the app doesn't use and that I shouldn't be handling. `psql` is installed, so the moment someone supplies a connection string it's a one-liner.
+
 ## Next steps
 
-1. **Re-run `scripts/schema.sql` in Supabase. This is a prerequisite, not a nice-to-have** — it adds the 12 `/data-health` timestamp indexes (fault 4 stays slow without them) and `clv_records.clv_odds` / `.close_source`. The CLV write falls back to the old columns and reports `clv|schema` if it hasn't been run, so the metric degrades instead of breaking, but it won't be price-aware.
-2. **`scripts/migrate-research.sql` is still owed from the September session** — unrelated to this work, still not run as far as I can tell.
-3. **After deploy, check in this order:** `/data-health` response time and that `line_snapshots.total` is a real integer (fault 4 + 3); the `clv` summary line for `N measurable` and a non-zero `beat close` (fault 1); the `grading` line for its new counters — `queued / no final / expired` (fault 2).
+0. **Run the migration — concurrent script FIRST, then `schema.sql`.** Order matters: a plain `create index` takes a SHARE lock that blocks inserts for the whole build, which on `line_snapshots` means the odds agent silently drops snapshots and corrupts the CLV data this PR just fixed. The concurrent script avoids that; `schema.sql`'s `if not exists` then finds the indexes present and never takes the blocking path.
+
+   ```
+   psql "$SUPABASE_DB_URL" -f edge-tracker-agents/scripts/migrate-data-health-indexes.sql
+   psql "$SUPABASE_DB_URL" -f edge-tracker-agents/scripts/schema.sql
+   ```
+
+   Connection string: Supabase dashboard → Project Settings → Database → Connection string → URI, **direct connection, not the pooler** (pgbouncer in transaction mode can't run `concurrently` either). Without psql: SQL editor, and the concurrent file must go **one statement at a time** — `schema.sql` can be pasted whole.
+
+1. ~~Re-run `scripts/schema.sql`~~ — superseded by step 0; the file is fixed, but the ordering above is what makes it safe. Original note kept for context: **this is a prerequisite, not a nice-to-have** — it adds the 12 `/data-health` timestamp indexes (fault 4 stays slow without them) and `clv_records.clv_odds` / `.close_source`. The CLV write falls back to the old columns and reports `clv|schema` if it hasn't been run, so the metric degrades instead of breaking, but it won't be price-aware.
+2. **`scripts/migrate-research.sql` is still owed from the September session.** Worth re-checking rather than assuming — it was written after the 2026-07-03 break, so if it was ever attempted as part of `schema.sql` it would have silently rolled back. It is a separate file, so a direct run would have worked; I have no way to tell from outside the DB which happened.
+3. **After the migration + deploy, check in this order:** `public_splits.today` should go non-zero within 4h (the agent's cadence) — that's the D16 fix landing, and the fastest confirmation the migration actually applied. Then: `/data-health` response time and that `line_snapshots.total` is a real integer (fault 4 + 3); the `clv` summary line for `N measurable` and a non-zero `beat close` (fault 1); the `grading` line for its new counters — `queued / no final / expired` (fault 2).
 4. **Watch for the first `expired` sweep.** `grading` will retire up to 200 rows per run on its first passes and log a warning each time. A large count is expected once and should fall to zero; if it keeps churning, the floor is wrong for the volume (`GRADE_LOOKBACK_DAYS`).
 5. **Tune the alarm floors if they're wrong.** `CLV_ALARM_MIN` (12) and `GRADE_ZERO_ALARM_MIN` (5) are judgement calls, not measurements. The grading alarm also requires that ESPN returned finals for the sport+date, which should keep it quiet on afternoon runs — if it fires daily anyway, that condition needs tightening rather than the floor raising.
 6. **Not touched, per instruction:** odds-budget allocation and PWA navigation. The budget is still on pace to overrun (`/budget` shows 12642/20000 at day 14, pace ×1.4, projected 27993) and the watchdog is correctly flagging it; that's the pre-existing D7 issue.
