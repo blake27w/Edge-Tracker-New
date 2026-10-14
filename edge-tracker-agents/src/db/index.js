@@ -83,15 +83,39 @@ export async function select(table, columns = '*', opts = {}) {
   return data || [];
 }
 
-// Count rows (no row data fetched). opts: { match (equality), gte }
+// PostgREST/Postgres signals for "this relation or column isn't there" as
+// opposed to "the query failed". Callers need the difference: a missing table
+// is a migration to run, a timeout is a performance bug. Conflating them is
+// how a failing count got reported as an absent one.
+const MISSING_CODES = new Set(['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205']);
+export function isMissingRelation(e) {
+  if (!e) return false;
+  if (e.code && MISSING_CODES.has(e.code)) return true;
+  return /does not exist|could not find|schema cache|undefined table|undefined column/i.test(e.message || '');
+}
+
+// Count rows (no row data fetched).
+// opts: { match (equality), gte, mode }
+//   mode: 'exact' (default) — a true COUNT(*), i.e. a full scan on a big table.
+//         'estimated'       — planner estimate (reltuples) for large tables,
+//                             exact for small ones. Orders of magnitude cheaper.
+//         'planned'         — always the planner estimate.
+// Errors carry `.code` and `.missing` so callers can tell a missing table from
+// a statement timeout instead of swallowing both.
 export async function count(table, opts = {}) {
   if (!client) return null;
-  let q = ensure().from(table).select('*', { count: 'exact', head: true });
+  const mode = opts.mode || 'exact';
+  let q = ensure().from(table).select('*', { count: mode, head: true });
   if (opts.match) for (const [k, v] of Object.entries(opts.match)) q = q.eq(k, v);
   if (opts.gte) for (const [k, v] of Object.entries(opts.gte)) q = q.gte(k, v);
   const { count: c, error } = await q;
-  if (error) throw new Error(`count ${table}: ${error.message}`);
+  if (error) {
+    const err = new Error(`count ${table}: ${error.message}`);
+    err.code = error.code;
+    err.missing = isMissingRelation(error);
+    throw err;
+  }
   return c;
 }
 
-export default { isConnected, insert, upsert, update, del, select, count };
+export default { isConnected, insert, upsert, update, del, select, count, isMissingRelation };

@@ -5973,29 +5973,38 @@ function renderClvDashboard(){
   var c=state.agentsClv;
   var h='<div style="font-size:9px;color:var(--muted);font-style:italic;margin-bottom:10px">Beating the closing line is the leading indicator the system finds real edges. Line-based CLV on totals (last '+((c&&c.days)||90)+'d).</div>';
   if(!c||!c.overall||!c.overall.n){return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic">No CLV records yet. Logged total plays get compared to the closing line after the market closes.</div>';}
-  var o=c.overall,bcol=o.beat_pct>=55?'var(--sage)':o.beat_pct>=50?'var(--brass)':'var(--wine)';
+  // beat_pct is null when no record in the window has a knowable close (flat
+  // line, no prices either end) — show it as unknown rather than as 0%.
+  var pct=function(v){return (v==null||isNaN(v))?'\u2014':v+'%';};
+  var pcol=function(v){return v==null?'var(--muted)':v>=55?'var(--sage)':v>=50?'var(--brass)':'var(--wine)';};
+  var o=c.overall,bcol=pcol(o.beat_pct);
   h+='<div class="stats-row" style="margin-bottom:10px">';
-  h+='<div class="stat"><div class="sv" style="color:'+bcol+'">'+o.beat_pct+'%</div><div class="sl">Beat Close</div></div>';
+  h+='<div class="stat"><div class="sv" style="color:'+bcol+'">'+pct(o.beat_pct)+'</div><div class="sl">Beat Close</div></div>';
   h+='<div class="stat"><div class="sv" style="color:'+(o.avg_clv>=0?'var(--sage)':'var(--wine)')+'">'+(o.avg_clv>=0?'+':'')+o.avg_clv+'</div><div class="sl">Avg CLV</div></div>';
-  h+='<div class="stat"><div class="sv">'+o.beat+'/'+o.n+'</div><div class="sl">Records</div></div>';
+  h+='<div class="stat"><div class="sv">'+o.beat+'/'+(o.graded!=null?o.graded:o.n)+'</div><div class="sl">Records</div></div>';
   h+='</div>';
+  if(o.unknown){h+='<div style="font-size:8px;color:var(--muted);font-style:italic;margin:-4px 0 8px">'+o.unknown+' record'+(o.unknown===1?'':'s')+' unknown (line held, no price on both ends) \u2014 excluded from Beat Close.</div>';}
   if(c.bySport&&c.bySport.length){
     h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:6px 0 6px">BY SPORT</div>';
     c.bySport.forEach(function(s){
-      var col=s.beat_pct>=55?'var(--sage)':s.beat_pct>=50?'var(--brass)':'var(--wine)';
+      var col=pcol(s.beat_pct);
       h+='<div class="card" style="padding:8px 12px;margin:0 0 5px;display:flex;justify-content:space-between;align-items:center">';
-      h+='<div><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(s.sport||'')+'</span> <span style="font-size:8px;color:var(--dim)">'+s.beat+'/'+s.n+'</span></div>';
-      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+s.beat_pct+'%</span> <span style="font-size:8px;color:var(--muted)">'+(s.avg_clv>=0?'+':'')+s.avg_clv+' avg</span></div>';
+      h+='<div><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(s.sport||'')+'</span> <span style="font-size:8px;color:var(--dim)">'+s.beat+'/'+(s.graded!=null?s.graded:s.n)+'</span></div>';
+      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:12px;font-weight:700;color:'+col+'">'+pct(s.beat_pct)+'</span> <span style="font-size:8px;color:var(--muted)">'+(s.avg_clv>=0?'+':'')+s.avg_clv+' avg</span></div>';
       h+='</div>';
     });
   }
   if(c.recent&&c.recent.length){
     h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:8px 0 6px">RECENT CLOSES</div>';
     c.recent.slice(0,20).forEach(function(r){
-      var col=r.beat_close?'var(--sage)':'var(--wine)';
+      // beat_close null = unknown, not a loss: show it neutral, not in wine.
+      var col=r.beat_close==null?'var(--muted)':r.beat_close?'var(--sage)':'var(--wine)';
+      // When the number held, the price is what decided it — show that instead
+      // of a bare "+0" that looks like nothing happened.
+      var px=(r.clv===0&&r.clv_odds!=null)?' ('+(r.clv_odds>=0?'+':'')+r.clv_odds+' px)':'';
       h+='<div class="card" style="padding:7px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
       h+='<div><span style="font-size:10px;color:var(--txt)">'+esc((r.sport||'')+' · '+(r.side||''))+'</span> <span style="font-size:8px;color:var(--dim)">'+r.line_logged+' → '+r.line_close+'</span></div>';
-      h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;color:'+col+'">'+(r.clv>=0?'+':'')+r.clv+(r.beat_close?' ✓':'')+'</div>';
+      h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;color:'+col+'">'+(r.clv>=0?'+':'')+r.clv+px+(r.beat_close?' ✓':r.beat_close==null?' ?':'')+'</div>';
       h+='</div>';
     });
   }
@@ -6755,7 +6764,7 @@ function renderVerdict(bt){
     h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:var(--txt)">'+o.winPct+'%</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">WIN</div></div>';
     h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+btColor(o.roi)+'">'+(o.roi>=0?'+':'')+o.roi+'%</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">ROI</div></div>';
   }
-  if(bt.clv){h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+btColor(bt.clv.avg)+'">'+(bt.clv.avg>=0?'+':'')+bt.clv.avg+'</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">CLV · '+bt.clv.beatPct+'%</div></div>';}
+  if(bt.clv){h+='<div><div style="font-family:var(--M);font-size:15px;font-weight:700;color:'+btColor(bt.clv.avg)+'">'+(bt.clv.avg>=0?'+':'')+bt.clv.avg+'</div><div style="font-size:7px;color:var(--muted);letter-spacing:.5px">CLV · '+(bt.clv.beatPct==null?'n/a':bt.clv.beatPct+'%')+'</div></div>';}
   h+='</div></div>';
   return h;
 }
@@ -7170,7 +7179,7 @@ function renderMarketValidation(bt){
     h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">';
     if(m.clvN){
       var cc=(m.avgClv>0&&m.beatPct>50)?'#34d399':'var(--wine)';
-      h+='<span style="font-family:var(--M);font-size:9px;color:var(--dim)">CLV: '+m.beatPct+'% beat close <span style="color:var(--muted)">('+m.clvN+' clean)</span></span>';
+      h+='<span style="font-family:var(--M);font-size:9px;color:var(--dim)">CLV: '+(m.beatPct==null?'n/a':m.beatPct+'%')+' beat close <span style="color:var(--muted)">('+m.clvN+' clean)</span></span>';
       h+='<span style="font-family:var(--M);font-size:9px;font-weight:600;color:'+cc+'">'+(m.avgClv>=0?'+':'')+m.avgClv+' avg</span>';
     } else {
       h+='<span style="font-family:var(--M);font-size:9px;color:var(--muted);font-style:italic">No clean CLV yet</span><span></span>';
@@ -7293,12 +7302,12 @@ function renderSignalClv(bt){
   h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:2px">📐 SIGNAL CLV — DOES IT BEAT THE CLOSE?</div>';
   h+='<div style="font-size:8px;color:var(--muted);margin-bottom:7px">CLV is the honest test. Beat % &gt;50 and +avg CLV = a real edge; consistently &lt;50 = flagged for removal.</div>';
   rows.forEach(function(s){
-    var col=s.beatPct>=55?'var(--sage)':s.beatPct>=50?'var(--brass)':'var(--wine)';
+    var col=s.beatPct==null?'var(--muted)':s.beatPct>=55?'var(--sage)':s.beatPct>=50?'var(--brass)':'var(--wine)';
     var open=state.sigOpen&&state.sigOpen[s.id];
     h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer" onclick="signalToggle(\''+encodeURIComponent(s.id)+'\')">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center">';
     h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(s.label||'')+'</span> <span style="font-size:8px;color:var(--muted)">'+(open?'▾':'▸')+'</span>'+(s.flag?' <span style="font-size:7px;color:var(--wine);border:1px solid var(--wine);border-radius:3px;padding:0 3px">⚠ REVIEW</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+s.n+' plays'+(s.graded?' · '+s.graded+' graded'+(s.roi!=null?' · '+(s.roi>=0?'+':'')+s.roi+'% ROI':''):'')+'</div></div>';
-    h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:'+col+'">'+s.beatPct+'%</span><div style="font-size:7.5px;color:var(--muted)">'+(s.avgClv>=0?'+':'')+s.avgClv+' avg CLV</div></div>';
+    h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:'+col+'">'+(s.beatPct==null?'\u2014':s.beatPct+'%')+'</span><div style="font-size:7.5px;color:var(--muted)">'+(s.avgClv>=0?'+':'')+s.avgClv+' avg CLV</div></div>';
     h+='</div>';
     if(open)h+=renderSignalDetail(s.id);
     h+='</div>';
