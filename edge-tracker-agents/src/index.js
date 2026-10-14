@@ -24,7 +24,12 @@ import { median } from './agents/shared/odds-math.js';
 function cors(req, res) {
   const origin = req.headers.origin;
   const allowed = config.server.corsOrigins;
-  const okOrigin = origin && (allowed.includes('*') || allowed.includes(origin) || /\.vercel\.app$/.test(origin));
+  // Local dev servers too: without this a browser on localhost can never reach
+  // this API, so the PWA was only ever testable once deployed. Not a widening —
+  // the *.vercel.app rule already admits any subdomain anyone can register —
+  // and every POST/DELETE is gated by authed() independently of CORS.
+  const isLocalDev = origin && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+  const okOrigin = origin && (allowed.includes('*') || allowed.includes(origin) || /\.vercel\.app$/.test(origin) || isLocalDev);
   if (okOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (allowed.includes('*')) {

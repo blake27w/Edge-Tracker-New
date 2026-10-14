@@ -457,6 +457,10 @@ var state = {
   filter:'a', nFilter:'a', uFilter:'a', recFilter:'a',
   homeScreen: true,
   homeTab: 'menu',
+  // ── Consolidated Games view (home section 'games') — in-memory only, never persisted ──
+  gamesCache: {},        // { NFL: <payload>, NBA: <payload>, … } one fetch per sport, cleared on reload or ↻
+  gamesErr: {},          // { NFL: '<message>' } keyed per sport — a failure can only blank its own board
+  gamesInflight: {},     // { NFL: true } one request per sport at a time
   // Custom signals
   customSigs: ls('et_custom_sigs',[]),
   homeHistFilter: 'a',
@@ -3258,7 +3262,7 @@ function render(){
   // Page dots: show position among the 6 home sections (hidden on launcher/sport views).
   var _pd=$('pagedots');
   if(_pd){
-    var _ord=['dash','plays','rec','stats','log','agents'];
+    var _ord=['dash','plays','rec','stats','log','agents','games'];
     var _i=state.homeScreen?_ord.indexOf(state.homeTab):-1;
     if(_i>=0){ _pd.innerHTML=_ord.map(function(_,k){return '<span class="pd'+(k===_i?' on':'')+'"></span>'}).join(''); _pd.style.display='flex'; }
     else _pd.style.display='none';
@@ -3357,14 +3361,15 @@ function renderMyBetsList(){
   return h;
 }
 
-// The 6 home destinations (rendered as a launcher grid, not a bottom bar).
+// The 7 home destinations (rendered as a launcher grid, not a bottom bar).
 var HOME_TABS=[
   {id:'dash',icon:'🏟️',label:'Sports'},
   {id:'plays',icon:'🎯',label:'Plays'},
   {id:'rec',icon:'📊',label:'Stats'},
   {id:'stats',icon:'📈',label:'My Stats'},
   {id:'log',icon:'➕',label:'Log'},
-  {id:'agents',icon:'🤖',label:'Agents'}
+  {id:'agents',icon:'🤖',label:'Agents'},
+  {id:'games',icon:'📅',label:'Games'}
 ];
 function goMenu(){ state.homeTab='menu'; if(!state.homeScreen){ goHome(); return; } render(); }
 window.goMenu=goMenu;
@@ -3392,6 +3397,7 @@ function renderHomeScreen(){
   else if(state.homeTab==='rec')renderResultsView();
   else if(state.homeTab==='agents'||state.homeTab==='plays')renderAgentsView();
   else if(state.homeTab==='stats')renderHomeStats();
+  else if(state.homeTab==='games')renderHomeGames();
   else renderLauncher();
 }
 
@@ -3420,6 +3426,74 @@ function renderHomeDash(){
   h+='</div>';
   $('sport-selector').innerHTML=h;
 }
+
+// ── HOME GAMES: one slate board, sport is a filter chip instead of a navigation level ──
+// Wrapper only — the board markup is still renderGamesHTML(), untouched.
+function gamesSports(){return SPORTS.filter(function(s){return s.active&&s.tabs.some(function(t){return t.id==='games'})})}
+function renderHomeGames(){
+  var avail=gamesSports();
+  var act=avail.some(function(s){return s.id===state.sport})?state.sport:(avail[0]?avail[0].id:'');
+  var KEY=act.toUpperCase();
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');
+
+  var h='<div class="flt-row">';
+  avail.forEach(function(s){
+    h+='<button class="flt'+(s.id===act?' on':'')+'" onclick="setGamesSport(\''+s.id+'\')">'+s.icon+' '+s.label+'</button>';
+  });
+  h+='</div>';
+
+  if(!api){
+    h+='<div class="card" style="text-align:center;color:var(--dim)">Set the backend URL first — open the <b>🤖 Agents</b> tab and tap <span onclick="agentSetApiUrl()" style="color:var(--brass);cursor:pointer;text-decoration:underline">backend</span> — to load the live games board.</div>';
+  } else if(state.gamesCache[KEY]){
+    h+=renderGamesHTML(state.gamesCache[KEY],act);
+  } else if(state.gamesErr[KEY]){
+    h+='<div class="card" style="color:var(--wine);text-align:center">Could not load games: '+esc(state.gamesErr[KEY])+'<div style="font-size:10px;color:var(--dim);margin-top:6px">Tap the '+esc(KEY)+' chip to retry.</div></div>';
+  } else {
+    h+='<div style="padding:40px 0;text-align:center;color:var(--dim);font-family:var(--H);letter-spacing:2px">LOADING '+KEY+' SLATE…</div>';
+    fetchHomeGames(act);
+  }
+
+  // UFC and Golf have no games tab — reach their old modules from here rather than hiding them.
+  var off=SPORTS.filter(function(s){return s.active&&!s.tabs.some(function(t){return t.id==='games'})});
+  if(off.length){
+    h+='<div class="flt-row" style="margin-top:18px"><span style="font-family:var(--H);font-size:10px;color:var(--dim);letter-spacing:1px;align-self:center">Not on the slate board:</span>';
+    off.forEach(function(s){h+='<button class="flt" onclick="setSport(\''+s.id+'\')">'+s.icon+' '+s.label+'</button>'});
+    h+='</div>';
+  }
+  $('sport-selector').innerHTML=h;
+}
+// Deliberately NOT setSport() — that leaves the home screen and wipes slate/model state.
+function setGamesSport(id){ delete state.gamesErr[id.toUpperCase()]; state.sport=id; save('et_sport',id); render(); }
+function refreshHomeGames(){
+  var avail=gamesSports();
+  var act=avail.some(function(s){return s.id===state.sport})?state.sport:(avail[0]?avail[0].id:'');
+  var KEY=act.toUpperCase();
+  delete state.gamesCache[KEY];
+  delete state.gamesErr[KEY];
+  render();
+}
+function fetchHomeGames(sportId){
+  var api=state.agentApiUrl&&state.agentApiUrl.replace(/\/$/,'');if(!api)return;
+  var KEY=sportId.toUpperCase();
+  if(state.gamesInflight[KEY])return;                      // already asking for this sport
+  state.gamesInflight[KEY]=true;
+  fetch(api+'/games?sport='+KEY).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);             // never cache an error payload as a slate
+    return r.json();
+  }).then(function(d){
+    delete state.gamesInflight[KEY];
+    state.gamesCache[KEY]=d;                                // keep it even if the user navigated away
+    if(!state.homeScreen||state.homeTab!=='games')return;   // but only this view may repaint
+    render();
+  }).catch(function(e){
+    delete state.gamesInflight[KEY];
+    state.gamesErr[KEY]=(e&&e.message)||'request failed';   // must be truthy, or the empty cache refetches forever
+    if(!state.homeScreen||state.homeTab!=='games')return;
+    render();
+  });
+}
+window.setGamesSport=setGamesSport;
+window.refreshHomeGames=refreshHomeGames;
 
 // ── HOME LOG: quick-access to log bets by sport ──
 function renderHomeLog(){
@@ -7471,11 +7545,11 @@ function renderGamesBoard(el){
 }
 
 function prettyTourney(k){return String(k||'').replace(/^tennis_/,'').replace(/_/g,' ').toUpperCase();}
-function renderTennisHTML(d,games){
+function renderTennisHTML(d,games,spOverride){
   var h='';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
   h+='<div style="font-family:var(--H);font-size:16px;letter-spacing:1px;color:var(--txt);font-weight:600">🎾 TENNIS <span style="color:var(--dim);font-size:12px">· '+games.length+' match'+(games.length!==1?'es':'')+'</span></div>';
-  h+='<button class="flt" onclick="render()">↻ Refresh</button></div>';
+  h+='<button class="flt" onclick="'+(spOverride?'refreshHomeGames()':'render()')+'">↻ Refresh</button></div>';
   if(!games.length){h+='<div class="card" style="text-align:center;color:var(--dim);font-style:italic">'+esc((d&&d.note)||'No active tennis matches.')+'</div>';return h;}
   games.forEach(function(g){
     var play=g.play;var ml=g.ml||{};
@@ -7489,14 +7563,14 @@ function renderTennisHTML(d,games){
   });
   return h;
 }
-function renderGamesHTML(d){
-  var sp=state.sport.toUpperCase();
+function renderGamesHTML(d,spOverride){
+  var sp=(spOverride||state.sport).toUpperCase();
   var games=(d&&d.games)||[];
-  if(d&&d.kind==='tennis')return renderTennisHTML(d,games);
+  if(d&&d.kind==='tennis')return renderTennisHTML(d,games,spOverride);
   var h='';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
   h+='<div style="font-family:var(--H);font-size:16px;letter-spacing:1px;color:var(--txt);font-weight:600">'+sp+' <span style="color:var(--dim);font-size:12px">· '+games.length+' game'+(games.length!==1?'s':'')+'</span></div>';
-  h+='<button class="flt" onclick="render()">↻ Refresh</button></div>';
+  h+='<button class="flt" onclick="'+(spOverride?'refreshHomeGames()':'render()')+'">↻ Refresh</button></div>';
   if(!games.length){h+='<div class="card" style="text-align:center;color:var(--dim);font-style:italic">'+esc((d&&d.note)||'No games right now.')+'</div>';return h;}
   games.forEach(function(g){
     var t=g.total||{};var play=g.play;var ml=g.ml||{};
@@ -7679,9 +7753,9 @@ document.addEventListener('visibilitychange',function(){
   }catch(e){}
 })();
 
-// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents).
+// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents→Games).
 (function(){
-  var order=['dash','plays','rec','stats','log','agents'];
+  var order=['dash','plays','rec','stats','log','agents','games'];
   var sx=0,sy=0,track=false;
   var main=document.getElementById('main');
   if(!main)return;
