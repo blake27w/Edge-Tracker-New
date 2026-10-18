@@ -34,12 +34,28 @@ Asked to run it, I couldn't — and found out why nobody else had either.
 
 0. **Run the migration — concurrent script FIRST, then `schema.sql`.** Order matters: a plain `create index` takes a SHARE lock that blocks inserts for the whole build, which on `line_snapshots` means the odds agent silently drops snapshots and corrupts the CLV data this PR just fixed. The concurrent script avoids that; `schema.sql`'s `if not exists` then finds the indexes present and never takes the blocking path.
 
+   Connection string: Supabase dashboard → Project Settings → Database → Connection string → **URI**, **direct connection on port 5432, not the pooler on 6543** — pgbouncer in transaction mode cannot run `concurrently` either.
+
+   `PGOPTIONS` clears the statement timeout, which is **not optional**: Supabase caps statement duration and the `line_snapshots` / `injury_updates` index builds run for minutes. Run these from the BRANCH checkout — `main`'s `schema.sql` still has the `freeze` bug and the first file doesn't exist there at all.
+
    ```
-   psql "$SUPABASE_DB_URL" -f edge-tracker-agents/scripts/migrate-data-health-indexes.sql
-   psql "$SUPABASE_DB_URL" -f edge-tracker-agents/scripts/schema.sql
+   export SUPABASE_DB_URL='<direct URI>'
+   cd /Users/blakewallace/Edge-Tracker-New/.claude/worktrees/adoring-fermi-ffaa1b/edge-tracker-agents
+
+   # 1. indexes — minutes on the big tables, does NOT block writes
+   PGOPTIONS="-c statement_timeout=0" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+     -f scripts/migrate-data-health-indexes.sql
+
+   # 2. schema — fast; carries the `freeze` fix that unsticks public_splits
+   PGOPTIONS="-c statement_timeout=0" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+     -f scripts/schema.sql
    ```
 
-   Connection string: Supabase dashboard → Project Settings → Database → Connection string → URI, **direct connection, not the pooler** (pgbouncer in transaction mode can't run `concurrently` either). Without psql: SQL editor, and the concurrent file must go **one statement at a time** — `schema.sql` can be pasted whole.
+   Both idempotent; re-running is harmless. Many `NOTICE: ... already exists, skipping` lines are expected — any `ERROR` is not. If step 1 finishes suspiciously fast on `line_snapshots`, an index build may have been interrupted and left INVALID (the planner ignores those, so the seq scans would silently persist); the check query is at the bottom of that file.
+
+   Without psql: SQL editor — `schema.sql` can be pasted whole, but the concurrent file must go **one `create index concurrently` line at a time**, because the editor wraps a multi-statement script in a transaction.
+
+   **Status as of 2026-10-17: not yet run.** Deferred deliberately — Blake asked to keep the session in-chat rather than switch to a terminal. Nothing else in this PR is blocked by it; the code deploys and degrades gracefully without it (see item 1).
 
 1. ~~Re-run `scripts/schema.sql`~~ — superseded by step 0; the file is fixed, but the ordering above is what makes it safe. Original note kept for context: **this is a prerequisite, not a nice-to-have** — it adds the 12 `/data-health` timestamp indexes (fault 4 stays slow without them) and `clv_records.clv_odds` / `.close_source`. The CLV write falls back to the old columns and reports `clv|schema` if it hasn't been run, so the metric degrades instead of breaking, but it won't be price-aware.
 2. **`scripts/migrate-research.sql` is still owed from the September session.** Worth re-checking rather than assuming — it was written after the 2026-07-03 break, so if it was ever attempted as part of `schema.sql` it would have silently rolled back. It is a separate file, so a direct run would have worked; I have no way to tell from outside the DB which happened.

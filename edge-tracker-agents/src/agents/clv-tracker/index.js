@@ -330,4 +330,9 @@ async function run() {
   };
 }
 
+// `capture` is exported for the test suite: the close/entry selection is the
+// part of this agent that was silently wrong, and it is only testable in
+// isolation. Nothing else imports it.
+export { capture };
+
 export default { name: 'clv', run };
