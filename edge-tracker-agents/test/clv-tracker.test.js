@@ -121,7 +121,7 @@ test('Over is the mirror of Under: it wants the number to fall', async () => {
 
 // ── In-play lines must never be read as the close ────────────────
 test('post-kickoff snapshots are excluded from the close', async () => {
-  // The feed keeps serving a game after kickoff and we retain it for 6h, so the
+  // The feed keeps quoting a game after kickoff and we retain it for 6h, so the
   // newest batch can be a live in-game line. Taking it fabricates CLV that then
   // gets locked in permanently. Same trap D4 found in the history agents.
   const kickoff = T(60);
@@ -132,7 +132,36 @@ test('post-kickoff snapshots are excluded from the close', async () => {
   ]);
   const r = await capture(play());
   assert.equal(r.line_close, 46.5, 'must not take the 33.5 in-play number');
-  assert.equal(r._inPlayDropped, 8, 'and should report what it ignored');
+});
+
+test('the close is found even when in-play batches exceed the query window', async () => {
+  // The regression this guards: filtering a `limit`-ed window down to
+  // pre-kickoff rows AFTER the fact reintroduces the original truncation in a
+  // new place. At ~10 books and a 3-minute cadence a game retained for 6h
+  // accumulates well over a hundred in-play batches, so every row in the
+  // window is in-play, the filter empties it, and the play is dropped as
+  // unmeasurable while the real close sits just past the limit.
+  const kickoff = T(400);
+  const rows = [...batch(T(600), 44.5, -110, kickoff),   // entry, pre-kickoff
+                ...batch(T(405), 46.5, -110, kickoff)];  // the true close
+  // 200 in-play batches x 8 books = 1600 rows, all newer than the close.
+  for (let i = 200; i >= 1; i--) rows.push(...batch(T(i), 33.5, -110, kickoff));
+  db.setRows('line_snapshots', rows);
+
+  const r = await capture(play({ scored_at: T(590) }));
+  assert.notEqual(r?.unmeasurable, true, 'the play must not be dropped');
+  assert.equal(r.line_close, 46.5, 'and the close is the last PRE-KICKOFF batch');
+  assert.equal(r.clv, 2);
+});
+
+test('the close query is bounded at kickoff server-side, not filtered after', async () => {
+  const kickoff = T(60);
+  db.setRows('line_snapshots', [...batch(T(300), 44.5, -110, kickoff), ...batch(T(65), 46.5, -110, kickoff)]);
+  db.calls.select.length = 0;
+  await capture(play());
+  const closeQ = db.calls.select.find((c) => c.opts.lte?.fetched_at === kickoff);
+  assert.ok(closeQ, 'the kickoff bound must be in the query, or the limit truncates it away');
+  assert.equal(closeQ.opts.order.ascending, false);
 });
 
 test('a game with only in-play snapshots is unmeasurable', async () => {

@@ -52,7 +52,10 @@ const LOOKBACK_MS = (Number(process.env.CLV_LOOKBACK_DAYS) || 4) * 86400_000;
 const CLOSE_LEAD_MS = 20 * 60_000;   // start capturing the close ~20 min before first pitch/kick
 const REPORT_DAYS = Number(process.env.CLV_REPORT_DAYS) || 90;
 const SNAP_MARKET = { total: 'totals', spread: 'spreads', ml: 'h2h' };
-const BATCH_LIMIT = Number(process.env.CLV_BATCH_LIMIT) || 400;   // rows per directional probe (≈50 batches)
+const BATCH_LIMIT = Number(process.env.CLV_BATCH_LIMIT) || 400;   // entry-probe rows
+// The close needs only the newest pre-kickoff batch. Bounded server-side, a
+// small window is enough and keeps the payload far below the old 400 rows.
+const CLOSE_ROWS = Number(process.env.CLV_CLOSE_ROWS) || 120;
 // Minimum sample before "none of these beat the close" is read as a defect
 // rather than as an ordinary losing stretch. Losing CLV on three bets is a
 // Tuesday; losing it on thirty straight is a bug.
@@ -98,36 +101,10 @@ async function capture(p) {
   const where = { game_id: p.game_id, market: snapMarket, side: p.side };
   const cols = 'commence_time,fetched_at,line,price';
 
-  // THE CLOSE: newest-first, so a game with more rows than the limit still
-  // yields its real latest batch. Ascending + limit used to truncate it away.
-  let late = [];
-  try {
-    late = await db.select('line_snapshots', cols, {
-      match: where, order: { column: 'fetched_at', ascending: false }, limit: BATCH_LIMIT,
-    });
-  } catch (e) { return { error: `close query: ${e.message}` }; }
-  if (!late.length) return null;
-
-  // Don't record until the game is at/near start — otherwise "closing" is just
-  // an early snapshot ≈ entry (the original bug).
-  const commence = late.find((s) => s.commence_time)?.commence_time;
-  const commenceMs = commence ? new Date(commence).getTime() : null;
-  if (commenceMs && Date.now() < commenceMs - CLOSE_LEAD_MS) return null;
-
-  // ...and the close must be a PRE-KICKOFF snapshot. The odds feed keeps
-  // returning a game once it's underway and we hold it until commence+6h, so
-  // the newest batch can be an IN-PLAY line. This is the same trap the history
-  // agents hit (D4: a 39.5 live number against a 52.5 close), and it would
-  // silently fabricate CLV — the record would look clean and get locked in.
-  const inPlay = commenceMs ? late.filter((s) => new Date(s.fetched_at).getTime() > commenceMs) : [];
-  const preKick = commenceMs ? late.filter((s) => new Date(s.fetched_at).getTime() <= commenceMs) : late;
-  if (!preKick.length) return { unmeasurable: true };
-
-  const lateB = batches(preKick);
-  const closeTs = newestTs(lateB);
-
-  // THE ENTRY: the last batch at or BEFORE the play was logged — the number we
-  // could actually have bet. Never the close itself.
+  // THE ENTRY, first: the last batch at or BEFORE the play was logged — the
+  // number we could actually have bet. It is queried first because it also
+  // yields commence_time, which the close query needs as a server-side bound
+  // (see below). Still two queries per play, not three.
   const entryAt = new Date(p.scored_at).getTime();
   let early = [];
   try {
@@ -137,12 +114,53 @@ async function capture(p) {
     });
   } catch (e) { return { error: `entry query: ${e.message}` }; }
 
+  // No batch at or before the play. No batch ever will be — snapshots only
+  // move forward — so this is permanently unmeasurable, not merely early.
+  if (!early.length) return { unmeasurable: true };
+
+  const commence = early.find((s) => s.commence_time)?.commence_time;
+  const commenceMs = commence ? new Date(commence).getTime() : null;
+
+  // Don't record until the game is at/near start — otherwise "closing" is just
+  // an early snapshot ≈ entry (the original bug).
+  if (commenceMs && Date.now() < commenceMs - CLOSE_LEAD_MS) return null;
+
+  // THE CLOSE: newest batch AT OR BEFORE KICKOFF, bounded IN THE QUERY.
+  //
+  // The bound has to be server-side. Filtering a `limit`-ed window down to
+  // pre-kickoff rows afterwards reintroduces bug 1 in a new place: the odds
+  // feed keeps quoting a game once it is underway and we hold it until
+  // commence + 6h, so at ~10 books and a 3-minute cadence a game can
+  // accumulate well over a hundred in-play batches. Every row in the window
+  // is then in-play, the filter empties it, and the play is dropped as
+  // unmeasurable while the real closing batch sits just past the limit.
+  // Same shape as the original fault — the window taken before the predicate
+  // is applied.
+  //
+  // Bounding server-side also guarantees the newest returned batch is
+  // COMPLETE rather than clipped at the window edge, so the consensus median
+  // is over every book that quoted it and not an arbitrary subset.
+  const closeOpts = {
+    match: where, order: { column: 'fetched_at', ascending: false }, limit: CLOSE_ROWS,
+  };
+  if (commence) closeOpts.lte = { fetched_at: commence };
+  let late = [];
+  try { late = await db.select('line_snapshots', cols, closeOpts); }
+  catch (e) { return { error: `close query: ${e.message}` }; }
+  // Only in-play snapshots exist for this game — no pre-kickoff close to
+  // measure against, and we will not substitute a live number for one.
+  if (!late.length) return { unmeasurable: true };
+
+  const lateB = batches(late);
+  const closeTs = newestTs(lateB);
+
   const earlyB = batches(early);
   const entryTs = newestTs(earlyB);
 
-  // No batch precedes the play, or the only batch we have IS the close → there
-  // is genuinely nothing to compare. Don't persist a junk row (the old code
-  // wrote it as `suspect` and re-wrote it on every single run, forever).
+  // Entry at or after the close means there is nothing to measure: either only
+  // one batch exists, or the play was logged after kickoff. A live bet has no
+  // closing-line value against a close that happened before it was placed —
+  // excluding it is correct, not a gap.
   if (!entryTs || new Date(entryTs).getTime() >= new Date(closeTs).getTime()) return { unmeasurable: true };
 
   const entry = batchConsensus(earlyB.get(entryTs));
@@ -188,7 +206,7 @@ async function capture(p) {
   return {
     sport: p.sport, game_id: p.game_id, bet_market: p.market, side: p.side,
     line_logged: lineEntry, line_close: lineClose, odds_logged: entry.price, odds_close: close.price,
-    clv, clv_odds: clvOdds, beat_close: beat, _inPlayDropped: inPlay.length,
+    clv, clv_odds: clvOdds, beat_close: beat,
     entry_at: new Date(entryTs).toISOString(), close_at: new Date(closeTs).toISOString(),
     close_source: suspect ? 'pre-close snapshot' : 'last pre-kickoff snapshot',
     suspect, recorded_at: new Date().toISOString(),
@@ -252,7 +270,7 @@ async function run() {
   } catch (e) { /* none */ }
 
   const records = [];
-  let tooEarly = 0, suspectN = 0, unmeasurable = 0, queryErrors = 0, lastErr = null, inPlayDropped = 0;
+  let tooEarly = 0, suspectN = 0, unmeasurable = 0, queryErrors = 0, lastErr = null;
   for (const p of plays) {
     if (done.has(`${p.game_id}|${p.market}|${p.side}`)) continue;
     const rec = await capture(p);
@@ -260,7 +278,6 @@ async function run() {
     if (rec.error) { queryErrors++; lastErr = rec.error; continue; }
     if (rec.unmeasurable) { unmeasurable++; continue; }
     if (rec.suspect) suspectN++;
-    inPlayDropped += rec._inPlayDropped || 0;
     records.push(rec);
   }
 
@@ -323,10 +340,9 @@ async function run() {
   if (unmeasurable) detail.push(`${unmeasurable} unmeasurable`);
   if (tooEarly) detail.push(`${tooEarly} too early`);
   if (queryErrors) detail.push(`${queryErrors} query errors`);
-  if (inPlayDropped) detail.push(`${inPlayDropped} in-play rows ignored`);
   return {
     summary: `${parts.join('')} (${detail.join(', ')})`,
-    data: { recorded: records.length, beat, measured: measured.length, suspect: suspectN, unmeasurable, tooEarly, queryErrors, inPlayDropped },
+    data: { recorded: records.length, beat, measured: measured.length, suspect: suspectN, unmeasurable, tooEarly, queryErrors },
   };
 }
 

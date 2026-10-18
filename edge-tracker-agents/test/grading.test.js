@@ -132,3 +132,25 @@ test('an empty queue is reported as empty, not as a failure', async () => {
   assert.match(r.summary, /no completed plays to grade/);
   assert.equal(degraded.length, 0);
 });
+
+test('plays are abandoned on a much longer clock than they stop being attempted', async () => {
+  // A grader outage between the two thresholds must lose nothing. 20 days is
+  // past the 10-day attempt window but well inside the 30-day write-off.
+  db.setRows('monitor_scores', [playRow({ id: 'midway', scored_at: D(20) })]);
+  finals = [RAVENS];
+  await grading.run();
+  assert.equal(db.rows('monitor_scores').find((r) => r.id === 'midway').status, 'pending',
+    'not attempted, but not written off either');
+});
+
+test('a bulk write-off is reported, not just warned', async () => {
+  // The one destructive thing this agent does. Expected once as cleanup; if it
+  // recurs, real results are being abandoned.
+  db.setRows('monitor_scores', Array.from({ length: 30 }, (_, i) => playRow({
+    id: `ancient${i}`, game_id: `g${i}`, scored_at: D(90 + i),
+  })));
+  finals = [];
+  await grading.run();
+  assert.ok(degraded.some((d) => d.k === 'grading|expired-bulk'), 'writing off 30 plays must be loud');
+  assert.equal(lines.error.length, 1);
+});

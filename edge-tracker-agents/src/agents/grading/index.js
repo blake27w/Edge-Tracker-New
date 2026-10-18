@@ -11,11 +11,28 @@ import { logger } from '../../utils/index.js';
 import { reportDegraded } from '../../store/index.js';
 import { getFinals, getBox, getUfcResults } from '../shared/espn.js';
 
-// How far back the grader will look for pending plays. Anything older is
-// ungradeable in practice (ESPN's scoreboard won't serve it) and is retired
-// rather than left to clog the queue.
+// Two SEPARATE thresholds. Welding them together was a mistake: "stop
+// attempting" and "write off permanently" are different decisions with very
+// different costs.
+//
+// LOOKBACK_DAYS — how far back we attempt to grade. Cheap to be conservative.
 const LOOKBACK_DAYS = Number(process.env.GRADE_LOOKBACK_DAYS) || 10;
+// EXPIRE_DAYS — when we abandon a play. Deliberately much longer, because the
+// original rationale for retiring at the lookback boundary was WRONG: ESPN's
+// scoreboard serves historical dates perfectly well (nfl-history grades 2024
+// games through the same getFinals), so an old pending play is not inherently
+// ungradeable. What D4 found is that ESPN drops old ODDS, not old scores.
+//
+// Retiring them is still worth doing, but for a different reason: unbounded
+// pending rows fill the dedupe windows other agents rely on — signal-engine
+// reads 3000 pending rows, ncaaf-model 2000, prop-engine 200 — and once those
+// fill with ancient rows the dedupe silently stops suppressing duplicates.
+// 30 days is past any plausible grading opportunity while still bounding that.
+const EXPIRE_DAYS = Number(process.env.GRADE_EXPIRE_DAYS) || 30;
 const EXPIRE_BATCH = 200;
+// A sweep this large is either first-run cleanup or a grader that was down
+// long enough to write off real results. Both are worth saying out loud.
+const EXPIRE_LOUD_AT = Number(process.env.GRADE_EXPIRE_LOUD_AT) || 25;
 // Minimum plays-with-finals-available before "0 graded" is treated as a defect
 // rather than an ordinary quiet run. Guards against alarming on a single play.
 const ZERO_ALARM_MIN = Number(process.env.GRADE_ZERO_ALARM_MIN) || 5;
@@ -213,6 +230,8 @@ async function dedupe() {
 // occupy the oldest-first queue and starve everything behind them. 'expired' is
 // outside the win/loss/push record, so it changes no reported numbers.
 async function expireStale(floorIso) {
+  // Writing results off is the one destructive thing this agent does, so it
+  // reports when it does it in bulk rather than only logging a warn.
   let stale = [];
   try {
     stale = await db.select('monitor_scores', 'id', {
@@ -225,7 +244,12 @@ async function expireStale(floorIso) {
     try { await db.update('monitor_scores', { status: 'expired', graded_at: new Date().toISOString() }, { id: r.id }); n++; }
     catch (e) { logger.warn('grading', `expire: ${e.message}`); break; }
   }
-  if (n) logger.warn('grading', `expired ${n} plays older than ${LOOKBACK_DAYS}d — ungradeable, removed from the pending queue`);
+  if (n) logger.warn('grading', `expired ${n} plays older than ${EXPIRE_DAYS}d — removed from the pending queue`);
+  if (n >= EXPIRE_LOUD_AT) {
+    logger.error('grading', `wrote off ${n} plays older than ${EXPIRE_DAYS}d — expected once as cleanup; repeatedly means results are being abandoned`);
+    reportDegraded('grading|expired-bulk',
+      `wrote off ${n} plays older than ${EXPIRE_DAYS}d. Expected once as initial cleanup; if this recurs, the grader has been failing long enough to abandon real results`);
+  }
   return n;
 }
 
@@ -238,7 +262,10 @@ async function run() {
   // Lower bound on the queue. Without it, `limit: 80` ordered oldest-first was
   // permanently occupied by ungradeable rows and nothing new was ever reached.
   const floor = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
-  const expired = await expireStale(floor);
+  // Note the different threshold: we stop ATTEMPTING at LOOKBACK_DAYS but do
+  // not ABANDON until EXPIRE_DAYS, so a grader outage shorter than the gap
+  // between them loses nothing.
+  const expired = await expireStale(new Date(Date.now() - EXPIRE_DAYS * 86400_000).toISOString());
   let pending = [];
   try {
     pending = await db.select('monitor_scores', '*', {
