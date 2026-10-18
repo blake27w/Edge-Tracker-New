@@ -110,5 +110,42 @@ if (process.argv.includes('--live')) {
   }
 }
 
+// ── 10. Book movement attribution (book-move agent) ──────────────
+// The agent's whole justification is that it costs nothing: its inputs are the
+// in-memory slate, the in-memory splits and bounded reads of our own snapshot
+// table. A single fetch( in that file silently turns a $0 agent into an Odds
+// API bill, so pin it by reading the source.
+const bmSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/book-move/index.js'), 'utf8');
+ok('book-move spends nothing', !/\bfetch\s*\(/.test(bmSrc), 'no Odds API call may appear in this agent');
+ok('book-move reads snapshots, not line_movements', /line_snapshots/.test(bmSrc) && !/line_movements/.test(bmSrc),
+  'the pre-computed table loses its baseline on every redeploy');
+ok('book-move bounds its slate', /MAX_GAMES|slice\(0,\s*\d+\)/.test(bmSrc));
+ok('snapshot query is descending+limited', /ascending:\s*false/.test(bmSrc) && /limit:\s*\d+/.test(bmSrc),
+  'ASC + limit would truncate the newest rows');
+ok('book-move reuses shared key numbers', /shared\/key-numbers\.js/.test(bmSrc));
+ok('book roles are derived', /led_pct/.test(bmSrc));
+ok('no hardcoded sharp-book list', !/pinnacle|circa/i.test(bmSrc), 'our book list is all US retail — no book gets a maker prior');
+
+const knSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/key-number/index.js'), 'utf8');
+ok('key-number imports shared keys', /shared\/key-numbers\.js/.test(knSrc));
+ok('key-number no longer declares LAND_PCT', !/const LAND_PCT/.test(knSrc), 'two copies would drift apart');
+
+const storeSrc = await readFile(join(root, 'edge-tracker-agents/src/store/index.js'), 'utf8');
+ok('store exports setBookMoves', /export function setBookMoves/.test(storeSrc));
+
+ok('/plays serves bookMoves', /bookMoves:\s*getBookMoves\(\)/.test(server));
+ok('data-health watches book_move_log', /book_move_log/.test(server));
+
+// A half-registered agent (defined but missing from one of these) shows as a
+// permanent red dot on the Agents grid and never runs.
+const cfgSrc = await readFile(join(root, 'edge-tracker-agents/src/config/index.js'), 'utf8');
+const orchSrc = await readFile(join(root, 'edge-tracker-agents/src/orchestrator/index.js'), 'utf8');
+ok('book-move registered in config', /'book-move'/.test(cfgSrc));
+ok('book-move registered in orchestrator', /book-move/.test(orchSrc) && /\bbookMove\b/.test(orchSrc));
+ok('book-move listed in the PWA agent grid', /'book-move'|name:'book-move'/.test(html));
+ok("AGENT_STALE_MS covers book-move", /AGENT_STALE_MS[\s\S]{0,4000}?'book-move':\s*\d+/.test(html));
+ok('book-move render tolerates old cached payload', /bm\.live\s*\|\|/.test(html) && /bm\.byBook\s*\|\|/.test(html),
+  'hydrateAgentsCache replays a pre-bookMoves bag on first paint');
+
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed`);
 if (fails.length) { fails.forEach((f) => console.log(`  ✗ ${f}`)); process.exit(1); }

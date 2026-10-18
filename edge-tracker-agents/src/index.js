@@ -9,7 +9,7 @@ import db from './db/index.js';
 import { detectModel, getFeed, getMetrics, getClaudeUsage, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
 import { getSeasonSchedule, upcomingSeason, lastCompletedSeason } from './agents/shared/nfl.js';
-import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog, getIntel } from './store/index.js';
+import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getBookMoves, getWatchdog, getIntel } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook, buildCsv, CSV_SHEETS } from './export/index.js';
 import { buildGames } from './games/index.js';
@@ -323,7 +323,7 @@ async function buildDataHealth() {
   const specs = [
     ['line_snapshots', 'fetched_at'], ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'],
     ['opp_results', 'graded_at'], ['ev_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
-    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['injury_updates', 'fetched_at'],
+    ['book_edge_log', 'detected_at'], ['book_move_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['injury_updates', 'fetched_at'],
     ['game_weather', 'fetched_at'], ['public_splits', 'fetched_at'],
   ];
   const tables = [];
@@ -429,7 +429,7 @@ const server = http.createServer(async (req, res) => {
         system: systemHealth(),
       });
     case '/plays':
-      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs(), pace: getNflPace(), style: getIntel('nflStyle') }, predMarket: getPredMarket(), weatherChanges: getIntel('weatherChange'), nflLive: getIntel('nflLive'),
+      return json(res, 200, { plays: getPlays(), props: getPropPlays(), ev: getEvPlays(), arb: getArbPlays(), backtest: getBacktest(), stale: getStaleLines(), divergence: getDivergence(), keyNumbers: getKeyNumbers(), fairLine: getFairLine(), combat: getCombatPlays(), combatDerivs: getCombatDerivs(), fade: getFadePlays(), clv: getClvReport(), bookEdges: getBookEdges(), bookMoves: getBookMoves(), nflPrep: { winTotals: getNflWinTotals(), schedule: getNflSchedule(), props: getNflProps(), totals: getNflTotals(), inactives: getNflInactives(), lineMove: getNflLineMove(), derivatives: getNflDerivs(), pace: getNflPace(), style: getIntel('nflStyle') }, predMarket: getPredMarket(), weatherChanges: getIntel('weatherChange'), nflLive: getIntel('nflLive'),
       ncaaf: getIntel('ncaaf'), propLogs: getIntel('propLogs'), history: getIntel('history'), ncaafHistory: getIntel('ncaafHistory'), watchdog: getWatchdog() });
     case '/opportunity':
       try { return json(res, 200, await buildOpportunity(url)); }
