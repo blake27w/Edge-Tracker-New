@@ -148,15 +148,19 @@ async function run() {
   }
   const report = rollup(rows);
   setIntel('history', report);
-  if (rows.length) {
-    try {
-      for (let i = 0; i < rows.length; i += 200) await db.upsert('nfl_closing_lines', rows.slice(i, i + 200), 'event_id');
-    } catch (e) { logger.warn('nfl-history', e.message); }
+  // Report what was WRITTEN, not what was computed. The summary used to say
+  // `rows.length` whether or not the upsert succeeded, so a failing write read
+  // as a healthy run reporting hundreds of games.
+  let written = 0, writeErr = null;
+  for (let i = 0; i < rows.length; i += 200) {
+    const batch = rows.slice(i, i + 200);
+    try { await db.upsert('nfl_closing_lines', batch, 'event_id'); written += batch.length; }
+    catch (e) { writeErr = e.message; logger.warn('nfl-history', `upsert: ${e.message}`); break; }
   }
   const pt = report.primetime.primetime || {};
   return {
-    summary: `${rows.length} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''} · primetime U ${pt.unders || 0}-${pt.overs || 0} (${pt.underPct ?? '—'}%) · dogs ${report.overall.dogPct ?? '—'}% ATS · free ESPN`,
-    data: { games: rows.length, noLine, errors, primetime: pt },
+    summary: `${written}/${rows.length} games written (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''}${writeErr ? ` · WRITE FAILED: ${writeErr}` : ''} · primetime U ${pt.unders || 0}-${pt.overs || 0} (${pt.underPct ?? '—'}%) · dogs ${report.overall.dogPct ?? '—'}% ATS · free ESPN`,
+    data: { games: rows.length, written, writeErr, noLine, errors, primetime: pt },
   };
 }
 

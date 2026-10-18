@@ -174,14 +174,17 @@ async function run() {
   const report = rollup(rows);
   setIntel('ncaafHistory', report);
   const fresh = rows.filter((r) => !known.has(r.event_id));
-  if (fresh.length) {
-    try { for (let i = 0; i < fresh.length; i += 200) await db.upsert('ncaaf_closing_lines', fresh.slice(i, i + 200), 'event_id'); }
-    catch (e) { logger.warn('ncaaf-history', e.message); }
+  // Report what was WRITTEN, not what was computed (see nfl-history).
+  let written = 0, writeErr = null;
+  for (let i = 0; i < fresh.length; i += 200) {
+    const batch = fresh.slice(i, i + 200);
+    try { await db.upsert('ncaaf_closing_lines', batch, 'event_id'); written += batch.length; }
+    catch (e) { writeErr = e.message; logger.warn('ncaaf-history', `upsert: ${e.message}`); break; }
   }
   const tp = report.top25Primetime;
   return {
-    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
-    data: { games: rows.length, noLine, errors, top25Primetime: tp },
+    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · ${written}/${fresh.length} new written · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''}${writeErr ? ` · WRITE FAILED: ${writeErr}` : ''} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
+    data: { games: rows.length, written, writeErr, noLine, errors, top25Primetime: tp },
   };
 }
 
