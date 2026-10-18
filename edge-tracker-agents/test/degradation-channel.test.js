@@ -93,3 +93,41 @@ test('a failed write reports itself and still rethrows unchanged', async () => {
   assert.match(reported[0].d, /schema\.sql/, 'with the fix');
   mock.reset();
 });
+
+test('a failed upsert reports itself too — covering the history agents', async () => {
+  // Relevant to #132: both history agents persist via db.upsert and wrap it in
+  // a warn-only catch. Once #130 lands they need no change to become loud —
+  // the reporting is at the db layer, so every one of the 92 swallow sites is
+  // covered whether it uses insert, upsert, update or del.
+  const reported = [];
+  mock.module(import.meta.resolve('../src/store/index.js'), {
+    namedExports: { reportDegraded: (k, d) => reported.push({ k, d }) },
+  });
+  mock.module(import.meta.resolve('../src/config/index.js'), {
+    defaultExport: { supabase: { url: 'https://x.supabase.co', key: 'k' }, dryRun: false },
+  });
+  const err = { code: '57014', message: 'canceling statement due to statement timeout' };
+  mock.module('@supabase/supabase-js', {
+    namedExports: {
+      createClient: () => ({
+        from: () => ({
+          upsert: () => ({ select: async () => ({ data: null, error: err }) }),
+          update: () => ({ eq: () => ({ select: async () => ({ data: null, error: err }) }) }),
+        }),
+      }),
+    },
+  });
+
+  const db = (await import(`../src/db/index.js?upsert=${Date.now()}`)).default;
+
+  await assert.rejects(() => db.upsert('nfl_closing_lines', [{ event_id: '1' }], 'event_id'),
+    /upsert nfl_closing_lines/);
+  assert.equal(reported[0].k, 'write|nfl_closing_lines');
+  // A timeout is NOT a schema problem, and the detail must not claim otherwise.
+  assert.doesNotMatch(reported[0].d, /schema out of date/);
+
+  await assert.rejects(() => db.update('monitor_scores', { status: 'win' }, { id: 'x' }),
+    /update monitor_scores/);
+  assert.equal(reported[1].k, 'write|monitor_scores');
+  mock.reset();
+});
