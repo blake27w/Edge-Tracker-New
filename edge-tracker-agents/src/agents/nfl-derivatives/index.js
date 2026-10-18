@@ -13,7 +13,7 @@ import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, setNflDerivs } from '../../store/index.js';
 import { impliedProb, toDecimal, toAmerican } from '../shared/odds-math.js';
-import { hasOddsBudget } from '../odds/index.js';
+import { hasOddsBudget, recordOddsSpend } from '../odds/index.js';
 
 const { oddsApi, BOOKS } = config;
 const MARKETS = (process.env.NFL_DERIVATIVE_MARKETS || 'team_totals').split(',').map((s) => s.trim()).filter(Boolean);
@@ -29,6 +29,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 async function fetchEvent(eventId) {
   const params = new URLSearchParams({ apiKey: oddsApi.key, regions: 'us', oddsFormat: 'american', markets: MARKETS.join(','), bookmakers: BOOKS.join(',') });
   const res = await fetch(`${oddsApi.base}/sports/americanfootball_nfl/events/${eventId}/odds?${params}`);
+  recordOddsSpend('NFL', res);
   if (res.status === 404 || res.status === 422) return null;
   if (!res.ok) throw new Error(`Odds derivatives ${res.status}`);
   return res.json();
@@ -74,7 +75,7 @@ function teamTotalEdges(data, g) {
 async function run() {
   if (!config.nflDerivatives) { setNflDerivs([]); return { summary: 'disabled (set NFL_DERIVATIVES=true)' }; }
   if (!oddsApi.key) { setNflDerivs([]); return { summary: 'skipped — no ODDS_API_KEY' }; }
-  if (!hasOddsBudget(config.rules.oddsReserve)) { setNflDerivs([]); return { summary: 'skipped — protecting odds budget' }; }
+  if (!hasOddsBudget(config.rules.oddsReserve, 'NFL')) { setNflDerivs([]); return { summary: 'skipped — protecting odds budget' }; }
   if (today() !== day) { day = today(); scansToday = 0; }
 
   const now = Date.now();

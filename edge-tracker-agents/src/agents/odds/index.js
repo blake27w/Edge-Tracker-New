@@ -62,9 +62,27 @@ export function getOddsBudget() {
 // so core odds ingestion is protected. `budget.remaining` is reconciled from the
 // API's x-requests-remaining header each odds run, so it reflects ALL account
 // usage (lagged at most one odds cycle). Allows freely until the budget loads.
-export function hasOddsBudget(reserve = 0) {
+export function hasOddsBudget(reserve = 0, sport = null) {
   if (!budget.loaded) return true;
-  return budget.remaining > reserve;
+  if (budget.remaining <= reserve) return false;
+  // Per-sport ceiling, same counter the main loop bills against — so a sport's
+  // discretionary and core spend share one budget instead of two.
+  if (sport && (budget.bySport[sport] || 0) >= sportCap(sport)) return false;
+  return true;
+}
+
+// Attribute a discretionary consumer's spend. These agents call the Odds API
+// with their own fetch, outside the ingestion loop, and used to record nothing:
+// in Oct 2026 that left ~1107 credits (9% of the month) governed by no per-sport
+// cap and counted against no sport — `used` read 12642 while `bySport` summed to
+// 11535. Pass the fetch Response; the API reports the real cost in its headers.
+export function recordOddsSpend(sport, res) {
+  const h = res && res.headers;
+  recordSpend(sport, h ? {
+    remaining: h.get('x-requests-remaining'),
+    used: h.get('x-requests-used'),
+    last: h.get('x-requests-last'),
+  } : null);
 }
 
 function sportCap(sport) {
