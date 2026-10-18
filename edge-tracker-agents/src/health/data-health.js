@@ -39,7 +39,12 @@ let dataHealthCache = null;
 const ESTIMATE_TOTAL = new Set([
   'line_snapshots', 'injury_updates', 'line_signals', 'book_edge_log',
   'sharp_signals', 'ev_opportunities', 'opp_results', 'game_weather',
+  'line_movements', 'opening_lines', 'prop_snapshots', 'alert_log',
+  'arb_opportunities', 'fair_line_log', 'schedule_spots', 'tennis_markets',
 ]);
+// Small reference tables — a few hundred rows at most, upserted one row per
+// team/game — are left exact and unindexed on purpose: a seq scan of 32 rows
+// costs nothing, and 33 more indexes would be 33 more things to migrate.
 
 // Bound each count so one slow table can't hold the whole endpoint open. A
 // timeout is a real failure and is reported as one.
@@ -71,11 +76,37 @@ export async function buildDataHealth({ force = false } = {}) {
       generated: new Date().toISOString(), cached: false,
     };
   }
+  // Every table an agent writes to. This list was 11 of 44, and the 33 missing
+  // ones are why `public_splits` went unnoticed for 106 days: it was caught
+  // only because it happened to be one of the eleven. A silent write failure
+  // on nfl_schedule_spots or tennis_markets had no tell at all.
+  //
+  // [table, timestamp column or null]. A null means the table has no
+  // timestamptz to window on (the closing-lines history tables are keyed by
+  // season/week), so only a total is meaningful — that is reported as
+  // `today: null` with a `note`, which is NOT an error.
   const specs = [
-    ['line_snapshots', 'fetched_at'], ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'],
-    ['opp_results', 'graded_at'], ['ev_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
-    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['injury_updates', 'fetched_at'],
-    ['game_weather', 'fetched_at'], ['public_splits', 'fetched_at'],
+    // ── core pipeline ──
+    ['line_snapshots', 'fetched_at'], ['line_movements', 'detected_at'], ['opening_lines', 'captured_at'],
+    ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'], ['opp_results', 'graded_at'],
+    ['ev_opportunities', 'fetched_at'], ['arb_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
+    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['fair_line_log', 'fetched_at'],
+    ['prop_snapshots', 'fetched_at'], ['public_fades', 'detected_at'], ['pred_market_edges', 'detected_at'],
+    // ── intelligence feeds ──
+    ['injury_updates', 'fetched_at'], ['game_weather', 'fetched_at'], ['weather_changes', 'detected_at'],
+    ['public_splits', 'fetched_at'], ['schedule_spots', 'fetched_at'], ['power_ratings', 'updated_at'],
+    // ── MLB ──
+    ['mlb_context', 'fetched_at'], ['umpire_runs', 'updated_at'], ['pitcher_changes', 'detected_at'],
+    // ── NFL / NCAAF ──
+    ['nfl_power_ratings', 'updated_at'], ['nfl_win_totals', 'updated_at'], ['nfl_schedule_spots', 'updated_at'],
+    ['nfl_prop_baselines', 'updated_at'], ['nfl_scoring', 'updated_at'], ['nfl_pace', 'updated_at'],
+    ['nfl_inactives', 'detected_at'], ['nfl_line_moves', 'captured_at'], ['nfl_derivatives', 'fetched_at'],
+    ['nfl_qb_status', 'detected_at'], ['nfl_closing_lines', null], ['ncaaf_closing_lines', null],
+    // ── tennis / combat ──
+    ['tennis_markets', 'fetched_at'], ['tennis_fatigue', 'fetched_at'], ['tennis_matchups', 'fetched_at'],
+    ['combat_markets', 'fetched_at'], ['combat_news', 'detected_at'], ['combat_derivatives', 'detected_at'],
+    // ── operational ──
+    ['alert_log', 'sent_at'], ['api_usage', 'updated_at'],
   ];
 
   const errors = [];
@@ -97,10 +128,12 @@ export async function buildDataHealth({ force = false } = {}) {
   const results = await Promise.all(specs.map(async ([t, ts]) => {
     const mode = ESTIMATE_TOTAL.has(t) ? 'estimated' : 'exact';
     const [today, total] = await Promise.all([
-      attempt(t, 'today', () => db.count(t, { gte: { [ts]: since } })),
+      ts ? attempt(t, 'today', () => db.count(t, { gte: { [ts]: since } })) : Promise.resolve(null),
       attempt(t, 'total', () => db.count(t, { mode })),
     ]);
     const row = { table: t, today, total, total_mode: mode };
+    // An absent timestamp column is a property of the table, not a failure.
+    if (!ts) row.note = 'no timestamp column — total only';
     const errs = errors.filter((e) => e.table === t);
     if (errs.length) row.error = errs.map((e) => `${e.scope}: ${e.kind}`).join(', ');
     return row;

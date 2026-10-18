@@ -59,6 +59,21 @@ create index concurrently if not exists monitor_scores_scored_idx    on monitor_
 create index concurrently if not exists clv_records_recorded_idx     on clv_records      (recorded_at desc);
 create index concurrently if not exists public_splits_fetched_idx    on public_splits    (fetched_at desc);
 create index concurrently if not exists scan_runs_status_started_idx on scan_runs        (status, started_at desc);
+-- Added 2026-10-17 after auditing agent summaries against their data: the
+-- /data-health spec list went from 11 tables to all 44 that agents write to
+-- (public_splits sat broken for 106 days and was caught only because it
+-- happened to be one of the original eleven). These six are the newly-counted
+-- tables whose timestamp was, again, only the TRAILING column of a composite
+-- index — same unusable shape as the original twelve. The rest of the new
+-- tables are small reference tables (a few hundred rows, one per team/game)
+-- where a seq scan is free and an index would be 27 more things to migrate.
+create index concurrently if not exists line_movements_detected_idx on line_movements (detected_at desc);
+create index concurrently if not exists opening_lines_captured_idx   on opening_lines  (captured_at desc);
+create index concurrently if not exists prop_snapshots_fetched_idx   on prop_snapshots (fetched_at desc);
+create index concurrently if not exists fair_line_log_fetched_idx    on fair_line_log  (fetched_at desc);
+create index concurrently if not exists schedule_spots_fetched_idx   on schedule_spots (fetched_at desc);
+create index concurrently if not exists tennis_markets_fetched_idx   on tennis_markets (fetched_at desc);
+
 
 -- ── Afterwards ──────────────────────────────────────────────────────
 -- 1) A `concurrently` build that is interrupted leaves an INVALID index behind,

@@ -17,8 +17,18 @@ import { fakeDb, fakeLogger } from './helpers/fake-db.js';
 process.env.DATA_HEALTH_TTL_MS = '60000';
 process.env.DATA_HEALTH_DEGRADED_TTL_MS = '60';
 
-const TABLES = ['line_snapshots', 'monitor_scores', 'clv_records', 'opp_results', 'ev_opportunities',
-  'line_signals', 'book_edge_log', 'sharp_signals', 'injury_updates', 'game_weather', 'public_splits'];
+// Every table /data-health counts. The list is deliberately exhaustive over
+// what agents write: it was 11 of 44, and public_splits was caught only
+// because it happened to be one of the eleven.
+const TABLES = ['line_snapshots', 'line_movements', 'opening_lines', 'monitor_scores', 'clv_records',
+  'opp_results', 'ev_opportunities', 'arb_opportunities', 'line_signals', 'book_edge_log', 'sharp_signals',
+  'fair_line_log', 'prop_snapshots', 'public_fades', 'pred_market_edges', 'injury_updates', 'game_weather',
+  'weather_changes', 'public_splits', 'schedule_spots', 'power_ratings', 'mlb_context', 'umpire_runs',
+  'pitcher_changes', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots', 'nfl_prop_baselines',
+  'nfl_scoring', 'nfl_pace', 'nfl_inactives', 'nfl_line_moves', 'nfl_derivatives', 'nfl_qb_status',
+  'nfl_closing_lines', 'ncaaf_closing_lines', 'tennis_markets', 'tennis_fatigue', 'tennis_matchups',
+  'combat_markets', 'combat_news', 'combat_derivatives', 'alert_log', 'api_usage'];
+const WITH_TS = TABLES.length - 2;        // the two closing-lines tables have no timestamptz
 
 let db, degraded, lines, buildDataHealth;
 
@@ -80,7 +90,7 @@ test('a healthy run reports no errors and raises nothing', async () => {
   assert.deepEqual(r.queryErrors, []);
   assert.equal(r.degraded, false);
   assert.equal(degraded.length, 0, 'no crying wolf on a clean run');
-  assert.equal(r.tables.length, 11);
+  assert.equal(r.tables.length, TABLES.length, 'every written table must be counted');
 });
 
 test('no database is stated outright, not served as a wall of nulls', async () => {
@@ -98,7 +108,8 @@ test('no database is stated outright, not served as a wall of nulls', async () =
 // ── Speed: the 36s ──────────────────────────────────────────────
 test('counts run concurrently, not one after another', async () => {
   const r = await buildDataHealth({ force: true });
-  assert.equal(db.calls.count.length, 23, '11 tables x (today+total) + scan_runs');
+  // today+total per table, minus the two with no timestamp column, + scan_runs
+  assert.equal(db.calls.count.length, TABLES.length + WITH_TS + 1);
   // All issued inside the same tick-ish window rather than serialised.
   const span = Math.max(...db.calls.count.map((c) => c.at)) - Math.min(...db.calls.count.map((c) => c.at));
   assert.ok(span < 500, `all 23 counts should be in flight together (span ${span}ms)`);
@@ -148,4 +159,23 @@ test('a transient failure is not cached as long as a clean payload', async () =>
   await sleep(100);
   const clean = await buildDataHealth();
   assert.equal(clean.cached, true, 'a healthy payload holds for the full TTL');
+});
+
+test('every table an agent writes to is counted', async () => {
+  // The blind spot that let public_splits sit broken for 106 days: the spec
+  // list covered 11 of the 44 tables agents write to, so most of the system
+  // had no "today: 0" tell at all. If a new agent starts writing a new table,
+  // this is the test that should fail.
+  const r = await buildDataHealth({ force: true });
+  const counted = new Set(r.tables.map((t) => t.table));
+  for (const t of TABLES) assert.ok(counted.has(t), `${t} is written by an agent but not counted`);
+});
+
+test('a table with no timestamp column reports total-only, not an error', async () => {
+  const r = await buildDataHealth({ force: true });
+  const nfl = r.tables.find((t) => t.table === 'nfl_closing_lines');
+  assert.equal(nfl.today, null);
+  assert.match(nfl.note, /no timestamp column/);
+  assert.equal(r.degraded, false, 'an absent column is a property of the table, not a failure');
+  assert.ok(!r.queryErrors.some((e) => e.table === 'nfl_closing_lines'));
 });
