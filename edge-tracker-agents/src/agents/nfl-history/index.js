@@ -14,7 +14,7 @@ import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
 import { getSeasonFinals, upcomingSeason } from '../shared/nfl.js';
-import { coreClosingOdds, pricesOf } from '../shared/espn-odds.js';
+import { coreClosingOdds, consensusOf } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 const FROM_SEASON = Number(process.env.NFL_HISTORY_FROM) || 2024;
@@ -50,22 +50,23 @@ async function closingLine(eventId) {
   const res = await fetch(`${BASE}/summary?event=${eventId}`);
   if (!res.ok) throw new Error(`ESPN summary ${res.status}`);
   const j = await res.json();
-  const pc = j.pickcenter || j.odds || [];
-  let best = null;
-  for (const p of pc) {
-    const total = Number(p.overUnder);
-    // pickcenter.spread is from the home team's perspective (negative = home favored); details like "KC -6.5" when present.
+  const homeAbbr = j.boxscore?.teams?.find((t) => t.homeAway === 'home')?.team?.abbreviation;
+  // pickcenter's spread is home-perspective; when it's absent the number is
+  // sometimes only in `details` ("KC -6.5"), named from the FAVOURITE's side.
+  const best = consensusOf(j.pickcenter || j.odds, (p) => {
     let spreadHome = Number(p.spread);
     if (!Number.isFinite(spreadHome) && p.details) {
       const m = /([A-Z]{2,4})\s*([+-]?\d+(?:\.5)?)/.exec(p.details);
-      if (m) { const fav = m[1], n = Number(m[2]); const homeAbbr = j.boxscore?.teams?.find((t) => t.homeAway === 'home')?.team?.abbreviation; spreadHome = fav === homeAbbr ? -Math.abs(n) : Math.abs(n); }
+      if (m) { const n = Number(m[2]); spreadHome = m[1] === homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
-    const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
-    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null, ...pricesOf(p) };
-  }
+    const total = Number(p.overUnder);
+    return {
+      total: Number.isFinite(total) ? total : null,
+      spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
+    };
+  });
   // ESPN empties pickcenter for older games; the core API still has them.
-  if (!best) best = await coreClosingOdds('nfl', eventId);
-  return best;
+  return best || coreClosingOdds('nfl', eventId);
 }
 
 function grade(g, line) {

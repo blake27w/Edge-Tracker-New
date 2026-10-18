@@ -13,7 +13,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
-import { coreClosingOdds, pricesOf } from '../shared/espn-odds.js';
+import { coreClosingOdds, consensusOf } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const FROM_SEASON = Number(process.env.NCAAF_HISTORY_FROM) || 2024;
@@ -65,20 +65,20 @@ async function closingLine(g) {
   const res = await fetch(`${BASE}/summary?event=${g.id}`);
   if (!res.ok) throw new Error(`ESPN summary ${res.status}`);
   const j = await res.json();
-  let best = null;
-  for (const p of j.pickcenter || j.odds || []) {
-    const total = Number(p.overUnder);
+  const best = consensusOf(j.pickcenter || j.odds, (p) => {
     let spreadHome = Number(p.spread);
     if (!Number.isFinite(spreadHome) && p.details) {
       const m = /([A-Z]{2,5})\s*([+-]?\d+(?:\.5)?)/.exec(p.details);
       if (m) { const n = Number(m[2]); spreadHome = m[1] === g.homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
-    const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
-    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null, ...pricesOf(p) };
-  }
+    const total = Number(p.overUnder);
+    return {
+      total: Number.isFinite(total) ? total : null,
+      spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
+    };
+  });
   // ESPN empties pickcenter for older games; the core API still has them.
-  if (!best) best = await coreClosingOdds('college-football', g.id);
-  return best;
+  return best || coreClosingOdds('college-football', g.id);
 }
 
 function grade(g, line) {
