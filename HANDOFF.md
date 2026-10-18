@@ -18,7 +18,7 @@ Supporting changes: `agents/shared/key-numbers.js` (extracted from `key-number/i
 
 ## Verified vs unverified
 
-- **Verified:** `node tools/smoke.mjs` → **60 passed / 12 failed**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). They are stale assertions about a Games view that no longer exists in `index.html` and a renamed server const (`isLocalDev` → `okOrigin`). **The smoke harness is stale, not broken by this change — worth a cleanup session.** Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
+- **Verified:** `node tools/smoke.mjs` → **60 passed / 12 failed**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). Root cause (confirmed by the session on PR #131, which authored that harness's branch): `tools/smoke.mjs` was cherry-picked **from #129**, so it asserts #129's `index.html` — the Games tile, `renderHomeGames`, `gamesCache`, `spOverride`, etc. — which is not on `main` yet. The view doesn't exist *yet*; it is not a view that was removed. **These are not ours to fix: they should clear on their own once #129 merges and this branch is rebased on `main`.** Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
 - **Unverified:** no live run. `book_move_log` DDL has not been applied in Supabase, so the agent cannot persist anything yet — that is step 1 below.
 
 ## Review and test history
@@ -29,7 +29,7 @@ A reviewer found **9 confirmed defects**, all fixed. The serious ones, for the r
 
 Nothing half-done in the code. Two loose ends:
 
-1. **A WIP checkpoint commit (`63ef58e`) landed on this branch from outside this session**, and the branch has an `origin` upstream it did not start with. The content is this session's work and `node --check`/smoke are green on it, but **nobody in this session pushed it** — worth confirming it was the harness's auto-checkpoint and not a stray push before opening the PR.
+1. **`63ef58e` and the `origin` upstream are explained — resolved, no action.** The session on PR #131 was asked to clean up this branch, which from outside looked redundant (its only commit was byte-identical to #129's smoke-harness commit). It tried to delete the branch; git refused because this worktree held it, which is the only reason the uncommitted feature survived. It then committed the tree as a WIP checkpoint and pushed, deliberately opening no PR. Nothing was rebased, squashed or discarded.
 2. **No PR opened yet.** Project norm is branch + PR to `origin/main`, never direct.
 
 ## Open design question for Blake
@@ -50,10 +50,11 @@ Nothing half-done in the code. Two loose ends:
 5. **Phase (b): persist the `lastLines` baseline** (`odds/index.js:162` is a process-local Map, so every redeploy blinds movement detection and leaves `line_movements` sparse). Makes this feature's data denser.
 6. **Phase (c): point `sharp`/`public-splits` steam detection at a history reader** instead of `getIntel('movements')`, the in-memory array from only the most recent odds run — which is why `sharp` has reported "no recent line movement" across 13,028 runs.
 7. **Phase (a), now deferred: generalize open→close movement to all 12 sports** — spec already written at `docs/specs/line-move-all-sports.md` (store shape and agent-rename decisions already made in it).
-8. **Clean up the stale smoke assertions** (the 12 baseline failures above) so the harness goes green and future regressions are visible.
+8. **After #129 merges, rebase this branch on `main` and re-run smoke** — the 12 baseline failures should clear by themselves, because they are #129's own assertions running without #129's `index.html`. Do **not** rewrite those assertions; that would delete #129's coverage.
 9. Still owed from the September session: the `migrate-research.sql` Supabase migration, and Railway vars `NCAAF_MODEL=true` / `NFL_LIVE=true` / `ODDS_SKIP_SPORTS=SOCCER,WNBA,BOXING`.
 
 ## Do not touch
 
+- **PRs #129, #130 and #131 are all open and unmerged**, and `main` is still at `59b94bd` — so anything rebased onto `main` today includes none of them.
 - **PR #129** (`feat/function-first-games`) — unmerged PWA navigation reorg. Carries `D8`-`D16` and the original `tools/smoke.mjs`. This session's decisions were renumbered to **D17-D22** to avoid colliding with it; `DECISIONS.md` will need one reconciliation pass when #129 and `fix/silent-data-integrity-faults` (which ends at D14) both land.
 - `~/edge-tracker/` and `~/Desktop/Projects/Edge Tracker/_archive/` — stale copies.
