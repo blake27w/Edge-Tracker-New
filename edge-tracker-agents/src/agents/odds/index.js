@@ -306,9 +306,24 @@ async function run() {
     .filter(([s, m]) => isActive(s, m) || (footballOn && isFootball(s) && !m.oddsSkip))
     .map(([s]) => s);
   const sumAlloc = actives.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0) || 1;
-  const capOf = (sport) => (actives.includes(sport)
-    ? Math.floor(oddsApi.monthlyBudget * 0.85 * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc))
-    : sportCap(sport));
+
+  // Ceilings divide what's LEFT, not the whole month, and are anchored to what
+  // a sport has already spent. Dividing the whole budget meant every ceiling was
+  // recomputed from whoever happened to be in season at that instant, which cuts
+  // both ways: a season ENDING (MLB in October) drops out and silently inflates
+  // every other ceiling mid-month, and a season STARTING (NCAAB in November) adds
+  // ~0.06 to sumAlloc and shrinks every ceiling ~7% retroactively — so a sport
+  // sitting just under its cap wakes up over it and stops for the rest of the
+  // month having done nothing. Anchoring on `spent` makes cap >= spent always, so
+  // an arrival takes only its share of the remainder and can strand nobody.
+  // Totals are unchanged: sum(cap) = sum(spent) + headroom = monthlyBudget × 0.85.
+  const totalSpent = Object.values(budget.bySport || {}).reduce((t, v) => t + (v || 0), 0);
+  const headroom = Math.max(0, oddsApi.monthlyBudget * 0.85 - totalSpent);
+  const capOf = (sport) => {
+    if (!actives.includes(sport)) return sportCap(sport);
+    const spent = budget.bySport[sport] || 0;
+    return Math.floor(spent + headroom * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc));
+  };
   const mult = paceMult();
 
   // Football floor: in football season, hold back the credits NFL/NCAAF have
