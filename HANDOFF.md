@@ -18,7 +18,7 @@ Supporting changes: `agents/shared/key-numbers.js` (extracted from `key-number/i
 
 ## Verified vs unverified
 
-- **Verified:** `node tools/smoke.mjs` → **60 passed / 12 failed**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). Root cause (confirmed by the session on PR #131, which authored that harness's branch): `tools/smoke.mjs` was cherry-picked **from #129**, so it asserts #129's `index.html` — the Games tile, `renderHomeGames`, `gamesCache`, `spOverride`, etc. — which is not on `main` yet. The view doesn't exist *yet*; it is not a view that was removed. **These are not ours to fix: they should clear on their own once #129 merges and this branch is rebased on `main`.** Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
+- **Verified:** `node tools/smoke.mjs` → **61 passed / 12 failed**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). Root cause (confirmed by the session on PR #131, which authored that harness's branch): `tools/smoke.mjs` was cherry-picked **from #129**, so it asserts #129's `index.html` — the Games tile, `renderHomeGames`, `gamesCache`, `spOverride`, etc. — which is not on `main` yet. The view doesn't exist *yet*; it is not a view that was removed. **These are not ours to fix: they should clear on their own once #129 merges and this branch is rebased on `main`.** Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
 - **Unverified:** no live run. `book_move_log` DDL has not been applied in Supabase, so the agent cannot persist anything yet — that is step 1 below.
 
 ## Review and test history
@@ -32,9 +32,16 @@ Nothing half-done in the code. Two loose ends:
 1. **`63ef58e` and the `origin` upstream are explained — resolved, no action.** The session on PR #131 was asked to clean up this branch, which from outside looked redundant (its only commit was byte-identical to #129's smoke-harness commit). It tried to delete the branch; git refused because this worktree held it, which is the only reason the uncommitted feature survived. It then committed the tree as a WIP checkpoint and pushed, deliberately opening no PR. Nothing was rebased, squashed or discarded.
 2. **No PR opened yet.** Project norm is branch + PR to `origin/main`, never direct.
 
-## Open design question for Blake
+## Resolved this session
 
-`rankLevels` clusters arrivals by **line level + time** (6h gap rule) but **not by direction**. Two books converging on `-3.5` from opposite sides — one drifting `3→3.5`, one `4→3.5` — get ranked against each other, and the earlier is credited `led:true` even though they are not the same market move. This inflates `led_pct` on choppy markets. Left unfixed deliberately: the spec defines `led` purely as arrival order at a level, so adding a direction predicate changes the metric rather than correcting a defect. **Your call.**
+`rankLevels` now groups arrivals by **line level + direction**, not level alone. Two books converging
+on the same number from opposite sides (one drifting -3 → -3.5, one -4 → -3.5) are no longer ranked
+against each other — they are not the same market move, and ranking them together credited whichever
+arrived first with a lead it never earned, inflating `led_pct` on choppy markets. Blake's call,
+2026-10-17. Verified behaviorally (both converging books come back `lead_rank 1, led false`, one
+episode per direction) and guarded by a smoke assertion proven to fail when the grouping key is
+reverted. The 97-case behavioral suite still passes, so the genuine-lead, tie, lone-book and
+revisited-level cases are unaffected.
 
 ## Known ceilings (inherent to the data — see D22)
 
@@ -45,7 +52,7 @@ Nothing half-done in the code. Two loose ends:
 
 1. **Apply the `book_move_log` DDL in Supabase** — SQL Editor → paste the new block from `edge-tracker-agents/scripts/schema.sql` (idempotent, `if not exists`) → Run. The agent cannot persist episodes until this exists.
 2. **Run the manual check recipe** in `docs/specs/book-movement-attribution.md`. Before debugging anything, run `lsof -nP -iTCP -sTCP:LISTEN` — a Pool Room Pro Electron process holds 4317-4318, Vantyx holds 3000, and `npx serve` silently falls back to a random port, which has cost real time twice now.
-3. **Answer the `rankLevels` direction question above**, then open the PR to `origin/main`.
+3. **Open the PR to `origin/main`** — the `rankLevels` direction question is resolved (see above); nothing else is blocking it.
 4. **Expect ~2 weeks of noisy `role` values.** Book reputation is derived, so it bootstraps from nothing; the `small` flag (n < 20) discloses it. Do not tune the weights off the first fortnight.
 5. **Phase (b): persist the `lastLines` baseline** (`odds/index.js:162` is a process-local Map, so every redeploy blinds movement detection and leaves `line_movements` sparse). Makes this feature's data denser.
 6. **Phase (c): point `sharp`/`public-splits` steam detection at a history reader** instead of `getIntel('movements')`, the in-memory array from only the most recent odds run — which is why `sharp` has reported "no recent line movement" across 13,028 runs.

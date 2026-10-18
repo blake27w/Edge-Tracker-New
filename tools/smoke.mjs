@@ -205,6 +205,8 @@ ok('a tie is not a lead', /function strictlyBefore|const strictlyBefore/.test(bm
   'two books in one batch with no usable stamp cannot be separated');
 ok('a revisited level is clustered by arrival time', /CLUSTER_MS/.test(bmSrc) && /6 \* 3600_000/.test(bmSrc),
   '3 -> 3.5 -> 3 must not rank two unrelated moves against each other');
+ok('arrivals are grouped by level AND direction', /const k = `\$\{e\.line_to\}\|\$\{e\.direction\}`/.test(bmSrc),
+  'two books converging on -3.5 from opposite sides are not the same market move; ranking them together credited a lead nobody earned and inflated led_pct on choppy markets');
 ok('the clamp floor is the previous batch this book was seen in', /lastTs/.test(bmSrc) && /clampStamp\(row\.last_update, prevTs, ts\)/.test(bmSrc),
   'without a floor a stale market-level stamp reorders the leaderboard');
 ok('the canonical-side picker has a deterministic fallback', /\|\| sorted\[0\]/.test(bmSrc),

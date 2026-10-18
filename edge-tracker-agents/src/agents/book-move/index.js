@@ -292,16 +292,23 @@ function episodesFor(g, market, snaps, pub, leadPrior) {
   return out;
 }
 
-// `led` = among the books that reached THIS line level in this move, this book
-// got there first. It is false when no other book reached the level (there was
-// no field to lead) and false when the first two arrivals cannot be separated
-// — a tie is not a lead. This feeds led_pct → role → the next run's leadPrior,
-// so a sign error here compounds; it is deliberately NOT "differs from the
-// batch median", which credits a book for moving AWAY from the field.
+// `led` = among the books that reached THIS line level MOVING THE SAME WAY in
+// this move, this book got there first. It is false when no other book reached
+// the level (there was no field to lead) and false when the first two arrivals
+// cannot be separated — a tie is not a lead. This feeds led_pct → role → the
+// next run's leadPrior, so a sign error here compounds; it is deliberately NOT
+// "differs from the batch median", which credits a book for moving AWAY from
+// the field.
+//
+// Direction is part of the grouping key, not just the level: two books
+// converging on -3.5 from opposite sides (one drifting -3 → -3.5, one -4 →
+// -3.5) are not participating in the same market move, and ranking them
+// against each other credited whichever happened to arrive first with a lead
+// it never earned — which inflated led_pct on choppy markets.
 function rankLevels(eps) {
   const byLevel = new Map();
   for (const e of eps) {
-    const k = String(e.line_to);
+    const k = `${e.line_to}|${e.direction}`;
     (byLevel.get(k) || byLevel.set(k, []).get(k)).push(e);
   }
   for (const arr of byLevel.values()) {

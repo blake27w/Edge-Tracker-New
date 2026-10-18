@@ -117,9 +117,13 @@ For each book line change emit `line_from, line_to, moved, direction, moved_at`,
   back to the batch `fetched_at`. (We cannot distinguish a price-only bump from a line move with this
   data and do not try — an unplaceable stamp must simply not reorder the leaderboard or inflate
   `hours_to_start` into full `early` credit.) Never null — the dedup key depends on it.
-- `lead_rank` = this book's 1-based arrival position among the books that reached **this same level**
-  in this move. **Batch order is authoritative**; the (clamped) stamp only separates books inside one
-  batch. A level can be revisited (3 → 3.5 → 3), so arrivals more than 6h apart are separate moves.
+- `lead_rank` = this book's 1-based arrival position among the books that reached **this same level
+  moving the same direction** in this move. **Batch order is authoritative**; the (clamped) stamp only
+  separates books inside one batch. A level can be revisited (3 → 3.5 → 3), so arrivals more than 6h
+  apart are separate moves. **Direction is part of the grouping key, not just the level**: two books
+  converging on -3.5 from opposite sides (one drifting -3 → -3.5, one -4 → -3.5) are not participating
+  in the same market move, and ranking them against each other credits whichever arrived first with a
+  lead it never earned — which inflates `led_pct` on choppy markets.
 - `led` = `lead_rank === 1` **and** another book reached the level **and** the first two arrivals are
   strictly separable. A lone book at a level had no field to lead, and a tie is not a lead. (`led` is
   explicitly *not* "this book's line differs from the batch median" — that credits a book for moving
