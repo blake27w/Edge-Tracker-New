@@ -51,8 +51,27 @@ async function run() {
   // Cost tripwires.
   try {
     const ob = getOddsBudget();
-    if (ob.budget && ob.projectedMonthly > ob.budget) {
-      issues.push({ key: 'cost|odds', type: 'cost', agent: 'odds', label: 'Odds API', detail: `on pace for ${ob.projectedMonthly}/${ob.budget} credits this month` });
+    // NOT projectedMonthly. That is a straight-line extrapolation of per-day
+    // spend with no knowledge of the per-sport ceilings, which bound the month
+    // near budget x 0.85 by construction (capOf, agents/odds). It reads "on
+    // pace to overrun" through most of a normal football month — 15146 on day
+    // 17 projects ~27617/20000 — and it also fired all through September when
+    // the overrun was real. Firing in both cases, it separates nothing.
+    // Alert on what has actually happened instead.
+    if (ob.budget && ob.pctUsed >= 90 && ob.monthPct <= 75) {
+      issues.push({
+        key: 'cost|odds', type: 'cost', agent: 'odds', label: 'Odds API',
+        detail: `${ob.used}/${ob.budget} credits (${ob.pctUsed}%) with ${Math.round(100 - ob.monthPct)}% of the month left`,
+      });
+    }
+    // The September failure in one line: credits below the reserve, so the
+    // discretionary scanners cut out and ~30 agents report "no games on the
+    // slate" while every one of them looks healthy. Nothing alerted on it.
+    if (ob.budget && ob.discretionaryActive === false) {
+      issues.push({
+        key: 'cost|odds-reserve', type: 'cost', agent: 'odds', label: 'Odds API reserve',
+        detail: `${ob.remaining} credits left, below the ${ob.reserve} reserve — props, tennis and derivatives are paused`,
+      });
     }
   } catch (_) { /* ignore */ }
   if (COST_ALERT > 0) {
