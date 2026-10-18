@@ -6430,40 +6430,6 @@ function renderAgentsContent(){
     h+='<div style="height:8px"></div>';
   }
 
-  // Book movement attribution — WHO moved, and did it matter. Every field is
-  // defaulted: hydrateAgentsCache replays an OLD etBagCache bag on first paint,
-  // which has no bookMoves at all.
-  var bm=state.agentsBookMoves;
-  if(bm&&((bm.live&&bm.live.length)||(bm.byBook&&bm.byBook.length))){
-    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🧲 BOOK MOVEMENT — WHO MOVED, AND DID IT MATTER</div>';
-    h+='<div style="font-size:8px;color:var(--leather);margin:0 0 6px;line-height:1.5">Public % is market-wide, US retail books only — this measures who moves <b>first</b>, not who sharps bet.</div>';
-    if(bm.byBook&&bm.byBook.length){
-      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
-      h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">BOOKS — role · n · led% · avg move · vs-public%</div>';
-      (bm.byBook||[]).slice(0,12).forEach(function(b){
-        var dim=b.small?';opacity:.5':'';
-        h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
-        h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(b.label||b.book||'')+'</span>'+(b.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+esc(b.role||'')+' · '+(b.n||0)+' moves</div></div>';
-        h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:52px;text-align:right;color:'+(b.led_pct==null?'var(--muted)':'var(--brass)')+'">'+(b.led_pct!=null?b.led_pct+'%':'—')+'</div>';
-        h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+(b.avg_moved!=null?b.avg_moved:'—')+'</div>';
-        h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:46px;text-align:right">'+(b.vs_public_pct!=null?b.vs_public_pct+'%':'—')+'</div>';
-        h+='</div>';
-      });
-      h+='</div>';
-    }
-    (bm.live||[]).slice(0,20).forEach(function(m){
-      var arrow=m.direction==='up'?'↑':'↓';
-      h+='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
-      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-      h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
-      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+(m.score!=null?m.score:'—')+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
-      h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?m.line_from+'→'+m.line_to:'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span></div>';
-      if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
-      h+='</div>';
-    });
-    h+='<div style="height:8px"></div>';
-  }
-
   // Derivatives (team totals) — only present when NFL_DERIVATIVES is enabled.
   var nd=state.agentsNflDerivs||[];
   if(nd.length){
@@ -6614,6 +6580,42 @@ function renderAgentsContent(){
   } // end model
 
   } // end onPlays
+
+  if(!onPlays){
+  // Book movement attribution — WHO moved, and did it matter. Every field is
+  // defaulted: hydrateAgentsCache replays an OLD etBagCache bag on first paint,
+  // which has no bookMoves at all.
+  var bm=state.agentsBookMoves;
+  if(bm&&((bm.live&&bm.live.length)||(bm.byBook&&bm.byBook.length))){
+    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🧲 BOOK MOVEMENT — WHO MOVED, AND DID IT MATTER</div>';
+    h+='<div style="font-size:8px;color:var(--leather);margin:0 0 6px;line-height:1.5">Public % is market-wide, US retail books only — this measures who moves <b>first</b>, not who sharps bet.</div>';
+    if(bm.byBook&&bm.byBook.length){
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+      h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">BOOKS — role · n · led% · avg move · vs-public%</div>';
+      (bm.byBook||[]).slice(0,12).forEach(function(b){
+        var dim=b.small?';opacity:.5':'';
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
+        h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(b.label||b.book||'')+'</span>'+(b.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+esc(b.role||'')+' · '+(b.n||0)+' moves</div></div>';
+        h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:52px;text-align:right;color:'+(b.led_pct==null?'var(--muted)':'var(--brass)')+'">'+(b.led_pct!=null?b.led_pct+'%':'—')+'</div>';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+(b.avg_moved!=null?b.avg_moved:'—')+'</div>';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:46px;text-align:right">'+(b.vs_public_pct!=null?b.vs_public_pct+'%':'—')+'</div>';
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+    (bm.live||[]).slice(0,20).forEach(function(m){
+      var arrow=m.direction==='up'?'↑':'↓';
+      h+='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
+      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+(m.score!=null?m.score:'—')+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?m.line_from+'→'+m.line_to:'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span></div>';
+      if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
+      h+='</div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+  } // end !onPlays (book movement)
 
   if(!onPlays){
   // ── Live Feed ──

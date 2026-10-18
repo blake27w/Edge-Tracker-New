@@ -126,6 +126,49 @@ ok('book-move reuses shared key numbers', /shared\/key-numbers\.js/.test(bmSrc))
 ok('book roles are derived', /led_pct/.test(bmSrc));
 ok('no hardcoded sharp-book list', !/pinnacle|circa/i.test(bmSrc), 'our book list is all US retail — no book gets a maker prior');
 
+// Semantics, not syntax. These three defects all parsed cleanly, shipped, and
+// silently inverted or doubled the numbers the scorecard is built from — each
+// one compounds, because led_pct becomes the next run's `lead` prior.
+
+// `led` must mean "of the books that reached this level, I got there first".
+// It was `consensus !== to` — "my line differs from the batch median" — which
+// credits a book for moving AWAY from the field and makes BOTH movers leaders
+// in a two-book batch.
+ok('led means first to the level, not different from the median',
+  /lead_rank/.test(bmSrc) && !/const led\s*=\s*consensus/.test(bmSrc) && !/\bmedian\s*\(/.test(bmSrc),
+  'a book moving away from the field is not a leader');
+ok('led is only ever the first arrival', /i === 0 && cluster\.length > 1/.test(bmSrc),
+  'and never when there was no field to lead (a lone book at a level)');
+ok('arrival order comes from batch order first', /_bi/.test(bmSrc) && /function cmpArrival/.test(bmSrc),
+  'last_update is a market-level stamp — it may not reorder the leaderboard on its own');
+ok('the moved_at stamp is clamped to the observed interval', /function clampStamp/.test(bmSrc),
+  'an unplaceable stamp also inflates hours_to_start into full `early` credit');
+
+// odds/index.js writes one snapshot row per OUTCOME, so one spread move arrives
+// twice (Chiefs −3→−3.5 and Broncos +3→+3.5). Both scored identically and the
+// dedup key included `side`, so every card was duplicated and every n was 2×.
+ok('one episode per line move, not one per outcome',
+  /function canonicalSide/.test(bmSrc) && /canonicalSide\(/.test(bmSrc),
+  'a spread move is written twice — score the home side only');
+ok('book-move no longer loops every side', !/of bySide\b/.test(bmSrc),
+  'iterating both outcomes doubles every episode and every book count');
+
+// A component with no data must be NEUTRAL. `vsPublic === true ? 1 : 0` scored
+// "no public_splits coverage for this sport" exactly like "moved WITH the
+// public", capping NCAAF/soccer/tennis at 80 against a threshold of 35.
+ok('the score renormalizes over the components that applied',
+  /parts\.push/.test(bmSrc) && /wSum/.test(bmSrc) && !/vsPublic === true \? 1 : 0/.test(bmSrc),
+  'dividing by the full weight total scores a missing input as an adverse one');
+ok('a null public split is excluded, not counted as zero', /if \(vsPublic != null\)\s*parts\.push/.test(bmSrc));
+ok('key numbers are spreads-only', /keyApplies/.test(bmSrc) && /market === 'spreads'/.test(bmSrc),
+  'KEYS are football margin numbers — a 43→44.5 total can never cross one');
+ok('the scorecard counts the log once', /logged\.has\(epKey\(ep\)\)/.test(bmSrc),
+  'history already contains the episodes the last three runs wrote');
+ok('a null price never persists as 0', /row\.price != null/.test(bmSrc),
+  'Number(null) === 0 reads as a real American price');
+ok('an empty slate preserves the published scorecard', !/setBookMoves\(null\)/.test(bmSrc),
+  'nulling it erases 14 days of history from the PWA and flaps on the 15-min cadence');
+
 const knSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/key-number/index.js'), 'utf8');
 ok('key-number imports shared keys', /shared\/key-numbers\.js/.test(knSrc));
 ok('key-number no longer declares LAND_PCT', !/const LAND_PCT/.test(knSrc), 'two copies would drift apart');
@@ -146,6 +189,109 @@ ok('book-move listed in the PWA agent grid', /'book-move'|name:'book-move'/.test
 ok("AGENT_STALE_MS covers book-move", /AGENT_STALE_MS[\s\S]{0,4000}?'book-move':\s*\d+/.test(html));
 ok('book-move render tolerates old cached payload', /bm\.live\s*\|\|/.test(html) && /bm\.byBook\s*\|\|/.test(html),
   'hydrateAgentsCache replays a pre-bookMoves bag on first paint');
+
+
+// The section lived inside `if(onPlays){` — it rendered on the Plays tab and
+// was unreachable on the Agents tab, where the spec puts it.
+const bmBlock = html.indexOf('// Book movement attribution');
+const endOnPlays = html.indexOf('} // end onPlays');
+ok('book movement renders on the Agents tab', bmBlock > endOnPlays && bmBlock > 0,
+  'it must sit in the !onPlays region of renderAgentsContent');
+
+// ── 10b. The `led` rules the scorecard is built from ─────────────
+// Every one of these parsed cleanly and shipped once. `led_pct` becomes the next
+// run's `lead` prior, so each of them compounds across runs.
+ok('a tie is not a lead', /function strictlyBefore|const strictlyBefore/.test(bmSrc) && /strictlyBefore\(cluster\[0\], cluster\[1\]\)/.test(bmSrc),
+  'two books in one batch with no usable stamp cannot be separated');
+ok('a revisited level is clustered by arrival time', /CLUSTER_MS/.test(bmSrc) && /6 \* 3600_000/.test(bmSrc),
+  '3 -> 3.5 -> 3 must not rank two unrelated moves against each other');
+ok('the clamp floor is the previous batch this book was seen in', /lastTs/.test(bmSrc) && /clampStamp\(row\.last_update, prevTs, ts\)/.test(bmSrc),
+  'without a floor a stale market-level stamp reorders the leaderboard');
+ok('the canonical-side picker has a deterministic fallback', /\|\| sorted\[0\]/.test(bmSrc),
+  'an unmatchable feed label must still emit exactly one episode, not zero and not two');
+ok('window_h reports the window observed, not the one requested',
+  /window_h:\s*r1\(obsMin\)/.test(bmSrc) && /window_h_requested/.test(bmSrc),
+  'SNAP_LIMIT, not WINDOW_H, is the real coverage ceiling');
+ok('the slate gives the cap to upcoming kickoffs first',
+  /const upcoming\s*=[\s\S]{0,200}?const started\s*=[\s\S]{0,200}?\[\.\.\.upcoming,\s*\.\.\.started\]/.test(bmSrc),
+  'a late slate of in-progress games must not crowd out pre-game movement');
+ok('hours_to_start is measured from the move, not from now', /Date\.parse\(movedAt\)/.test(bmSrc));
+ok('the early component is clamped to [0,1]', /Math\.max\(0,\s*Math\.min\(1,\s*hours \/ 24\)\)/.test(bmSrc),
+  'a post-kickoff move has negative hours and would otherwise score negative');
+
+// The weights are judgement, but they are SPEC'd judgement — a silent retune
+// changes which sports clear MIN_SCORE.
+const wLine = (bmSrc.match(/const W = \{[^}]*\}/) || [''])[0];
+ok('scoring weights match the spec', /mag:\s*0\.30/.test(wLine) && /key:\s*0\.20/.test(wLine)
+  && /early:\s*0\.15/.test(wLine) && /vsPublic:\s*0\.20/.test(wLine) && /lead:\s*0\.15/.test(wLine), wLine);
+
+// Cross-file invariant: the upsert conflict target must be exactly the table's
+// unique constraint, or every re-scan of the 48h window duplicates its episodes.
+const schema = await readFile(join(root, 'edge-tracker-agents/scripts/schema.sql'), 'utf8');
+const uniq = (schema.match(/create table if not exists book_move_log[\s\S]*?unique \(([^)]+)\)/) || [])[1];
+const conflict = (bmSrc.match(/upsert\('book_move_log',\s*\w+,\s*'([^']+)'/) || [])[1];
+ok('book_move_log declares its unique key', !!uniq, uniq || 'no unique(...) found');
+ok('the upsert conflict target is the table unique key',
+  !!uniq && !!conflict && uniq.replace(/\s/g, '') === conflict.replace(/\s/g, ''),
+  `schema: ${uniq} / upsert: ${conflict}`);
+ok('moved_at is non-null in the schema', /moved_at\s+timestamptz not null/.test(schema),
+  'Postgres treats nulls as distinct, so a null moved_at defeats the unique key');
+ok('the new table is indexed', /book_move_log_book_idx/.test(schema) && /book_move_log_game_idx/.test(schema));
+const migrate = await readFile(join(root, 'edge-tracker-agents/scripts/migrate.js'), 'utf8');
+ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
+ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(server));
+ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
+  'an unbounded count on that table is what already times out the page');
+
+// The dedup key is only safe because both timestamp spellings parse to the same
+// epoch. Postgres hands back '2026-10-17 12:00:00+00'; we derive '…T12:00:00Z'.
+// If this ever stops holding, `n` silently doubles again.
+{
+  const z = '2026-10-17T12:00:00.500Z';
+  const forms = [z.replace('T', ' ').replace('Z', '+00:00'), z.replace('T', ' ').replace('Z', '+00'), z.replace('Z', '+00:00')];
+  const bad = forms.filter((f) => Date.parse(f) !== Date.parse(z));
+  ok('a Postgres timestamp keys identically to a freshly derived one', bad.length === 0,
+    `unparsed: ${bad.join(', ')}`);
+}
+
+// ── 11. Shared key numbers — EXECUTED, not grepped ───────────────
+// This module has no external dependencies, so unlike the agents it can be
+// imported and actually run here. The extraction out of key-number/index.js was
+// supposed to be behaviour-preserving, so assert the values and the crossing
+// rule rather than just the import line.
+const kn = await import('../edge-tracker-agents/src/agents/shared/key-numbers.js');
+ok('KEYS are in the calibrated priority order',
+  JSON.stringify(kn.KEYS.map((x) => x.k)) === JSON.stringify([3, 7, 4, 6, 14, 17, 10]),
+  JSON.stringify(kn.KEYS.map((x) => x.k)));
+ok('LAND_PCT keeps the measured 2025 frequencies',
+  JSON.stringify(kn.LAND_PCT) === JSON.stringify({ 3: 15.1, 4: 5.5, 6: 4.1, 7: 9.6, 10: 3.7, 14: 4.1, 17: 4 }),
+  JSON.stringify(kn.LAND_PCT));
+ok('every KEYS entry has a landing frequency', kn.KEYS.every((x) => kn.LAND_PCT[x.k] != null));
+{
+  const cases = [
+    [2.5, 3.5, 3], [3.5, 2.5, 3],        // either direction
+    [3, 3.5, null], [3.5, 3, null],      // landing on a key is not crossing it
+    [2.5, 7.5, 3],                       // spanning several keys -> the most valuable
+    [6.5, 7.5, 7], [3.5, 4.5, 4], [9.5, 10.5, 10], [13.5, 14.5, 14], [16.5, 17.5, 17],
+    [1, 2, null], [10.5, 13.5, null],    // no key in between
+    [0, 3.5, 3], ['2.5', '3.5', 3],      // a real pick-em, and Postgres numeric-as-string
+    // Junk in, null out. Number(null)/Number('')/Number(false) are all 0, which
+    // would turn a MISSING line into a pick-em and credit a phantom 3-crossing.
+    [null, 3.5, null], [3.5, null, null], [undefined, 3.5, null],
+    ['', 3.5, null], [false, 3.5, null], ['x', 3.5, null],
+  ];
+  const bad = cases.filter(([a, b, want]) => kn.crossedKey(a, b) !== want)
+    .map(([a, b, want]) => `${a}->${b} want ${want} got ${kn.crossedKey(a, b)}`);
+  ok('crossedKey finds the strictly-between key, highest-value first', bad.length === 0, bad.join('; '));
+}
+{
+  // The spreads-only claim, proven rather than asserted: no NFL/NBA total can
+  // cross a football margin key, which is why book-move renormalizes the
+  // component away for totals instead of scoring it as a zero.
+  const hits = [];
+  for (let t = 30; t <= 70; t += 0.5) if (kn.crossedKey(t, t + 1.5) != null) hits.push(t);
+  ok('no totals-range move can cross a key number', hits.length === 0, `fired at ${hits.join(', ')}`);
+}
 
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed`);
 if (fails.length) { fails.forEach((f) => console.log(`  ✗ ${f}`)); process.exit(1); }

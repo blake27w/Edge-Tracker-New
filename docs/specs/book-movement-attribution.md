@@ -1,4 +1,4 @@
-# Book Movement Attribution
+# Book Movement Attribution [SHIPPED 2026-10-17]
 
 Spec date: 2026-10-14 · Branch: `feat/line-move-all-sports` · Agent: `book-move`
 
@@ -46,9 +46,18 @@ const snaps = await db.select('line_snapshots',
     limit: 1500 });                                    // ASC+limit would truncate the newest rows
 ```
 
-  Slate is capped: `getGames()` filtered to `commence_time` in `[now − 3h, now + 24h]`, sorted by
-  kickoff, `.slice(0, MAX_GAMES=24)` → **≤ 48 snapshot queries + ≤ 2 others per run**, comparable to
-  `book-edges` (2 queries, 40k rows) and `clv-tracker` (one per play).
+  Slate is capped: `getGames()` filtered to `commence_time` in `[now − 3h, now + 24h]`, then
+  **upcoming kickoffs claim the cap first** (sorted by kickoff) and in-progress games — started up to
+  3h ago — only fill what is left, freshest first; pre-game movement is the point, so a late slate of
+  live games must not crowd out the games whose movement we are here to read. `.slice(0,
+  MAX_GAMES=24)` → **≤ 48 snapshot queries + ≤ 2 others per run**, comparable to `book-edges`
+  (2 queries, 40k rows) and `clv-tracker` (one per play). That ~48-query budget is a hard production
+  constraint (`/data-health` already takes ~36s on this table) and is not to be raised.
+- **`window_h` in the payload is the window we actually read, not the one we asked for.** `limit:
+  1500` is the real ceiling: spreads run ~22 rows per batch (11 books × 2 sides), so 1500 rows is
+  roughly 3-11h of coverage, not 48. No episode is missed — the agent re-scans every 15 min — but the
+  payload must not advertise coverage it does not have, so it reports `window_h` (shortest observed),
+  `window_h_max`, `window_h_requested` and `truncated_queries` (how many queries hit the limit).
 - **No new index on `line_snapshots`.** We filter `side` in JS rather than in the query precisely so
   the existing index prefix (`game_id, market`) is a full equality match; adding
   `(game_id, book, …)` would buy nothing for this query shape and costs write throughput on the
@@ -79,8 +88,9 @@ against the market-wide public consensus, how early, and how far."* Per episode:
   already proven in `public-splits/index.js:92-103`; do **not** re-derive them.
 - `handle_pct − bets_pct` (`divergence`) is carried through as context, never as a per-book claim.
 - Coverage honesty: outside NHL/NBA/MLB/NFL (and whenever Claude found nothing) `public_pct` is
-  `null`, `vs_public` is `null`, and the score simply loses that component (capping it ~80). The UI
-  must say "no public data" rather than implying consensus.
+  `null`, `vs_public` is `null`, and the score **loses that component from the denominator too**
+  (Decision 3) — a sport with no public coverage is scored on what it has, not capped at 80 and
+  filtered out. The UI must say "no public data" rather than implying consensus.
 
 **What this can conclude:** that a book moved first/last, far/little, early/late, and with or
 against market-wide public tickets — aggregated, who behaves like a price-maker.
@@ -92,20 +102,49 @@ This limitation goes in the agent header comment and in the PWA's explainer text
 
 ### Decision 3 — Importance scoring (and derived, not hardcoded, book reputation)
 
-Per snapshot batch compute the **consensus** line = median across books (same median idiom as
-`src/index.js:126-131`). An *event* = a change in consensus level. For each book line change emit:
-`line_from, line_to, moved, direction, moved_at = last_update || fetched_at` (never null — the
-dedup key depends on it), `lead_rank` = this book's 1-based position among books reaching the new
-level ordered by `moved_at`, `led` = book reached the level **before** consensus did.
+**One episode per actual line move.** `odds/index.js:normalize` writes a snapshot row per
+*outcome*, so a single spread move appears twice (`Chiefs −3→−3.5` **and** `Broncos +3→+3.5`) and
+both halves score identically. Only the **canonical side** is scored and persisted — the home team
+for `spreads`, `Over` for `totals` (an unrecognizable feed label falls back to the
+lexicographically first side, so exactly one episode is still emitted). The mirror side's line is
+the negation and carries nothing the canonical row lacks.
+
+For each book line change emit `line_from, line_to, moved, direction, moved_at`, where:
+- **`moved_at` is clamped** to `(previous batch we saw this book in, this batch]`. `last_update` is
+  the Odds API's **market-level** stamp: it is bumped by a price-only change and is **shared by both
+  outcomes** of that book's market, so it can sit outside the interval in which this line move could
+  possibly have happened. A stamp inside the interval is evidence and is used; anything else falls
+  back to the batch `fetched_at`. (We cannot distinguish a price-only bump from a line move with this
+  data and do not try — an unplaceable stamp must simply not reorder the leaderboard or inflate
+  `hours_to_start` into full `early` credit.) Never null — the dedup key depends on it.
+- `lead_rank` = this book's 1-based arrival position among the books that reached **this same level**
+  in this move. **Batch order is authoritative**; the (clamped) stamp only separates books inside one
+  batch. A level can be revisited (3 → 3.5 → 3), so arrivals more than 6h apart are separate moves.
+- `led` = `lead_rank === 1` **and** another book reached the level **and** the first two arrivals are
+  strictly separable. A lone book at a level had no field to lead, and a tie is not a lead. (`led` is
+  explicitly *not* "this book's line differs from the batch median" — that credits a book for moving
+  *away* from the field, and in a two-book batch makes both movers leaders. `led_pct` becomes the next
+  run's `lead` prior, so a sign error here compounds across runs.)
 
 ```
-score = 100 × (0.30·mag + 0.20·key + 0.15·early + 0.20·vsPublic + 0.15·lead)
-mag      = min(1, |moved| / 1.5)                      // 1.5pt move = full credit
-key      = crossed_key ? LAND_PCT[k]/15.1 : 0         // football only; 0 elsewhere
-early    = min(1, hours_to_start / 24)                // null → 0.3
-vsPublic = vs_public === true ? 1 : vs_public === false ? 0 : 0  // null (no data) → 0
-lead     = byBook[book].led_pct/100, default 0.5 when that book has n < 20 episodes
+score = 100 × Σ(wᵢ·vᵢ) / Σ(wᵢ)          // over the components that HAVE DATA — see below
+mag      w=0.30  min(1, |moved| / 1.5)                // 1.5pt move = full credit; always applies
+early    w=0.15  min(1, hours_to_start / 24)          // null → 0.3; always applies
+lead     w=0.15  byBook[book].led_pct/100             // 0.5 when that book has n < 20; always applies
+key      w=0.20  crossed_key ? LAND_PCT[k]/15.1 : 0   // FOOTBALL SPREADS ONLY — omitted elsewhere
+vsPublic w=0.20  vs_public === true ? 1 : 0           // omitted entirely when vs_public is null
 ```
+**The denominator is the sum of the weights that actually applied, never the fixed 1.0.** A missing
+input has to be *neutral*, not adverse: scoring `vs_public === null` (no `public_splits` coverage —
+it exists only for NHL/NBA/MLB/NFL) the same as `false` capped NCAAF/soccer/tennis at 80 against a
+threshold of 35, filtering those sports out at a higher rate and building every book's stats from a
+biased subsample. This is what Decision 2's "the score simply loses that component" means.
+
+**The key component is `spreads`-only, and explicitly so.** `KEYS` are football *margin* numbers
+(3/7/4/6/14/17/10); an NFL total is 30-60, so `crossedKey(43, 44.5)` can never fire. Scoring totals
+against a component that cannot apply to them silently zeroed 20% of their score — it is now omitted
+from the denominator instead. A totals key-number table is a measurement question, not a patch; see
+Risks.
 Emit episodes with `score ≥ MIN_SCORE` (env `BOOK_MOVE_MIN_SCORE`, default 35); publish top 40 by
 score, plus `reasons: []` — short strings (`'crossed 3'`, `'led field by 2 books'`, `'vs 74% public'`)
 so the UI never has to re-derive the why.
@@ -114,8 +153,15 @@ so the UI never has to re-derive the why.
   `crossed(from, to)` helper from `key-number/index.js:18-25` into a new
   `agents/shared/key-numbers.js`; `key-number/index.js` imports them (no behaviour change — same
   constants, same order).
-- **Book reputation is derived, not hardcoded.** `byBook` is computed from the trailing 14 days of
-  `book_move_log` (one query, `limit: 20000`, `book-edges/index.js:48` idiom):
+- **Book reputation is derived, not hardcoded**, and comes from **one source of truth: the
+  persisted log, counted once.** `byBook` is computed from the trailing 14 days of
+  `book_move_log` (one query, `limit: 20000`, `book-edges/index.js:48` idiom) — that history already
+  contains the episodes the runs 15/30/45 min ago wrote, and this run re-derives the same window, so
+  only episodes whose unique key is **not already in the history** are tallied on top. Tallying all of
+  this run's re-derived episodes as well double-counted the current window and cleared
+  `MIN_EPISODES = 20` on half the real evidence. The merge keys on
+  `game_id|market|side|book|line_to|moved_at` with `moved_at` parsed to epoch ms, so a row read back
+  from Postgres (`…+00:00`) keys identically to one just derived (`…Z`).
   `n, led_pct, follow_pct, avg_moved, key_cross_n, vs_public_n, vs_public_pct`, and
   `role` = `led_pct ≥ 45 && n ≥ 20 → 'market-maker'`, `led_pct ≤ 20 → 'follower'`, else `'mixed'`,
   with `small: n < 20` (same honesty flag as `book-edges`' `fin().small`). Hardcoding a prior was
@@ -158,7 +204,7 @@ create table if not exists book_move_log (
   direction      text,                               -- up | down
   moved_at       timestamptz not null,               -- book's own last_update, else batch fetched_at
   lead_rank      integer,                            -- 1 = first book to this level
-  led            boolean default false,              -- moved before consensus did
+  led            boolean default false,              -- first book to reach this level (never true alone)
   hours_to_start numeric,
   crossed_key    numeric,                            -- football key number crossed, else null
   public_pct     numeric,                            -- MARKET-WIDE bets_pct on heavy side (nullable)
@@ -197,7 +243,9 @@ is deferred; `/opportunity` already shows per-book lines for a game).
    live, byBook, note})` → summary `` `${live.length} scored moves · ${byBook.length} books · N
    market-makers · M vs-public` ``. Early return `{ summary: 'dormant — empty slate' }` when the
    capped slate is empty, and `{ summary: 'skipped — no DB' }` when `!db.isConnected()`
-   (`book-edges/index.js:45`). **No `fetch(`.**
+   (`book-edges/index.js:45`) — both **without touching the store**: an empty slate or a DB outage is
+   not evidence that the 14-day scorecard is wrong, and `setBookMoves(null)` would erase it from the
+   PWA and flap on the 15-min cadence. **No `fetch(`.**
 4. **`edge-tracker-agents/src/store/index.js`** — add `bookMoves: null` to the store object (after
    `bookEdges`, :46) and `setBookMoves`/`getBookMoves` accessors (after :110).
 5. **`edge-tracker-agents/src/config/index.js`** — add to `AGENT_DEFS` after `'book-edges'` (:169):
@@ -214,15 +262,17 @@ is deferred; `/opportunity` already shows per-book lines for a game).
     - :5802 area — `AGENTS_META` entry `{name:'book-move',icon:'🧲',label:'Book Movement Attribution',cadence:'every 15 min'}`.
     - :5827 — `AGENT_STALE_MS` gains `'book-move':1800000`.
     - :5900 — in the existing `if(bag.bePlays){…}` line, `state.agentsBookMoves=bag.bePlays.bookMoves||null;`.
-    - :6430 (immediately after the line-move block, inside the `!onPlays` region of
-      `renderAgentsContent`) — new section `🧲 BOOK MOVEMENT — WHO MOVED, AND DID IT MATTER`:
+    - inside the **`!onPlays`** region of `renderAgentsContent` (its own `if(!onPlays){…}` block
+      immediately before the LIVE FEED block) — new section `🧲 BOOK MOVEMENT — WHO MOVED, AND DID IT MATTER`:
       one-line explainer ("market-wide public %, US retail books only — this measures who moves
       first, not who sharps bet"), then `(bm.byBook||[]).slice(0,12)` rows (book · role · n ·
       led% · avg move · vs-public%, `small` rows at `opacity:.5` exactly like `renderBookEdges`
       :6887), then `(bm.live||[]).slice(0,20)` episode cards (matchup, `book` label, `line_from→
       line_to`, `↑/↓`, score in `var(--brass)`, `reasons.join(' · ')`, and
       `public_pct!=null?public_pct+'% public':'no public data'`). Existing `.card`/`esc()`/`btColor`
-      helpers only — **no new CSS, no `<script src=>`**.
+      helpers only — **no new CSS, no `<script src=>`**. The 📐 LINE MOVEMENT block it was meant to sit
+      beside genuinely lives in the `onPlays` region, so that adjacency is not achievable and is not
+      preserved; the Agents tab placement wins (Decision 4, and the manual check below).
 11. **`tools/smoke.mjs`** — extend (see Test plan).
 12. **`DECISIONS.md`** — append a dated entry: snapshots-not-line_movements and why; market-wide-only
     public attribution and the retail-books ceiling; derived (not hardcoded) book roles; scoring weights.
@@ -243,6 +293,10 @@ Do **not** touch `agents/odds/index.js`, `agents/sharp/*`, `agents/public-splits
 - **Resolution ceiling:** `last_update` is the book's stamp, but if a book moves twice between two
   of our fetches we see only the net change — episode counts are a floor, not a census. Lead/follow
   is reliable only in aggregate.
+- **Deferred — for Blake, a modelling question not a patch:** a **totals** key-number table. There
+  is no measured landing-frequency table for totals, so the key component is `spreads`-only and
+  totals are renormalized rather than penalized. Inventing keys for totals (or reusing the margin
+  table) would be a fabricated signal.
 - **Deferred:** price-only movement (moneyline, and MLB/NHL spreads where the line is fixed) — the
   natural unit is implied-probability points (`shared/odds-math.js`), a second pass.
 - `early` rewards distance from kickoff; late steam is also sharp. Accepted as a deliberate bias
@@ -288,7 +342,8 @@ Run `node tools/smoke.mjs` and `node tools/smoke.mjs --live` (both must be green
    process holds 4317-4318, Vantyx holds 3000), then `npx serve .`, which **silently falls back to a
    random port** when its port is taken, so read the actual port off its output / that `lsof` list
    rather than assuming 3000.
-5. Agents tab → scroll past 📐 LINE MOVEMENT to **🧲 BOOK MOVEMENT**. Expect a per-book table with
+5. Agents tab → scroll to **🧲 BOOK MOVEMENT**, just above LIVE FEED (📐 LINE MOVEMENT is on the
+   *Plays* tab, not here). Expect a per-book table with
    roles (several marked `small` early on) and episode cards with reasons. Confirm the Agents grid
    row for `book-move` is green.
 6. Stale-client check: in DevTools → Application **keep** `etBagCache` (do not clear storage) and
