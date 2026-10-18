@@ -49,12 +49,19 @@ async function clvSummary() {
   if (!db.isConnected()) return null;
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   let rows = [];
-  try { rows = await db.select('clv_records', 'clv,beat_close', { gte: { recorded_at: since }, limit: 1000 }); }
+  try { rows = await db.select('clv_records', 'clv,beat_close', { match: { suspect: false }, gte: { recorded_at: since }, limit: 1000 }); }
   catch (_) { return null; }
   if (!rows.length) return null;
+  // Same denominator rule as the dashboard and backtest: an unknown close
+  // (flat line, no price either end) is excluded, never counted as a miss.
+  const known = rows.filter((r) => r.beat_close != null);
   const avg = rows.reduce((s, r) => s + (Number(r.clv) || 0), 0) / rows.length;
-  const beat = rows.filter((r) => r.beat_close).length;
-  return { n: rows.length, avg: Math.round(avg * 10) / 10, beatPct: Math.round((beat / rows.length) * 100) };
+  const beat = known.filter((r) => r.beat_close).length;
+  return {
+    n: known.length, total: rows.length,
+    avg: Math.round(avg * 10) / 10,
+    beatPct: known.length ? Math.round((beat / known.length) * 100) : null,
+  };
 }
 
 async function run() {
@@ -83,7 +90,7 @@ async function run() {
   else if (bt && bt.overall && bt.overall.n) L.push(`Track record: ${bt.overall.w}-${bt.overall.l} · ${bt.overall.winPct}% · ${sign(bt.overall.roi)}% ROI (${bt.overall.n})`);
 
   const clv = await clvSummary();
-  if (clv) L.push(`CLV (30d): ${sign(clv.avg)} avg · ${clv.beatPct}% beat close (${clv.n})`);
+  if (clv) L.push(`CLV (30d): ${sign(clv.avg)} avg · ${clv.beatPct == null ? 'n/a' : `${clv.beatPct}%`} beat close (${clv.n})`);
 
   // ── Report card: the path to "bettable" ──
   // Per-market validation verdicts + how much clean CLV arrived in 24h (the

@@ -235,6 +235,13 @@ async function run() {
   rows.sort((a, b) => b.score - a.score);
   setIntel('ncaaf', rows);
 
+  // `written` is reported separately from `qualified` below. The summary used
+  // to say "N obs plays" using the COMPUTED count, which reads as output but
+  // isn't: dbRows is what actually gets inserted, and it's empty whenever those
+  // plays are already pending. "2 obs plays" against monitor_scores.today = 0
+  // looked like a silent write failure and wasn't — the string was just
+  // describing a different number than the reader assumes.
+  let written = 0, dedup = 0;
   if (fresh.length) {
     let pending = new Set();
     try {
@@ -243,13 +250,18 @@ async function run() {
     } catch (_) { /* in-memory dedupe only */ }
     const dbRows = fresh.filter((r) => !pending.has(`${r.game_id}|${r.market}|${r.side}`))
       .map(({ commence_time, book, model_spread, model_edge, ...r }) => r);
-    if (dbRows.length) { try { await db.insert('monitor_scores', dbRows); } catch (e) { logger.warn('ncaaf-model', e.message); } }
+    dedup = fresh.length - dbRows.length;
+    if (dbRows.length) {
+      try { await db.insert('monitor_scores', dbRows); written = dbRows.length; }
+      catch (e) { logger.warn('ncaaf-model', e.message); }   // db layer reports this
+    }
   }
 
   const top = rows[0];
+  const qualified = rows.filter((r) => r.qualified).length;
   return {
-    summary: `Elo ${Object.keys(ratings).length}t/${played}g · ${games.length} games on board · ${rows.filter((r) => r.qualified).length} obs plays${top ? ` · top: ${top.side} ${fmtOdds(top.line)} (${top.score})` : ''} · free ESPN`,
-    data: { teams: Object.keys(ratings).length, played, games: games.length, plays: rows.length },
+    summary: `Elo ${Object.keys(ratings).length}t/${played}g · ${games.length} games on board · ${qualified} obs plays (${written} new${dedup ? `, ${dedup} already pending` : ''})${top ? ` · top: ${top.side} ${fmtOdds(top.line)} (${top.score})` : ''} · free ESPN`,
+    data: { teams: Object.keys(ratings).length, played, games: games.length, plays: rows.length, qualified, written, dedup },
   };
 }
 

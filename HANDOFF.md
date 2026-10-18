@@ -1,37 +1,71 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-09-16 — learning-loop bundle applied; history closing-line fix; football budget priority.
+Last updated: 2026-10-14 — four silent data-integrity faults fixed, plus a fifth found while trying to run the migration; branch `fix/silent-data-integrity-faults` open as PR #130. **The migration itself has not been run — it can't be, from here.**
 
 ## Current state
 
-Four commits on `origin/main` this session (direct to main per Blake's instruction — see D2):
+One commit on `fix/silent-data-integrity-faults` (PR to `origin/main`): `04d710a`. 10 files, +~700/-100, plus a new `src/health/data-health.js`.
 
-- `812fde1` — learning-loop bundle: NCAAF model, closing-line history (NFL + NCAAF), prop baselines from box scores, signal-tagged research picks. 10 files, 3 new agent dirs.
-- `dfc012c` — `edge-tracker-agents/scripts/migrate-research.sql` (idempotent).
-- `fc75f15` — core-API closing-line fallback + football floor.
-- `7c6571d` — football stays in the cap denominator all season.
+Production is healthy by its own account and was lying about it. The binding theme: **the orchestrator marks a run failed only when it throws**, so every one of the four faults sat behind a `catch (_)` or a silent `continue` and reported `status: idle`, `error: null`, `0 consecutive failures` — 53 agents, 0 errors, `errorsToday: 0`. There was no way for an agent to say "I succeeded and produced nothing usable". That's now `reportDegraded` (see D8).
 
-Deploy is live and all four new/changed agents ran. `nfl-props` rewrite works (1395 players off box scores, ESPN `/leaders` no longer used). `ncaaf-model` builds Elo fine (241 teams / 185 games).
+### What was wrong, and what it actually was
 
-**The binding constraint is the odds budget, not the agents.** 19915/20000 used by day 15, pace ×1.99, below the 1000 reserve — which is why ~30 agents report "no games on the slate" and `gamesMonitored: 0`. Nothing recovers September; the fixes below take effect at the Oct 1 reset.
-
-## What was fixed and why it was wrong
-
-- **History agents graded 124 of 588 games.** Not rate-limiting — ESPN empties `pickcenter` for older games (key stays, array goes to `[]`). Verified against 2024 NFL (5/5) and NCAAF (3/3). The core API still serves them. New `src/agents/shared/espn-odds.js` falls back to it. Providers matching `/live/i` are skipped: on ORE/MSU 2024 the live entry reads 39.5 against a 52.5 close, and unfiltered it would silently corrupt the O/U splits.
-- **Football priority.** Two independent mechanisms, both on `FOOTBALL_PRIORITY=auto|true|false`. See D6 — the short version is that ceilings stop other sports *earning* an inflated share, the floor stops them *spending* football's unspent remainder, and neither alone is sufficient.
-
-Note for whoever reads the old session log: an earlier claim in-session that sports were "overshooting their caps" was wrong and was corrected before any code was written. Nothing ever exceeded its cap; the caps were being recomputed loose because football was absent from the denominator.
+- **`clv` — "20 CLV records (0 beat close, 20 suspect)"**. Two independent bugs. (1) The snapshot query was `order fetched_at ASC, limit 1000`; one game/market/side gets ~8 rows per poll, so 1000 rows is ~6h of a game that sits on the board for a week — the close was truncated away and the entry batch collapsed onto it. (2) `beat_close` looked only at the line, so a spread/total that didn't move scored as "did not beat the close" even when the price on that number improved. The prompt's hypothesis about 59b94bd was right in substance but not in location: the odds columns that commit added are on `nfl/ncaaf_closing_lines` (the history path); the live CLV path reads `line_snapshots`, which always had `price` — it just never used it.
+- **`grading` — "graded 0" across 868 runs**. Head-of-line block: no lower bound on the pending select plus `limit: 80` *oldest*-first, so 80 never-gradeable rows held the queue forever. Not a matching bug. `opp-grading` was fine because it windows on 30h — hence 187 `opp_results` rows the same day.
+- **`/data-health` nulls**. A count timing out inside `catch (_) { /* table optional */ }`, indistinguishable from a missing table; `errorsToday` only counts agent `scan_runs` rows, so endpoint failures appeared nowhere.
+- **`/data-health` 36s**. Every counted table has its timestamp only as the *trailing* column of a composite index, so even the "today" counts were full sequential scans — 23 of them, serially.
 
 ## Verified vs unverified
 
-- **Verified:** `node --check` on every changed file; `coreClosingOdds` smoke-tested live against both leagues, returning the close and not the live number; config loads and `footballPriorityOn()` returns true for Sep/Nov, false for Jul.
-- **Unverified:** the budget changes are arithmetic simulation against the posted `/status` numbers, not a live run — there is no test suite in this repo. Real proof is the Oct 1 reset.
+- **Verified.** `node --check` on every changed file; the server boots clean and serves `/data-health` (207 + `reason` with no DB, as it should) and `/plays`. The real modules were exercised with stubbed IO: 12 CLV cases, 17 data-health cases, and the grading scenarios all pass. Old-vs-new on identical fixtures reproduces both production strings — the old CLV path reports `close_at` 12.5h early with `entry_at === close_at` on a 1600-row game, and the old grader reports `graded 0 (0W-0L-0P)` with a fresh gradeable play sitting right there. The watchdog chain (agent → `reportDegraded` → issue → alert body) was run end-to-end.
+- **Unverified.** Nothing has run against production Supabase. The `count: 'estimated'` speedup and the new indexes are reasoned from the schema and measured only against a stub — real proof is the deploy. Whether `grading` now actually grades depends on there being gradeable plays in the 10-day window, which can't be known from outside the DB.
+
+## The migration is still owed, and here's why it never ran before
+
+Asked to run it, I couldn't — and found out why nobody else had either.
+
+**`schema.sql` has been un-runnable since 2026-07-03.** `freeze` is a *reserved* keyword in Postgres, so `alter table public_splits add column if not exists freeze boolean` (#123) is a syntax error. The Supabase SQL editor runs a multi-statement script in one transaction, so that one line aborted and rolled back everything after it — the September work and this PR's indexes included. That is the real reason HANDOFF has said "migration owed" for two sessions. Fixed and verified against a real Postgres 16.
+
+**It also caused a fifth silent fault.** `public-splits` writes `freeze`/`pileon`/`net_move`; those columns never existed; the insert is `catch (e) { logger.warn(...) }`. So it has reported `3 splits · 2 freeze` with 0 failures for 103 days while `/data-health` showed `public_splits: today 0, total 671`. The tell was sitting in the payload the whole time — nobody read it. Failed writes now report themselves from `src/db` (one layer, not 92 call sites).
+
+**I cannot execute the migration from this machine.** No credentials here (only `.env.example`), and `supabase-js` cannot run DDL at all — `scripts/migrate.js` says so itself and only reports which tables are missing. DDL needs either the SQL editor or a direct Postgres connection string, which is a secret the app doesn't use and that I shouldn't be handling. `psql` is installed, so the moment someone supplies a connection string it's a one-liner.
 
 ## Next steps
 
-1. **Supabase migration — still owed.** SQL Editor → paste `edge-tracker-agents/scripts/migrate-research.sql` → Run. The history agents write to `nfl_closing_lines` / `ncaaf_closing_lines` and will error until it exists.
-2. **Railway vars → Deploy:** `NCAAF_MODEL=true`, `NFL_LIVE=true`, `ODDS_SKIP_SPORTS=SOCCER,WNBA,BOXING`.
-3. **Watch the Oct 1 reset.** Expect the odds status line to show `N held for football (floor N)` when a non-football sport pushes past its share. If it never appears, the floor isn't biting — check `FOOTBALL_PRIORITY`.
-4. **Re-run the history agents after the migration** and check the new counters (`N no line`, `N fetch errors`). If `no line` is still large, ESPN genuinely lacks those games; if `fetch errors` is large, that's ours.
-5. **Decide on the odds tier.** Even with both fixes, pace ×1.99 means the mix is bigger than a 20k starter plan. Either trim with `ODDS_ALLOC_<SPORT>` or move up a tier.
-6. `HANDOFF.md` / `DECISIONS.md` / `CLAUDE.md` / `.claude/` were untracked stubs before this session — commit them so the next session starts from a real state.
+0. **Run the migration — concurrent script FIRST, then `schema.sql`.** Order matters: a plain `create index` takes a SHARE lock that blocks inserts for the whole build, which on `line_snapshots` means the odds agent silently drops snapshots and corrupts the CLV data this PR just fixed. The concurrent script avoids that; `schema.sql`'s `if not exists` then finds the indexes present and never takes the blocking path.
+
+   Connection string: Supabase dashboard → Project Settings → Database → Connection string → **URI**, **direct connection on port 5432, not the pooler on 6543** — pgbouncer in transaction mode cannot run `concurrently` either.
+
+   `PGOPTIONS` clears the statement timeout, which is **not optional**: Supabase caps statement duration and the `line_snapshots` / `injury_updates` index builds run for minutes. Run these from the BRANCH checkout — `main`'s `schema.sql` still has the `freeze` bug and the first file doesn't exist there at all.
+
+   ```
+   export SUPABASE_DB_URL='<direct URI>'
+   cd /Users/blakewallace/Edge-Tracker-New/.claude/worktrees/adoring-fermi-ffaa1b/edge-tracker-agents
+
+   # 1. indexes — minutes on the big tables, does NOT block writes
+   PGOPTIONS="-c statement_timeout=0" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+     -f scripts/migrate-data-health-indexes.sql
+
+   # 2. schema — fast; carries the `freeze` fix that unsticks public_splits
+   PGOPTIONS="-c statement_timeout=0" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+     -f scripts/schema.sql
+   ```
+
+   Both idempotent; re-running is harmless. Many `NOTICE: ... already exists, skipping` lines are expected — any `ERROR` is not. If step 1 finishes suspiciously fast on `line_snapshots`, an index build may have been interrupted and left INVALID (the planner ignores those, so the seq scans would silently persist); the check query is at the bottom of that file.
+
+   Without psql: SQL editor — `schema.sql` can be pasted whole, but the concurrent file must go **one `create index concurrently` line at a time**, because the editor wraps a multi-statement script in a transaction.
+
+   **Status as of 2026-10-17: not yet run.** Deferred deliberately — Blake asked to keep the session in-chat rather than switch to a terminal. Nothing else in this PR is blocked by it; the code deploys and degrades gracefully without it (see item 1).
+
+1. ~~Re-run `scripts/schema.sql`~~ — superseded by step 0; the file is fixed, but the ordering above is what makes it safe. Original note kept for context: **this is a prerequisite, not a nice-to-have** — it adds the 12 `/data-health` timestamp indexes (fault 4 stays slow without them) and `clv_records.clv_odds` / `.close_source`. The CLV write falls back to the old columns and reports `clv|schema` if it hasn't been run, so the metric degrades instead of breaking, but it won't be price-aware.
+2. ~~`scripts/migrate-research.sql` is still owed~~ — **NO. It has been run; do not re-run it.** Corrected 2026-10-17 by the session on PR #131. Blake ran it in the SQL editor on 2026-09-26, including the eight `over_odds`/`under_odds`/`home_spread_odds`/`away_spread_odds` columns that `59b94bd` added to it the same day. Verified then (`nfl_closing_lines` 601, `ncaaf_closing_lines` 2070, 600/601 NFL rows priced at 4.68% average hold — a sane book figure) and re-confirmed independently from outside the DB: `nfl-history` and `ncaaf-history` are writing those tables at **0 consecutive failures** with counts now at 648 and 2260/2303. Their upserts include the odds columns, so a missing table or column would surface as agent errors. My earlier note said I couldn't tell from outside the DB — that was true of a direct `select`, but the agents' own write health answers it.
+3. **After the migration + deploy, check in this order:** `public_splits.today` should go non-zero within 4h (the agent's cadence) — that's the D16 fix landing, and the fastest confirmation the migration actually applied. Then: `/data-health` response time and that `line_snapshots.total` is a real integer (fault 4 + 3); the `clv` summary line for `N measurable` and a non-zero `beat close` (fault 1); the `grading` line for its new counters — `queued / no final / expired` (fault 2).
+4. **Watch for the first `expired` sweep.** `grading` will retire up to 200 rows per run on its first passes and log a warning each time. A large count is expected once and should fall to zero; if it keeps churning, the floor is wrong for the volume (`GRADE_LOOKBACK_DAYS`).
+5. **Tune the alarm floors if they're wrong.** `CLV_ALARM_MIN` (12) and `GRADE_ZERO_ALARM_MIN` (5) are judgement calls, not measurements. The grading alarm also requires that ESPN returned finals for the sport+date, which should keep it quiet on afternoon runs — if it fires daily anyway, that condition needs tightening rather than the floor raising.
+6. **Not touched, per instruction:** odds-budget allocation and PWA navigation. The budget is still on pace to overrun (`/budget` shows 12642/20000 at day 14, pace ×1.4, projected 27993) and the watchdog is correctly flagging it; that's the pre-existing D7 issue.
+
+## Notes for whoever picks this up
+
+- `index.html` was touched, but only the CLV render path (null `beat_pct` would have printed `null%`, and an unknown close was being coloured as a loss). Navigation untouched.
+- `buildDataHealth` moved out of `src/index.js` into `src/health/data-health.js` — it was extracted to make the counting and error-classification logic directly testable, which is also how the 17 cases exist.
+- There is still no test suite. The harnesses used here live in the session scratchpad, not the repo; they work by `sed`-rewriting the real module's import lines onto stubs, which tests the real logic but isn't something to rely on long-term. If a suite ever gets bootstrapped, the CLV close-selection cases are the ones worth keeping — that bug was invisible at small data volumes and only appears past ~1000 snapshot rows.

@@ -48,13 +48,24 @@ function group(rows, keyFn, { min = 1, top = 14 } = {}) {
 
 const sign = (n) => (n >= 0 ? '+' + n : '' + n);
 
+// NOTE on the denominator: beat_close is nullable. A spread/total whose number
+// never moved and has no price on both ends is genuinely UNKNOWN, not a miss —
+// counting unknowns as misses is what pinned the beat rate near zero. `n` is
+// therefore the KNOWN sample, which is also the sample every downstream
+// threshold (marketVerdict, verdict) should be judging. Also filters suspect,
+// which this function never did while clvByMarket always has.
 async function clvSummary() {
   let rows = [];
-  try { rows = await db.select('clv_records', 'clv,beat_close', { limit: 2000 }); } catch (_) { return null; }
+  try { rows = await db.select('clv_records', 'clv,beat_close,suspect', { match: { suspect: false }, limit: 2000 }); } catch (_) { return null; }
   if (!rows.length) return null;
+  const known = rows.filter((r) => r.beat_close != null);
   const avg = rows.reduce((s, r) => s + (Number(r.clv) || 0), 0) / rows.length;
-  const beat = rows.filter((r) => r.beat_close).length;
-  return { n: rows.length, avg: Math.round(avg * 10) / 10, beatPct: Math.round((beat / rows.length) * 100) };
+  const beat = known.filter((r) => r.beat_close).length;
+  return {
+    n: known.length, total: rows.length, unknown: rows.length - known.length,
+    avg: Math.round(avg * 10) / 10,
+    beatPct: known.length ? Math.round((beat / known.length) * 100) : null,
+  };
 }
 
 // CLV grouped by market (clean records only) — the leading-indicator half of the
@@ -65,11 +76,17 @@ async function clvByMarket() {
   const m = {};
   for (const r of rows) {
     const k = r.bet_market || 'other';
-    const a = (m[k] ||= { n: 0, sum: 0, beat: 0 });
-    a.n++; a.sum += Number(r.clv) || 0; if (r.beat_close) a.beat++;
+    const a = (m[k] ||= { n: 0, known: 0, sum: 0, beat: 0 });
+    a.n++; a.sum += Number(r.clv) || 0;
+    // Unknown (null) beat_close is excluded from the rate, not counted against it.
+    if (r.beat_close != null) { a.known++; if (r.beat_close) a.beat++; }
   }
   const out = {};
-  for (const [k, a] of Object.entries(m)) out[k] = { n: a.n, avgClv: Math.round((a.sum / a.n) * 100) / 100, beatPct: Math.round((a.beat / a.n) * 1000) / 10 };
+  for (const [k, a] of Object.entries(m)) out[k] = {
+    n: a.known, total: a.n, unknown: a.n - a.known,
+    avgClv: Math.round((a.sum / a.n) * 100) / 100,
+    beatPct: a.known ? Math.round((a.beat / a.known) * 1000) / 10 : null,
+  };
   return out;
 }
 
