@@ -143,6 +143,7 @@ async function run() {
   let known = new Map();
   try { const ex = await db.select('ncaaf_closing_lines', '*', { limit: 5000 }); for (const r of ex) known.set(r.event_id, r); } catch (_) { /* fresh */ }
   const rows = [];
+  const computed = [];   // graded this run — the write set
   let fetched = 0, noLine = 0, errors = 0, total = 0;
   for (let s = FROM_SEASON; s <= thisSeason; s++) {
     let finals = [];
@@ -168,12 +169,16 @@ async function run() {
         }
       }
       const r = cache.get(g.id);
-      if (r) rows.push(r); else noLine++;
+      // Computed this run → must be written. Tracked explicitly rather than
+      // inferred from `known`: a row re-fetched for its price backfill IS in
+      // `known`, so filtering the write on `!known.has(id)` silently dropped
+      // exactly the rows the backfill existed to repair.
+      if (r) { rows.push(r); computed.push(r); } else noLine++;
     }
   }
   const report = rollup(rows);
   setIntel('ncaafHistory', report);
-  const fresh = rows.filter((r) => !known.has(r.event_id));
+  const fresh = computed;
   // Report what was WRITTEN, not what was computed (see nfl-history).
   let written = 0, writeErr = null;
   for (let i = 0; i < fresh.length; i += 200) {
