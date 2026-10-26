@@ -18,7 +18,7 @@ Supporting changes: `agents/shared/key-numbers.js` (extracted from `key-number/i
 
 ## Verified vs unverified
 
-- **Verified:** `node tools/smoke.mjs` → **61 passed / 12 failed**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). Root cause (confirmed by the session on PR #131, which authored that harness's branch): `tools/smoke.mjs` was cherry-picked **from #129**, so it asserts #129's `index.html` — the Games tile, `renderHomeGames`, `gamesCache`, `spOverride`, etc. — which is not on `main` yet. The view doesn't exist *yet*; it is not a view that was removed. **These are not ours to fix: they should clear on their own once #129 merges and this branch is rebased on `main`.** Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
+- **Verified:** `node tools/smoke.mjs` → **57 passed, 0 failed, 17 skipped (exit 0)**, and the 12 are confirmed pre-existing on untouched HEAD (proved by `git archive HEAD` into a temp dir and running HEAD's own harness — byte-identical failure list). The harness is **green and exits 0** (usable as a pre-push gate again). `tools/smoke.mjs` was cherry-picked **from #129**, so 17 of its assertions test features #129 *adds* — the consolidated Games view and the local-dev CORS allowance (`isLocalDev` is a new feature there, not a rename of anything on `main`). Those are now **skipped with a named reason** rather than deleted, and every skip prints even on success. Verified they re-enable by themselves: run against #129's `index.html` the skip count is 0 and passes go 57 → 67. See D24. Separately, 97 behavioral assertions passed against the real agent source loaded with only its import block stubbed (`node_modules` is absent in the worktree). `node --check` clean on every changed file.
 - **Unverified:** no live run. `book_move_log` DDL has not been applied in Supabase, so the agent cannot persist anything yet — that is step 1 below.
 
 ## Review and test history
@@ -32,7 +32,12 @@ Nothing half-done in the code. Two loose ends:
 1. **`63ef58e` and the `origin` upstream are explained — resolved, no action.** The session on PR #131 was asked to clean up this branch, which from outside looked redundant (its only commit was byte-identical to #129's smoke-harness commit). It tried to delete the branch; git refused because this worktree held it, which is the only reason the uncommitted feature survived. It then committed the tree as a WIP checkpoint and pushed, deliberately opening no PR. Nothing was rebased, squashed or discarded.
 2. **No PR opened yet.** Project norm is branch + PR to `origin/main`, never direct.
 
-## Resolved this session
+## Resolved
+
+**Pushed and PR'd (2026-10-26).** PR #133 → `origin/main`. `origin/feat/line-move-all-sports` now carries the reviewer fixes, the `crossedKey(null)` fix and the direction fix, not just the WIP checkpoint.
+
+**Smoke harness green** — see D24 and "Verified" above.
+
 
 `rankLevels` now groups arrivals by **line level + direction**, not level alone. Two books converging
 on the same number from opposite sides (one drifting -3 → -3.5, one -4 → -3.5) are no longer ranked
@@ -57,7 +62,7 @@ revisited-level cases are unaffected.
 5. **Phase (b): persist the `lastLines` baseline** (`odds/index.js:162` is a process-local Map, so every redeploy blinds movement detection and leaves `line_movements` sparse). Makes this feature's data denser.
 6. **Phase (c): point `sharp`/`public-splits` steam detection at a history reader** instead of `getIntel('movements')`, the in-memory array from only the most recent odds run — which is why `sharp` has reported "no recent line movement" across 13,028 runs.
 7. **Phase (a), now deferred: generalize open→close movement to all 12 sports** — spec already written at `docs/specs/line-move-all-sports.md` (store shape and agent-rename decisions already made in it).
-8. **After #129 merges, rebase this branch on `main` and re-run smoke** — the 12 baseline failures should clear by themselves, because they are #129's own assertions running without #129's `index.html`. Do **not** rewrite those assertions; that would delete #129's coverage.
+8. **After #129 merges, rebase and re-run smoke** — the 17 skips should drop to 0 by themselves (proved against #129's `index.html`). If any then *fails*, that is a real conflict between the two branches and worth reading closely.
 9. Still owed from the September session: the `migrate-research.sql` Supabase migration, and Railway vars `NCAAF_MODEL=true` / `NFL_LIVE=true` / `ODDS_SKIP_SPORTS=SOCCER,WNBA,BOXING`.
 
 ## Do not touch
