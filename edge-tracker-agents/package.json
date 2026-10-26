@@ -1,7 +1,7 @@
 {
   "name": "edge-tracker-agents",
   "version": "1.0.0",
-  "description": "Edge Tracker backend agent system — odds ingestion, injury/weather intelligence, sharp money detection, power ratings, signal engine, CLV tracking, grading, public betting splits, schedule spots, MLB context, and prop engine. Runs on cron schedules, writes to Supabase, exposes a health/plays/feed API.",
+  "description": "Edge Tracker backend agent system \u2014 odds ingestion, injury/weather intelligence, sharp money detection, power ratings, signal engine, CLV tracking, grading, public betting splits, schedule spots, MLB context, and prop engine. Runs on cron schedules, writes to Supabase, exposes a health/plays/feed API.",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -11,7 +11,9 @@
     "start": "node src/index.js",
     "migrate": "node scripts/migrate.js",
     "test-agent": "node scripts/test-agent.js",
-    "test-alerts": "node scripts/test-alerts.js"
+    "test-alerts": "node scripts/test-alerts.js",
+    "test": "node --experimental-test-module-mocks --test \"test/**/*.test.js\"",
+    "test:watch": "node --experimental-test-module-mocks --test --watch \"test/**/*.test.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

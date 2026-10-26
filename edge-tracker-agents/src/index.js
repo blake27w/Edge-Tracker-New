@@ -6,10 +6,11 @@
 import http from 'node:http';
 import config from './config/index.js';
 import db from './db/index.js';
+import { buildDataHealth } from './health/data-health.js';
 import { detectModel, getFeed, getMetrics, getClaudeUsage, logger } from './utils/index.js';
 import orchestrator from './orchestrator/index.js';
 import { getSeasonSchedule, upcomingSeason, lastCompletedSeason } from './agents/shared/nfl.js';
-import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog, getIntel } from './store/index.js';
+import { getGames, getPlays, getPropPlays, getEvPlays, getArbPlays, getBacktest, getStaleLines, getDivergence, getKeyNumbers, getFairLine, getCombatPlays, getNflWinTotals, getNflSchedule, getNflProps, getNflTotals, getNflInactives, getNflLineMove, getNflDerivs, getNflPace, getPredMarket, getFadePlays, getClvReport, getCombatDerivs, getBookEdges, getWatchdog, getIntel, getDegraded } from './store/index.js';
 import { getOddsBudget } from './agents/odds/index.js';
 import { buildWorkbook, buildCsv, CSV_SHEETS } from './export/index.js';
 import { buildGames } from './games/index.js';
@@ -320,29 +321,6 @@ async function buildPlaysDetail(url) {
   return { plays };
 }
 
-// Data-health: per-table rows written today + total, and agent errors today.
-// A "today: 0" on an in-season table is the at-a-glance "data isn't flowing" tell.
-async function buildDataHealth() {
-  const day = new Date(); day.setUTCHours(0, 0, 0, 0);
-  const since = day.toISOString();
-  const specs = [
-    ['line_snapshots', 'fetched_at'], ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'],
-    ['opp_results', 'graded_at'], ['ev_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
-    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['injury_updates', 'fetched_at'],
-    ['game_weather', 'fetched_at'], ['public_splits', 'fetched_at'],
-  ];
-  const tables = [];
-  for (const [t, ts] of specs) {
-    let today = null, total = null;
-    try { today = await db.count(t, { gte: { [ts]: since } }); } catch (_) { /* table optional */ }
-    try { total = await db.count(t); } catch (_) { /* table optional */ }
-    tables.push({ table: t, today, total });
-  }
-  let errorsToday = null;
-  try { errorsToday = await db.count('scan_runs', { match: { status: 'error' }, gte: { started_at: since } }); } catch (_) { /* none */ }
-  return { tables, errorsToday, dbConnected: db.isConnected(), since, generated: new Date().toISOString() };
-}
-
 function systemHealth() {
   const m = getMetrics();
   let oddsBudget;
@@ -356,6 +334,10 @@ function systemHealth() {
     emailsSentToday: m.emailsSent,
     gamesMonitored: getGames().length,
     dbConnected: db.isConnected(),
+    // Self-reported data-integrity degradations. On /health so a caller sees
+    // them without waiting for the watchdog's next pass — these are exactly the
+    // failures that leave every agent reading "0 errors, 0 consecutive failures".
+    degraded: getDegraded(),
   };
 }
 
@@ -449,7 +431,12 @@ const server = http.createServer(async (req, res) => {
       try { return json(res, 200, await buildPlaysDetail(url)); }
       catch (e) { logger.error('plays-detail', e.message); return json(res, 500, { error: 'detail failed', detail: e.message }); }
     case '/data-health':
-      try { return json(res, 200, await buildDataHealth()); }
+      try {
+        const dh = await buildDataHealth({ force: url.searchParams.get('force') === '1' });
+        // A swallowed count error used to leave a 200 with nulls in it. Report
+        // partial data as 207 so a monitor notices without having to parse.
+        return json(res, dh.degraded ? 207 : 200, dh);
+      }
       catch (e) { logger.error('data-health', e.message); return json(res, 500, { error: 'data-health failed', detail: e.message }); }
     case '/splits':
       try { return json(res, 200, buildSplits(url)); }

@@ -12,7 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getTennisGames } from '../../store/index.js';
-import { hasOddsBudget } from '../odds/index.js';
+import { hasOddsBudget, recordOddsSpend } from '../odds/index.js';
 
 const { oddsApi, BOOKS } = config;
 const WINDOW_H = Number(process.env.TENNIS_CLOSE_WINDOW_H) || 2;
@@ -24,6 +24,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 async function fetchEvent(tournament, eventId) {
   const params = new URLSearchParams({ apiKey: oddsApi.key, regions: 'us', markets: 'h2h', oddsFormat: 'american', bookmakers: BOOKS.join(',') });
   const res = await fetch(`${oddsApi.base}/sports/${tournament}/events/${eventId}/odds?${params}`);
+  recordOddsSpend('TENNIS', res);
   if (res.status === 404 || res.status === 422) return null;
   if (!res.ok) throw new Error(`Odds ${res.status}`);
   return res.json();
@@ -32,7 +33,7 @@ async function fetchEvent(tournament, eventId) {
 async function run() {
   if (!config.tennisCloseCapture) return { summary: 'disabled (set TENNIS_CLOSE_CAPTURE=true)' };
   if (!oddsApi.key) return { summary: 'skipped — no ODDS_API_KEY' };
-  if (!hasOddsBudget(config.rules.oddsReserve)) return { summary: 'skipped — protecting odds budget' };
+  if (!hasOddsBudget(config.rules.oddsReserve, 'TENNIS')) return { summary: 'skipped — protecting odds budget' };
   if (today() !== day) { day = today(); used = 0; }
 
   const now = Date.now();

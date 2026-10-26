@@ -4,11 +4,17 @@
 // gaps (games loaded but no odds attached), and cost tripwires (odds
 // credits on pace to exceed the tier, Claude spend over a threshold).
 // Sends ONE deduped alert per issue per day. $0 — pure internal data.
+//
+// Also folds in the store's degradation channel (see reportDegraded), which is
+// how agents that "succeed" while producing garbage get noticed at all: the
+// orchestrator marks a run failed only when it throws, so until this existed a
+// swallowed query error or an unmatchable work queue read as 0 errors / 0
+// consecutive failures indefinitely.
 // ══════════════════════════════════════════════════════════════
 import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger, notifyAll, getClaudeUsage } from '../../utils/index.js';
-import { getHealth, getGames, setWatchdog } from '../../store/index.js';
+import { getHealth, getGames, setWatchdog, getDegraded } from '../../store/index.js';
 import { getOddsBudget } from '../odds/index.js';
 
 const STALE_FACTOR = Number(process.env.WATCHDOG_STALE_FACTOR) || 3; // late by Nx cadence
@@ -51,8 +57,27 @@ async function run() {
   // Cost tripwires.
   try {
     const ob = getOddsBudget();
-    if (ob.budget && ob.projectedMonthly > ob.budget) {
-      issues.push({ key: 'cost|odds', type: 'cost', agent: 'odds', label: 'Odds API', detail: `on pace for ${ob.projectedMonthly}/${ob.budget} credits this month` });
+    // NOT projectedMonthly. That is a straight-line extrapolation of per-day
+    // spend with no knowledge of the per-sport ceilings, which bound the month
+    // near budget x 0.85 by construction (capOf, agents/odds). It reads "on
+    // pace to overrun" through most of a normal football month — 15146 on day
+    // 17 projects ~27617/20000 — and it also fired all through September when
+    // the overrun was real. Firing in both cases, it separates nothing.
+    // Alert on what has actually happened instead.
+    if (ob.budget && ob.pctUsed >= 90 && ob.monthPct <= 75) {
+      issues.push({
+        key: 'cost|odds', type: 'cost', agent: 'odds', label: 'Odds API',
+        detail: `${ob.used}/${ob.budget} credits (${ob.pctUsed}%) with ${Math.round(100 - ob.monthPct)}% of the month left`,
+      });
+    }
+    // The September failure in one line: credits below the reserve, so the
+    // discretionary scanners cut out and ~30 agents report "no games on the
+    // slate" while every one of them looks healthy. Nothing alerted on it.
+    if (ob.budget && ob.discretionaryActive === false) {
+      issues.push({
+        key: 'cost|odds-reserve', type: 'cost', agent: 'odds', label: 'Odds API reserve',
+        detail: `${ob.remaining} credits left, below the ${ob.reserve} reserve — props, tennis and derivatives are paused`,
+      });
     }
   } catch (_) { /* ignore */ }
   if (COST_ALERT > 0) {
@@ -75,15 +100,30 @@ async function run() {
       ['arb_opportunities', 'id'], ['research_notes', 'id'], ['fair_line_log', 'game_id'],
       ['pred_market_edges', 'id'], ['umpire_runs', 'umpire'], ['pitcher_changes', 'id'],
       ['weather_changes', 'id'], ['nfl_qb_status', 'id'],
+      ['clv_records', 'clv_odds'], ['clv_records', 'suspect'],
     ];
     const missing = [];
     for (const [t, c] of probes) {
       try { await db.select(t, c, { limit: 1 }); }
-      catch (e) { if (/does not exist|could not find|schema cache|relation/i.test(e.message || '')) missing.push(`${t}.${c}`); }
+      catch (e) { if (db.isMissingRelation(e) || /relation/i.test(e.message || '')) missing.push(`${t}.${c}`); }
     }
     if (missing.length) {
       issues.push({ key: 'schema', type: 'schema', agent: 'db', label: 'Database schema', detail: `out of date — run scripts/schema.sql in Supabase (missing: ${missing.join(', ')})` });
     }
+  }
+
+  // ── Self-reported data-integrity degradations ─────────────────
+  // The gap this closes: an agent only looks unhealthy to the orchestrator if
+  // it THROWS. Agents that succeed while producing nothing usable — a
+  // swallowed count error, a work queue where nothing matches, a CLV run where
+  // every record is junk — report themselves onto this channel instead, and
+  // this is where they become visible and alertable.
+  for (const d of getDegraded()) {
+    issues.push({
+      key: `data|${d.key}`, type: 'data', agent: d.key.split('|')[0],
+      label: `Data integrity (${d.key})`,
+      detail: `${d.detail}${d.count > 1 ? ` — seen ${d.count}× since ${d.since}` : ''}`,
+    });
   }
 
   setWatchdog({ updated: new Date().toISOString(), issues });
