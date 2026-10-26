@@ -14,7 +14,7 @@ import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
 import { getSeasonFinals, upcomingSeason } from '../shared/nfl.js';
-import { coreClosingOdds, consensusOf } from '../shared/espn-odds.js';
+import { coreClosingOdds, consensusOf, num } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 const FROM_SEASON = Number(process.env.NFL_HISTORY_FROM) || 2024;
@@ -54,16 +54,12 @@ async function closingLine(eventId) {
   // pickcenter's spread is home-perspective; when it's absent the number is
   // sometimes only in `details` ("KC -6.5"), named from the FAVOURITE's side.
   const best = consensusOf(j.pickcenter || j.odds, (p) => {
-    let spreadHome = Number(p.spread);
+    let spreadHome = num(p.spread);
     if (!Number.isFinite(spreadHome) && p.details) {
       const m = /([A-Z]{2,4})\s*([+-]?\d+(?:\.5)?)/.exec(p.details);
       if (m) { const n = Number(m[2]); spreadHome = m[1] === homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
-    const total = Number(p.overUnder);
-    return {
-      total: Number.isFinite(total) ? total : null,
-      spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
-    };
+    return { total: num(p.overUnder), spreadHome: num(spreadHome) };
   });
   // ESPN empties pickcenter for older games; the core API still has them.
   return best || coreClosingOdds('nfl', eventId);

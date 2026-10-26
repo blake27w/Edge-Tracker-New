@@ -17,7 +17,14 @@ import { median } from './odds-math.js';
 
 const CORE = 'https://sports.core.api.espn.com/v2/sports/football/leagues';
 
-const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+// Number(null) is 0 and 0 IS finite, so a bare isFinite guard turns an absent
+// value into a real one: a null total votes 0 into the median, a null price
+// becomes American odds of 0. Reject the empties before coercing.
+export const num = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 // The prices attached to a line. Without these a hit rate can't be turned into
 // a return: the same 52.9% is +3.3% at -105, +1.0% at -110 and -1.0% at -115.

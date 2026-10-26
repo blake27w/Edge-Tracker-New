@@ -13,7 +13,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
-import { coreClosingOdds, consensusOf } from '../shared/espn-odds.js';
+import { coreClosingOdds, consensusOf, num } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const FROM_SEASON = Number(process.env.NCAAF_HISTORY_FROM) || 2024;
@@ -66,16 +66,12 @@ async function closingLine(g) {
   if (!res.ok) throw new Error(`ESPN summary ${res.status}`);
   const j = await res.json();
   const best = consensusOf(j.pickcenter || j.odds, (p) => {
-    let spreadHome = Number(p.spread);
+    let spreadHome = num(p.spread);
     if (!Number.isFinite(spreadHome) && p.details) {
       const m = /([A-Z]{2,5})\s*([+-]?\d+(?:\.5)?)/.exec(p.details);
       if (m) { const n = Number(m[2]); spreadHome = m[1] === g.homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
-    const total = Number(p.overUnder);
-    return {
-      total: Number.isFinite(total) ? total : null,
-      spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
-    };
+    return { total: num(p.overUnder), spreadHome: num(spreadHome) };
   });
   // ESPN empties pickcenter for older games; the core API still has them.
   return best || coreClosingOdds('college-football', g.id);
