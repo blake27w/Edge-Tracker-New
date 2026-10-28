@@ -112,11 +112,24 @@ the rest of October. Confirmed live: budget-skips 4 → 1, snapshots per run 0 �
 capped at 850 against 2906 spent, by design — postseason-only, and that is where NCAAF's credits
 came from.
 
-**`projectedMonthly` is not a decision input.** It linearly extrapolates `perDay` while ignoring
-the per-sport ceilings, and `capOf()`'s 0.85 factor caps total spend near 17000 by construction.
-Any note saying "the budget is on pace to overrun" predates this and is wrong. **#131 changed the
-ceiling machinery these vars act on** — re-read `/budget` once deployed to confirm the shares
-still land where intended.
+**CORRECTION (2026-10-28): the month fully exhausted — 20002/20000 on day 28,
+`discretionaryActive: false`.** An earlier version of this file predicted October would land
+near 18114, reasoning that `capOf()`'s 0.85 factor caps total spend near 17000 by construction.
+**That was wrong**, in two ways worth understanding before touching these vars again:
+
+- The sports written off as "capped out" on day 14 were simply *between seasons*. NBA went
+  35 → 1423 and NCAAB 0 → 6 as their seasons opened, spending headroom the projection assumed
+  was dead.
+- #131 replaced the ceiling machinery these vars act on with remainder-based ceilings, so the
+  0.85 reasoning no longer describes the live system at all.
+
+The reshape itself did its job: **NCAAF went 3324 → 5529**, landing on its new 5525 ceiling, so
+it got its peak-season coverage. NFL reached 5929. The cost was the rest of the month.
+
+`projectedMonthly` still over-reads (it linearly extrapolates `perDay`), but "it can be ignored"
+was too strong — it was directionally right here and the ceiling argument against it was not.
+**PR #134 ("one ceiling formula, and stop reading a missing header as zero credits") is open and
+unmerged, and touches exactly this.** Read it before setting November's shares.
 
 ### The Oct 1 reset verified the September work
 
