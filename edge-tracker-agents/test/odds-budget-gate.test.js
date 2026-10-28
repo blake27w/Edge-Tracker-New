@@ -98,3 +98,32 @@ test('a response with no usage headers must not read as zero credits left', asyn
   assert.equal(after.remaining, Math.max(0, 20000 - after.used),
     'with no header it falls back to budget - used');
 });
+
+test('an oddsSkip sport is normalised, never given the raw share or the whole pool', async () => {
+  // TENNIS and GOLF are oddsSkip: true, so isActive() rejects them and they can
+  // only enter the denominator via `billed` — after they have already spent this
+  // month. On the first tennis call of a month the published denominator
+  // excludes TENNIS, and three of the five discretionary consumers are tennis.
+  //
+  // Two wrong answers to avoid, both quantified:
+  //   sportCap(TENNIS)                 = 600    the unnormalised share #134 removes
+  //   nominalCap(TENNIS, ['TENNIS'])   = 17000  sumAlloc is its own share: the whole pool
+  //   nominalCap over the full table   = 510    correct
+  const mod = await import('../src/agents/odds/index.js');
+  const ceiling = mod.currentCeiling('TENNIS');
+
+  assert.ok(ceiling < Math.floor(BUDGET * ALLOC.TENNIS),
+    `${ceiling} must be tighter than the raw share ${Math.floor(BUDGET * ALLOC.TENNIS)}`);
+  assert.ok(ceiling < 1000, `${ceiling} must not approach the pool — the degenerate case gives 17000`);
+  // A denominator was published by the test above, so this takes the
+  // published-set-plus-this-sport branch. The no-denominator branch is pinned
+  // in odds-ceiling.test.js, which never calls run().
+  assert.ok(ceiling > 500 && ceiling < 600,
+    `${ceiling} should sit between the full-table 509 and the raw share 600`);
+});
+
+test('a sport absent from the allocation table still gets a normalised ceiling', async () => {
+  const mod = await import('../src/agents/odds/index.js');
+  const c = mod.currentCeiling('CRICKET');
+  assert.ok(c > 0 && c < BUDGET * 0.85, `${c} should be the 0.05 default, normalised`);
+});

@@ -122,14 +122,46 @@ export function nominalCap(sport, denomSports) {
 
 // The denominator the core loop last computed. It needs the in-season set,
 // which is an async fetch, so it cannot be recomputed inside the synchronous
-// hasOddsBudget — the core loop publishes it instead (every 3 min).
+// hasOddsBudget — the core loop publishes it here instead (every 3 min).
+//
+// This is NOT a correctness dependency on the odds agent running first: when
+// nothing has been published, currentCeiling() falls back to the full
+// allocation table, which is the tightest reading available. Odds happens to
+// be index 0 in the cold-start stagger and so publishes ~21s before the first
+// discretionary run, but reordering the agent registry cannot silently revert
+// the fix — only make the first few ceilings slightly conservative.
 let lastDenom = null;
+
 export function currentCeiling(sport) {
-  if (!lastDenom || !lastDenom.includes(sport)) return sportCap(sport);
+  // Which denominator to price against, in order of preference:
+  //
+  //  1. what the core loop last used — the number it is itself billing against;
+  //  2. that set plus this sport, when the sport is not in it. `isActive()`
+  //     returns false for every `oddsSkip` sport, so TENNIS and GOLF can only
+  //     enter via `billed`, i.e. after they have already spent this month. On
+  //     the first tennis call of a month `lastDenom` therefore excludes it —
+  //     and three of the five discretionary consumers are tennis. Adding the
+  //     sport normalises it properly instead;
+  //  3. the whole allocation table, when nothing has been published yet. That
+  //     maximises sumAlloc and so minimises the ceiling, which is the right
+  //     way to be wrong before we know what is in season.
+  //
+  // What this must NOT do is fall back to `sportCap()` — the unnormalised
+  // `budget x share` that #134 exists to remove from this path. Nor to
+  // `[sport]` alone: a single-element denominator makes sumAlloc that sport's
+  // own share, so TENNIS would be priced at the ENTIRE 17000 pool instead of
+  // ~510. The degenerate case is 28x looser than the bug.
+  let denom;
+  if (lastDenom && lastDenom.length) {
+    denom = lastDenom.includes(sport) ? lastDenom : [...lastDenom, sport];
+  } else {
+    denom = Object.keys(oddsApi.allocation);
+    if (!denom.includes(sport)) denom = [...denom, sport];
+  }
   // Never below what the sport has already spent, matching the core loop: an
   // arrival mid-month stops granting headroom rather than retroactively
   // stranding a sport that is already past the new nominal.
-  return Math.max(budget.bySport[sport] || 0, nominalCap(sport, lastDenom));
+  return Math.max(budget.bySport[sport] || 0, nominalCap(sport, denom));
 }
 
 async function loadBudget() {

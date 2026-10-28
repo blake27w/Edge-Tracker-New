@@ -94,3 +94,23 @@ test('the two old ceilings crossed over at sumAlloc = POOL, in both directions',
   assert.ok(nominalCap('NFL', wide) < raw('NFL'), 'above POOL: core is tighter');
   assert.ok(nominalCap('NFL', narrow) > raw('NFL'), 'below POOL: core is looser');
 });
+
+// ── The no-denominator branch ───────────────────────────────────
+// Nothing in this file calls run(), so the core loop has published no
+// denominator — the state every discretionary consumer is in on the first call
+// after a restart.
+test('with no published denominator, the ceiling is the tightest reading, not the loosest', async () => {
+  const { currentCeiling, nominalCap } = await import('../src/agents/odds/index.js');
+
+  // The two traps, quantified:
+  //   sportCap(TENNIS)               = 600    unnormalised share
+  //   nominalCap(TENNIS, ['TENNIS'])  = 17000  sumAlloc is its own share
+  const raw = Math.floor(BUDGET * ALLOC.TENNIS);
+  const degenerate = nominalCap('TENNIS', ['TENNIS']);
+  assert.equal(degenerate, 17000, 'the single-element denominator really is the whole pool');
+
+  const c = currentCeiling('TENNIS');
+  assert.equal(c, nominalCap('TENNIS', Object.keys(ALLOC)), 'falls back to the full table');
+  assert.ok(c < raw, `${c} tighter than the raw share ${raw}`);
+  assert.ok(c < degenerate / 30, 'and nowhere near the degenerate case');
+});
