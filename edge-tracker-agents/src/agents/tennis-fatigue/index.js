@@ -10,7 +10,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getTennisGames, setIntel } from '../../store/index.js';
-import { hasOddsBudget } from '../odds/index.js';
+import { hasOddsBudget, recordOddsSpend } from '../odds/index.js';
 
 const { oddsApi } = config;
 const DAY = 86400_000;
@@ -21,13 +21,14 @@ const DIFF_DAYS = Number(process.env.TENNIS_FATIGUE_DIFF) || 1.5;
 async function fetchScores(key) {
   const params = new URLSearchParams({ apiKey: oddsApi.key, daysFrom: '3', dateFormat: 'iso' });
   const res = await fetch(`${oddsApi.base}/sports/${key}/scores?${params}`);
+  recordOddsSpend('TENNIS', res);
   if (!res.ok) throw new Error(`scores ${res.status} ${key}`);
   return res.json();
 }
 
 async function run() {
   if (!oddsApi.key) return { summary: 'skipped — no ODDS_API_KEY' };
-  if (!hasOddsBudget(config.rules.oddsReserve)) return { summary: 'skipped — protecting odds budget' };
+  if (!hasOddsBudget(config.rules.oddsReserve, 'TENNIS')) return { summary: 'skipped — protecting odds budget' };
   const games = getTennisGames();
   if (!games.length) { setIntel('tennisFatigue', []); return { summary: 'no tennis matches' }; }
 

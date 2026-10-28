@@ -13,7 +13,7 @@
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setIntel } from '../../store/index.js';
-import { coreClosingOdds, pricesOf } from '../shared/espn-odds.js';
+import { coreClosingOdds, consensusOf } from '../shared/espn-odds.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const FROM_SEASON = Number(process.env.NCAAF_HISTORY_FROM) || 2024;
@@ -65,20 +65,20 @@ async function closingLine(g) {
   const res = await fetch(`${BASE}/summary?event=${g.id}`);
   if (!res.ok) throw new Error(`ESPN summary ${res.status}`);
   const j = await res.json();
-  let best = null;
-  for (const p of j.pickcenter || j.odds || []) {
-    const total = Number(p.overUnder);
+  const best = consensusOf(j.pickcenter || j.odds, (p) => {
     let spreadHome = Number(p.spread);
     if (!Number.isFinite(spreadHome) && p.details) {
       const m = /([A-Z]{2,5})\s*([+-]?\d+(?:\.5)?)/.exec(p.details);
       if (m) { const n = Number(m[2]); spreadHome = m[1] === g.homeAbbr ? -Math.abs(n) : Math.abs(n); }
     }
-    const score = (Number.isFinite(total) ? 1 : 0) + (Number.isFinite(spreadHome) ? 1 : 0);
-    if (score && (!best || score > best.score)) best = { score, total: Number.isFinite(total) ? total : null, spreadHome: Number.isFinite(spreadHome) ? spreadHome : null, provider: p.provider?.name || null, ...pricesOf(p) };
-  }
+    const total = Number(p.overUnder);
+    return {
+      total: Number.isFinite(total) ? total : null,
+      spreadHome: Number.isFinite(spreadHome) ? spreadHome : null,
+    };
+  });
   // ESPN empties pickcenter for older games; the core API still has them.
-  if (!best) best = await coreClosingOdds('college-football', g.id);
-  return best;
+  return best || coreClosingOdds('college-football', g.id);
 }
 
 function grade(g, line) {
@@ -143,6 +143,7 @@ async function run() {
   let known = new Map();
   try { const ex = await db.select('ncaaf_closing_lines', '*', { limit: 5000 }); for (const r of ex) known.set(r.event_id, r); } catch (_) { /* fresh */ }
   const rows = [];
+  const computed = [];   // graded this run — the write set
   let fetched = 0, noLine = 0, errors = 0, total = 0;
   for (let s = FROM_SEASON; s <= thisSeason; s++) {
     let finals = [];
@@ -168,20 +169,27 @@ async function run() {
         }
       }
       const r = cache.get(g.id);
-      if (r) rows.push(r); else noLine++;
+      // Computed this run → must be written. Tracked explicitly rather than
+      // inferred from `known`: a row re-fetched for its price backfill IS in
+      // `known`, so filtering the write on `!known.has(id)` silently dropped
+      // exactly the rows the backfill existed to repair.
+      if (r) { rows.push(r); computed.push(r); } else noLine++;
     }
   }
   const report = rollup(rows);
   setIntel('ncaafHistory', report);
-  const fresh = rows.filter((r) => !known.has(r.event_id));
-  if (fresh.length) {
-    try { for (let i = 0; i < fresh.length; i += 200) await db.upsert('ncaaf_closing_lines', fresh.slice(i, i + 200), 'event_id'); }
-    catch (e) { logger.warn('ncaaf-history', e.message); }
+  const fresh = computed;
+  // Report what was WRITTEN, not what was computed (see nfl-history).
+  let written = 0, writeErr = null;
+  for (let i = 0; i < fresh.length; i += 200) {
+    const batch = fresh.slice(i, i + 200);
+    try { await db.upsert('ncaaf_closing_lines', batch, 'event_id'); written += batch.length; }
+    catch (e) { writeErr = e.message; logger.warn('ncaaf-history', `upsert: ${e.message}`); break; }
   }
   const tp = report.top25Primetime;
   return {
-    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
-    data: { games: rows.length, noLine, errors, top25Primetime: tp },
+    summary: `${rows.length}/${total} games w/ closing lines (${FROM_SEASON}–${thisSeason}) · ${written}/${fresh.length} new written · fetched ${fetched} · ${noLine} no line${errors ? ` · ${errors} fetch errors` : ''}${writeErr ? ` · WRITE FAILED: ${writeErr}` : ''} · Top-25 primetime: favs ${tp.favW}-${tp.favL} ATS, U ${tp.unders}-${tp.overs} (${tp.underPct ?? '—'}%) · free ESPN`,
+    data: { games: rows.length, written, writeErr, noLine, errors, top25Primetime: tp },
   };
 }
 

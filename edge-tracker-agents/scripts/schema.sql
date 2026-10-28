@@ -788,7 +788,11 @@ create table if not exists pitcher_changes (
 create index if not exists pitcher_changes_idx on pitcher_changes (detected_at desc);
 
 -- ── Public-splits upgrade: freeze / pile-on tells + the measured net move ──
-alter table public_splits add column if not exists freeze boolean default false;
+-- `freeze` is a RESERVED keyword in Postgres, so it must be quoted in DDL.
+-- Unquoted, this line is a syntax error — which aborted the whole script from
+-- the day it landed (2026-07-03, #123), so nothing below it has ever applied.
+-- PostgREST quotes all identifiers, so the agents need no change.
+alter table public_splits add column if not exists "freeze" boolean default false;
 alter table public_splits add column if not exists pileon boolean default false;
 alter table public_splits add column if not exists net_move numeric;
 
@@ -824,3 +828,60 @@ create index if not exists weather_changes_idx on weather_changes (detected_at d
 -- dead/suspended markets. quote_age_min = minutes since the flagged book moved.
 alter table line_snapshots add column if not exists last_update timestamptz;
 alter table ev_opportunities add column if not exists quote_age_min integer;
+
+-- ── /data-health count indexes ──────────────────────────────────────
+-- ON AN EXISTING, POPULATED DATABASE RUN scripts/migrate-data-health-indexes.sql
+-- FIRST. A plain `create index` takes a SHARE lock that blocks inserts for the
+-- whole build, which on production line_snapshots means the odds agent silently
+-- drops snapshots (and corrupts the CLV data those snapshots feed). That script
+-- builds the same indexes `concurrently`; the `if not exists` below then finds
+-- them present and does nothing. These plain forms are for a FRESH database,
+-- where the tables are empty, the build is instant, and the statement has to
+-- work inside the Supabase SQL editor's transaction (`concurrently` cannot).
+-- /data-health counts "rows written today" per table with a bare
+-- `<ts_col> >= midnight` filter. Every one of these tables had its timestamp
+-- only as the TRAILING column of a composite index (e.g. line_snapshots
+-- (game_id, market, fetched_at desc)), which Postgres cannot use for a filter
+-- on the timestamp alone — so each count was a full sequential scan and the
+-- endpoint took ~36s. These single-column descending indexes turn each
+-- "today" count into a bounded range scan.
+create index if not exists line_snapshots_fetched_idx   on line_snapshots   (fetched_at desc);
+create index if not exists monitor_scores_scored_idx    on monitor_scores   (scored_at desc);
+create index if not exists clv_records_recorded_idx      on clv_records      (recorded_at desc);
+create index if not exists opp_results_graded_idx        on opp_results      (graded_at desc);
+create index if not exists ev_opportunities_fetched_idx  on ev_opportunities (fetched_at desc);
+create index if not exists line_signals_fetched_idx      on line_signals     (fetched_at desc);
+create index if not exists book_edge_log_detected_idx    on book_edge_log    (detected_at desc);
+create index if not exists sharp_signals_detected_idx    on sharp_signals    (detected_at desc);
+create index if not exists injury_updates_fetched_idx    on injury_updates   (fetched_at desc);
+create index if not exists game_weather_fetched_idx      on game_weather     (fetched_at desc);
+create index if not exists public_splits_fetched_idx     on public_splits    (fetched_at desc);
+create index if not exists scan_runs_status_started_idx  on scan_runs        (status, started_at desc);
+-- Added 2026-10-17 after auditing agent summaries against their data: the
+-- /data-health spec list went from 11 tables to all 44 that agents write to
+-- (public_splits sat broken for 106 days and was caught only because it
+-- happened to be one of the original eleven). These six are the newly-counted
+-- tables whose timestamp was, again, only the TRAILING column of a composite
+-- index — same unusable shape as the original twelve. The rest of the new
+-- tables are small reference tables (a few hundred rows, one per team/game)
+-- where a seq scan is free and an index would be 27 more things to migrate.
+create index if not exists line_movements_detected_idx on line_movements (detected_at desc);
+create index if not exists opening_lines_captured_idx   on opening_lines  (captured_at desc);
+create index if not exists prop_snapshots_fetched_idx   on prop_snapshots (fetched_at desc);
+create index if not exists fair_line_log_fetched_idx    on fair_line_log  (fetched_at desc);
+create index if not exists schedule_spots_fetched_idx   on schedule_spots (fetched_at desc);
+create index if not exists tennis_markets_fetched_idx   on tennis_markets (fetched_at desc);
+
+
+-- Totals for the big append-only tables are served from the planner estimate
+-- (PostgREST count=estimated → reltuples), which is only as fresh as the last
+-- ANALYZE. Autovacuum normally keeps that current; nothing to do here, but if
+-- a total looks stale, `analyze line_snapshots;` refreshes it.
+
+-- ── CLV: price-aware closing-line value ─────────────────────────────
+-- Line CLV alone scores every "line didn't move" bet as not beating the close,
+-- even when the PRICE on that line improved — which is most of the record on
+-- spreads and totals. clv_odds stores the implied-probability edge in points
+-- so beat_close can break a flat-line tie on price.
+alter table clv_records add column if not exists clv_odds numeric;
+alter table clv_records add column if not exists close_source text;

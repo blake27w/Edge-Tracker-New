@@ -12,7 +12,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, getIntel, setPropPlays } from '../../store/index.js';
-import { hasOddsBudget } from '../odds/index.js';
+import { hasOddsBudget, recordOddsSpend } from '../odds/index.js';
 
 const { oddsApi, SPORTS, BOOKS } = config;
 
@@ -56,12 +56,13 @@ function today() { return new Date().toISOString().slice(0, 10); }
 function num(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
 function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
 
-async function fetchProps(sportKey, eventId, markets) {
+async function fetchProps(sport, sportKey, eventId, markets) {
   const params = new URLSearchParams({
     apiKey: oddsApi.key, regions: 'us', oddsFormat: 'american',
     markets: markets.join(','), bookmakers: BOOKS.join(','),
   });
   const res = await fetch(`${oddsApi.base}/sports/${sportKey}/events/${eventId}/odds?${params}`);
+  recordOddsSpend(sport, res);
   if (res.status === 404 || res.status === 422) return null; // no props for this event
   if (!res.ok) throw new Error(`Odds props ${res.status}`);
   return res.json();
@@ -124,8 +125,10 @@ async function captureCloses(byId) {
     const g = byId.get(gameId);
     const meta = SPORTS[g.sport], markets = PROP_MARKETS[g.sport];
     if (!meta || !markets) continue;
+    // Props bill against the same per-sport ceiling as core ingestion.
+    if (!hasOddsBudget(config.rules.oddsReserve, g.sport)) continue;
     let data;
-    try { data = await fetchProps(meta.key, gameId, markets); } catch (_) { continue; }
+    try { data = await fetchProps(g.sport, meta.key, gameId, markets); } catch (_) { continue; }
     closedGames.add(gameId); closesToday++;
     if (!data) continue;
     // Closing consensus (median line across books) per player|market|side.
@@ -205,8 +208,9 @@ async function run() {
     const meta = SPORTS[g.sport];
     const markets = PROP_MARKETS[g.sport];
     if (!meta || !markets) continue;
+    if (!hasOddsBudget(config.rules.oddsReserve, g.sport)) continue;
     let data;
-    try { data = await fetchProps(meta.key, gameId, markets); } catch (e) { logger.warn('prop-engine', `${g.away}@${g.home}: ${e.message}`); continue; }
+    try { data = await fetchProps(g.sport, meta.key, gameId, markets); } catch (e) { logger.warn('prop-engine', `${g.away}@${g.home}: ${e.message}`); continue; }
     scanned++; scansToday++;
     if (!data) continue;
 

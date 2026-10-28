@@ -107,6 +107,10 @@ ok('no script src= added', !/<script[^>]*\bsrc=/i.test(html), 'app is deliberate
 // regex is the only thing standing between "localhost works" and "any host
 // ending in localhost works", so pin its behaviour rather than trusting a read.
 const server = await readFile(join(root, 'edge-tracker-agents/src/index.js'), 'utf8');
+// The monitored-table list moved out of src/index.js into its own module (#130,
+// extracted to make the counting and error-classification testable), so the
+// data-health assertions below read it from there rather than from `server`.
+const dataHealth = await readFile(join(root, 'edge-tracker-agents/src/health/data-health.js'), 'utf8');
 const localRe = (server.match(/const isLocalDev\s*=\s*origin\s*&&\s*(\/.+?\/)\.test\(origin\)/) || [])[1];
 // `isLocalDev` is a feature #129 ADDS (it admits local dev origins so the PWA
 // is testable before deploy) — not a rename of anything on `main`. Where the
@@ -215,7 +219,7 @@ const storeSrc = await readFile(join(root, 'edge-tracker-agents/src/store/index.
 ok('store exports setBookMoves', /export function setBookMoves/.test(storeSrc));
 
 ok('/plays serves bookMoves', /bookMoves:\s*getBookMoves\(\)/.test(server));
-ok('data-health watches book_move_log', /book_move_log/.test(server));
+ok('data-health watches book_move_log', /book_move_log/.test(dataHealth));
 
 // A half-registered agent (defined but missing from one of these) shows as a
 // permanent red dot on the Agents grid and never runs.
@@ -279,7 +283,7 @@ ok('moved_at is non-null in the schema', /moved_at\s+timestamptz not null/.test(
 ok('the new table is indexed', /book_move_log_book_idx/.test(schema) && /book_move_log_game_idx/.test(schema));
 const migrate = await readFile(join(root, 'edge-tracker-agents/scripts/migrate.js'), 'utf8');
 ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
-ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(server));
+ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
   'an unbounded count on that table is what already times out the page');
 
