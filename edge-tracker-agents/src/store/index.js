@@ -44,6 +44,7 @@ const store = {
   fadePlays: [],      // public-fade plays (heavy public + sharp disagrees)
   clvReport: null,    // aggregated closing-line-value dashboard
   bookEdges: null,    // per-book mispricing scorecard (Book Edges)
+  bookMoves: null,    // per-book line-move episodes + lead/follow scorecard (Book Movement)
   combatDerivs: [],   // combat derivative plays (round totals etc., observational)
   health: [],         // orchestrator health snapshot (published each run)
   watchdog: null,     // latest watchdog report (issues found)
@@ -109,6 +110,9 @@ export function getClvReport() { return store.clvReport; }
 
 export function setBookEdges(r) { store.bookEdges = r; }
 export function getBookEdges() { return store.bookEdges; }
+
+export function setBookMoves(r) { store.bookMoves = r; }
+export function getBookMoves() { return store.bookMoves; }
 
 export function setCombatDerivs(p) { store.combatDerivs = p || []; }
 export function getCombatDerivs() { return store.combatDerivs; }

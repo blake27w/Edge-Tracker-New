@@ -5874,6 +5874,7 @@ var AGENTS_META=[
   {name:'fair-line',icon:'🧪',label:'Fair-Line Model (experimental)',cadence:'every 30 min'},
   {name:'watchdog',icon:'🛡️',label:'Self-Watchdog',cadence:'every 5 min'},
   {name:'book-edges',icon:'📕',label:'Book Edges Scorecard',cadence:'every 30 min'},
+  {name:'book-move',icon:'🧲',label:'Book Movement Attribution',cadence:'every 15 min'},
   {name:'combat-market',icon:'🥋',label:'Combat Market (C1)',cadence:'every 10 min'},
   {name:'combat-weighin',icon:'⚖️',label:'Weigh-In News (C2)',cadence:'every 2h (fight wks)'},
   {name:'combat-signal',icon:'🥊',label:'Combat Signal (C3)',cadence:'every 5 min'},
@@ -5898,7 +5899,7 @@ var AGENTS_META=[
   {name:'pred-market',icon:'🔮',label:'Prediction Markets (Poly/Kalshi)',cadence:'every 10m (if enabled)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':14400000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-live':180000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':14400000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'book-move':1800000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-live':180000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -5971,7 +5972,7 @@ function applyAgentsBag(bag){
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];state.agentsNflPace=bag.bePlays.nflPrep.pace||null;state.agentsNflStyle=bag.bePlays.nflPrep.style||[];}
-    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];state.agentsNflLive=bag.bePlays.nflLive||[];}
+    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsBookMoves=bag.bePlays.bookMoves||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];state.agentsNflLive=bag.bePlays.nflLive||[];}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -6662,6 +6663,42 @@ function renderAgentsContent(){
   } // end model
 
   } // end onPlays
+
+  if(!onPlays){
+  // Book movement attribution — WHO moved, and did it matter. Every field is
+  // defaulted: hydrateAgentsCache replays an OLD etBagCache bag on first paint,
+  // which has no bookMoves at all.
+  var bm=state.agentsBookMoves;
+  if(bm&&((bm.live&&bm.live.length)||(bm.byBook&&bm.byBook.length))){
+    h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">🧲 BOOK MOVEMENT — WHO MOVED, AND DID IT MATTER</div>';
+    h+='<div style="font-size:8px;color:var(--leather);margin:0 0 6px;line-height:1.5">Public % is market-wide, US retail books only — this measures who moves <b>first</b>, not who sharps bet.</div>';
+    if(bm.byBook&&bm.byBook.length){
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+      h+='<div style="font-family:var(--H);font-size:9px;letter-spacing:1px;color:var(--leather);margin-bottom:5px">BOOKS — role · n · led% · avg move · vs-public%</div>';
+      (bm.byBook||[]).slice(0,12).forEach(function(b){
+        var dim=b.small?';opacity:.5':'';
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)'+dim+'">';
+        h+='<div style="flex:1;min-width:0"><span style="font-size:11px;color:var(--cream)">'+esc(b.label||b.book||'')+'</span>'+(b.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'<div style="font-size:7.5px;color:var(--muted)">'+esc(b.role||'')+' · '+(b.n||0)+' moves</div></div>';
+        h+='<div style="font-family:var(--M);font-size:11px;font-weight:700;width:52px;text-align:right;color:'+(b.led_pct==null?'var(--muted)':'var(--brass)')+'">'+(b.led_pct!=null?b.led_pct+'%':'—')+'</div>';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--muted);width:42px;text-align:right">'+(b.avg_moved!=null?b.avg_moved:'—')+'</div>';
+        h+='<div style="font-family:var(--M);font-size:10px;color:var(--dim);width:46px;text-align:right">'+(b.vs_public_pct!=null?b.vs_public_pct+'%':'—')+'</div>';
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+    (bm.live||[]).slice(0,20).forEach(function(m){
+      var arrow=m.direction==='up'?'↑':'↓';
+      h+='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
+      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+(m.score!=null?m.score:'—')+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
+      h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?m.line_from+'→'+m.line_to:'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span></div>';
+      if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
+      h+='</div>';
+    });
+    h+='<div style="height:8px"></div>';
+  }
+  } // end !onPlays (book movement)
 
   if(!onPlays){
   // ── Live Feed ──

@@ -90,7 +90,7 @@ export async function buildDataHealth({ force = false } = {}) {
     ['line_snapshots', 'fetched_at'], ['line_movements', 'detected_at'], ['opening_lines', 'captured_at'],
     ['monitor_scores', 'scored_at'], ['clv_records', 'recorded_at'], ['opp_results', 'graded_at'],
     ['ev_opportunities', 'fetched_at'], ['arb_opportunities', 'fetched_at'], ['line_signals', 'fetched_at'],
-    ['book_edge_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['fair_line_log', 'fetched_at'],
+    ['book_edge_log', 'detected_at'], ['book_move_log', 'detected_at'], ['sharp_signals', 'detected_at'], ['fair_line_log', 'fetched_at'],
     ['prop_snapshots', 'fetched_at'], ['public_fades', 'detected_at'], ['pred_market_edges', 'detected_at'],
     // ── intelligence feeds ──
     ['injury_updates', 'fetched_at'], ['game_weather', 'fetched_at'], ['weather_changes', 'detected_at'],

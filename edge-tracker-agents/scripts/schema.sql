@@ -80,6 +80,37 @@ create table if not exists line_movements (
 );
 create index if not exists line_movements_game_idx on line_movements (game_id, detected_at desc);
 
+-- Per-book line-move episodes with importance score (book-move agent; read-only over snapshots).
+create table if not exists book_move_log (
+  id             uuid primary key default gen_random_uuid(),
+  sport          text not null,
+  game_id        text not null,
+  commence_time  timestamptz,
+  matchup        text,
+  market         text not null,                      -- spreads | totals
+  side           text,
+  book           text not null,
+  line_from      numeric,
+  line_to        numeric,
+  moved          numeric,
+  price_from     integer,
+  price_to       integer,
+  direction      text,                               -- up | down
+  moved_at       timestamptz not null,               -- book's own last_update, else batch fetched_at
+  lead_rank      integer,                            -- 1 = first book to this level
+  led            boolean default false,              -- moved before consensus did
+  hours_to_start numeric,
+  crossed_key    numeric,                            -- football key number crossed, else null
+  public_pct     numeric,                            -- MARKET-WIDE bets_pct on heavy side (nullable)
+  vs_public      boolean,                            -- move went against the public side (nullable)
+  score          numeric,
+  reasons        jsonb,
+  detected_at    timestamptz not null default now(),
+  unique (game_id, market, side, book, line_to, moved_at)
+);
+create index if not exists book_move_log_book_idx on book_move_log (book, detected_at desc);
+create index if not exists book_move_log_game_idx on book_move_log (game_id, detected_at desc);
+
 -- ── Intelligence agents ─────────────────────────────────────────
 create table if not exists injury_updates (
   id          uuid primary key default gen_random_uuid(),

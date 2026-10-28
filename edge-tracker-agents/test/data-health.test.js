@@ -21,7 +21,7 @@ process.env.DATA_HEALTH_DEGRADED_TTL_MS = '60';
 // what agents write: it was 11 of 44, and public_splits was caught only
 // because it happened to be one of the eleven.
 const TABLES = ['line_snapshots', 'line_movements', 'opening_lines', 'monitor_scores', 'clv_records',
-  'opp_results', 'ev_opportunities', 'arb_opportunities', 'line_signals', 'book_edge_log', 'sharp_signals',
+  'opp_results', 'ev_opportunities', 'arb_opportunities', 'line_signals', 'book_edge_log', 'book_move_log', 'sharp_signals',
   'fair_line_log', 'prop_snapshots', 'public_fades', 'pred_market_edges', 'injury_updates', 'game_weather',
   'weather_changes', 'public_splits', 'schedule_spots', 'power_ratings', 'mlb_context', 'umpire_runs',
   'pitcher_changes', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots', 'nfl_prop_baselines',
