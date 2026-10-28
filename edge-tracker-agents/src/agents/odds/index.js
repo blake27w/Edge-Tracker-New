@@ -65,9 +65,10 @@ export function getOddsBudget() {
 export function hasOddsBudget(reserve = 0, sport = null) {
   if (!budget.loaded) return true;
   if (budget.remaining <= reserve) return false;
-  // Per-sport ceiling, same counter the main loop bills against — so a sport's
-  // discretionary and core spend share one budget instead of two.
-  if (sport && (budget.bySport[sport] || 0) >= sportCap(sport)) return false;
+  // Per-sport ceiling, same counter AND the same ceiling the main loop bills
+  // against — so a sport's discretionary and core spend share one budget
+  // instead of two, and one bound instead of two.
+  if (sport && (budget.bySport[sport] || 0) >= currentCeiling(sport)) return false;
   return true;
 }
 
@@ -88,6 +89,79 @@ export function recordOddsSpend(sport, res) {
 function sportCap(sport) {
   const alloc = oddsApi.allocation[sport] ?? 0.05;
   return Math.floor(oddsApi.monthlyBudget * alloc);
+}
+
+// Share of the month allocatable to per-sport ceilings. The remaining 15% is
+// deliberate margin — NOT a second pool. It used to be the event-endpoint
+// consumers' allocation, but #131 made them bill into bySport and respect the
+// sport's ceiling, so there is one budget per sport now and this is simply the
+// headroom that keeps the month from ending early.
+const POOL = 0.85;
+
+// THE per-sport ceiling formula. One definition, both callers: the core loop in
+// run() and hasOddsBudget() for discretionary consumers.
+//
+// They disagreed before this. The core loop bounded a sport at
+// POOL x budget x share/sumAlloc while hasOddsBudget used sportCap() —
+// budget x share, with neither the pool fraction nor the normalisation.
+//
+// Which one was looser depended on the active set, and that is the point:
+// they cross over at sumAlloc = POOL. Above it the core ceiling is tighter
+// (3.5% on October's billed set at 0.88, 17.7% with every sport in at 1.00),
+// so discretionary spend could carry a sport past the ceiling the core loop
+// had already stopped at — both bill the same bySport counter. Below it the
+// core loop is the looser of the two instead. Either way one consumer was
+// bounded by a number the other did not respect, and with every sport in the
+// denominator sportCap sums to 20000 — the entire month, with no pool
+// fraction and no reserve. One formula removes the incoherence in both
+// directions.
+export function nominalCap(sport, denomSports) {
+  const sumAlloc = denomSports.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0) || 1;
+  return Math.floor(oddsApi.monthlyBudget * POOL * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc));
+}
+
+// The denominator the core loop last computed. It needs the in-season set,
+// which is an async fetch, so it cannot be recomputed inside the synchronous
+// hasOddsBudget — the core loop publishes it here instead (every 3 min).
+//
+// This is NOT a correctness dependency on the odds agent running first: when
+// nothing has been published, currentCeiling() falls back to the full
+// allocation table, which is the tightest reading available. Odds happens to
+// be index 0 in the cold-start stagger and so publishes ~21s before the first
+// discretionary run, but reordering the agent registry cannot silently revert
+// the fix — only make the first few ceilings slightly conservative.
+let lastDenom = null;
+
+export function currentCeiling(sport) {
+  // Which denominator to price against, in order of preference:
+  //
+  //  1. what the core loop last used — the number it is itself billing against;
+  //  2. that set plus this sport, when the sport is not in it. `isActive()`
+  //     returns false for every `oddsSkip` sport, so TENNIS and GOLF can only
+  //     enter via `billed`, i.e. after they have already spent this month. On
+  //     the first tennis call of a month `lastDenom` therefore excludes it —
+  //     and three of the five discretionary consumers are tennis. Adding the
+  //     sport normalises it properly instead;
+  //  3. the whole allocation table, when nothing has been published yet. That
+  //     maximises sumAlloc and so minimises the ceiling, which is the right
+  //     way to be wrong before we know what is in season.
+  //
+  // What this must NOT do is fall back to `sportCap()` — the unnormalised
+  // `budget x share` that #134 exists to remove from this path. Nor to
+  // `[sport]` alone: a single-element denominator makes sumAlloc that sport's
+  // own share, so TENNIS would be priced at the ENTIRE 17000 pool instead of
+  // ~510. The degenerate case is 28x looser than the bug.
+  let denom;
+  if (lastDenom && lastDenom.length) {
+    denom = lastDenom.includes(sport) ? lastDenom : [...lastDenom, sport];
+  } else {
+    denom = Object.keys(oddsApi.allocation);
+    if (!denom.includes(sport)) denom = [...denom, sport];
+  }
+  // Never below what the sport has already spent, matching the core loop: an
+  // arrival mid-month stops granting headroom rather than retroactively
+  // stranding a sport that is already past the new nominal.
+  return Math.max(budget.bySport[sport] || 0, nominalCap(sport, denom));
 }
 
 async function loadBudget() {
@@ -122,12 +196,32 @@ async function persistBudget() {
 // and let the per-sport caps never bind. Prefer the API's own per-call cost
 // header, and reconcile totals with its account-wide counters so spend by the
 // OTHER consumers (props, tennis, derivatives) is captured too.
+// `Headers.get()` returns null for an absent header, and `+null` is 0 — which
+// IS finite. So `Number.isFinite(+hdr.remaining)` accepted a MISSING header as
+// "0 credits remaining", which stops every discretionary consumer
+// (hasOddsBudget) and makes the core loop report "budget exhausted" on its next
+// run. A single header-less response — any non-200, since no caller checks
+// res.ok before recording, or anything that strips headers — shut the whole
+// system down until the next good response happened to restore it.
+//
+// Same trap as the clv-tracker price consensus (D10): Number(null) === 0 and 0
+// passes Number.isFinite, so a missing value has to be rejected explicitly
+// rather than coerced.
+const hdrNum = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 function recordSpend(sport, hdr) {
-  const cost = hdr && Number.isFinite(+hdr.last) ? Math.max(1, Math.round(+hdr.last)) : 3;
+  const last = hdr ? hdrNum(hdr.last) : null;
+  const cost = last != null ? Math.max(1, Math.round(last)) : 3;
   budget.used += cost;
   budget.bySport[sport] = (budget.bySport[sport] || 0) + cost;
-  if (hdr && Number.isFinite(+hdr.used)) budget.used = Math.max(budget.used, Math.round(+hdr.used));
-  if (hdr && Number.isFinite(+hdr.remaining)) budget.remaining = +hdr.remaining;
+  const used = hdr ? hdrNum(hdr.used) : null;
+  if (used != null) budget.used = Math.max(budget.used, Math.round(used));
+  const remaining = hdr ? hdrNum(hdr.remaining) : null;
+  if (remaining != null) budget.remaining = remaining;
   else budget.remaining = Math.max(0, oddsApi.monthlyBudget - budget.used);
 }
 
@@ -288,8 +382,8 @@ async function run() {
 
   // Reallocate the month's budget among IN-SEASON sports only — the static
   // shares sum to 1.0 across all 12 sports, which starves in-season ones while
-  // out-of-season budget sits idle. 15% held back for the event-endpoint
-  // consumers (props, tennis, derivatives).
+  // out-of-season budget sits idle. POOL (85%) is allocatable; the rest is
+  // margin, not a second pool — see POOL above.
   const isActive = (sport, meta) => {
     if (meta.oddsSkip) return false;
     if (!active) return true;
@@ -320,8 +414,8 @@ async function run() {
   // own ceiling. One sport hits 94% of the pool in 8 runs that way.
   const billed = Object.keys(budget.bySport || {}).filter((s) => SPORTS[s] && (budget.bySport[s] || 0) > 0);
   const denom = [...new Set([...actives, ...billed])];
-  const sumAlloc = denom.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0) || 1;
-  const nominal = (sport) => Math.floor(oddsApi.monthlyBudget * 0.85 * ((oddsApi.allocation[sport] ?? 0.05) / sumAlloc));
+  lastDenom = denom;                       // so hasOddsBudget sees the same ceiling
+  const nominal = (sport) => nominalCap(sport, denom);   // sumAlloc lives in nominalCap now
   const capOf = (sport) => (denom.includes(sport)
     ? Math.max(budget.bySport[sport] || 0, nominal(sport))
     : sportCap(sport));
