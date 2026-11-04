@@ -885,3 +885,27 @@ create index if not exists tennis_markets_fetched_idx   on tennis_markets (fetch
 -- so beat_close can break a flat-line tie on price.
 alter table clv_records add column if not exists clv_odds numeric;
 alter table clv_records add column if not exists close_source text;
+
+-- ── Line movement: the baseline's provenance and its gap ─────────────
+-- RUN THESE TWO LINES BY HAND in the Supabase SQL editor (they are idempotent).
+-- Nothing breaks if you don't — odds/index.js catches the missing-column error
+-- and retries the insert with both fields stripped — but gap_min stays null and
+-- the pre-fix predicate below silently keeps matching new rows.
+--
+-- `gap_min` is the minutes between the baseline observation and the current one;
+-- `baseline_source` is 'in-process' (both observations in one process) or
+-- 'rehydrated' (the baseline was read back out of line_snapshots after a
+-- restart). Movement is only recorded when the gap is inside
+-- ODDS_MOVE_MAX_GAP_MIN (default 360) — past that the magnitude and direction
+-- of a single row cannot be defended.
+--
+-- READERS: treat `line_movements` rows with `gap_min is null` as
+-- NON-AUTHORITATIVE. They predate this fix, when the baseline lived only in
+-- process memory, so they are a sample biased by deploy timing — usable as
+-- evidence that a move happened, never as a denominator, a rate or a per-book
+-- percentage. A query straddling the fix must either filter to
+-- `gap_min is not null` or state the discontinuity; it must not aggregate
+-- across it. The bias is not recoverable, which is why the old rows are
+-- neither deleted nor backfilled.
+alter table line_movements add column if not exists gap_min         numeric;
+alter table line_movements add column if not exists baseline_source text;

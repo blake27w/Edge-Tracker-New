@@ -66,7 +66,13 @@ ${slate}`;
 
   const json = await claudeJson(prompt, { maxTokens: 3500 });
   const list = Array.isArray(json) ? json : [];
-  const moves = moveIndexes(getIntel('movements'));
+  // `movementsAll`, NOT `movements`: the latter is odds' gap-filtered STEAM
+  // feed, and the question here is not simultaneity but "did the public's own
+  // number move at all". `netMove` below is `?? 0`, so a movement withheld by
+  // that filter is indistinguishable from a line that did not move — a real
+  // RLM off a mid- or idle-tier refetch would publish as a freeze. See the
+  // two-feed note in src/agents/odds/index.js.
+  const moves = moveIndexes(getIntel('movementsAll'));
   const byId = {}; for (const g of games) byId[g.game_id] = g;
   const now = new Date().toISOString();
 

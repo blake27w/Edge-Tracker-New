@@ -1,10 +1,86 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-10-28 — **all six PRs merged, deployed, and the migration is RUN.**
-`#129` `#130` `#131` `#132` `#133` `#134` are all on `main`. There are no open PRs.
+Last updated: 2026-10-29 — **one branch in flight: `feat/persist-movement-baseline`.**
+`#129` `#130` `#131` `#132` `#133` `#134` are all on `main` and the migration is RUN.
 
-Nothing is blocked. The next meaningful checkpoint is the **1 November budget reset**, which is
-when four separate fixes become observable at once (see *What to check on 1 November*).
+Nothing is blocked. **Two hand-run `alter table` lines are owed** (below). The next meaningful
+checkpoint after that is the **1 November budget reset**, when four separate fixes become
+observable at once (see *What to check on 1 November*).
+
+## OWED NOW: two `alter table` lines
+
+Paste into the Supabase SQL editor — idempotent, additive, no table rewrite. They are also at the
+bottom of `edge-tracker-agents/scripts/schema.sql` with the reader's verdict beside them.
+
+```sql
+alter table line_movements add column if not exists gap_min         numeric;
+alter table line_movements add column if not exists baseline_source text;
+```
+
+Expect `Success. No rows returned` twice. **Nothing breaks if you skip them** — the insert catches
+the missing-column error and retries with both fields stripped (D73, the D69/D70 guard) — but
+`gap_min` stays null and `gap_min is null`, the predicate for "written before this fix", silently
+keeps matching new rows.
+
+## `feat/persist-movement-baseline` — the baseline survives a redeploy (D71–D75)
+
+Spec: `docs/specs/persist-movement-baseline.md`. Phase 1 of the three line-movement phases.
+
+`lastLines` in `odds/index.js` is a process-local Map, so movement detection needed two
+consecutive fetches *by the same process*: every redeploy wiped it and the first odds run after
+one could only ever report `0 movements`. The baseline is now **rehydrated lazily from our own
+`line_snapshots`** — one `db.select` per game × market, `match` on `game_id` **and** `market` so
+it rides `line_snapshots_game_idx`, newest-first, `limit 40`, 120 games on the process's first
+run and 24 after. **Zero Odds API spend by construction**: no `fetch(` anywhere in the hydration
+path, pinned by a smoke assertion that reads the function body.
+
+A rehydrated baseline carries an unknown gap, so every entry now carries `at` and a movement is
+written only when the gap is within `ODDS_MOVE_MAX_GAP_MIN` (default **360 min**, judgement not
+measurement — see D72). Past the bound the entry is reseeded and `staleBaseline` counts it. Rows
+gain `gap_min` and `baseline_source`; the Map is also now evicted at kickoff + 6h, a leak it had
+since it was written.
+
+**Check 1 — does the baseline survive a restart?** `cd edge-tracker-agents && npm start`, wait for
+one odds run to log `… snapshots …`, then **ctrl-C and boot again**; a fresh process is
+indistinguishable from a redeploy. Read the first odds run's baseline segment, which is now always
+printed:
+
+```
+… 142 games, 6248 snapshots, 37 movements · baseline 120/120 games → 4810 keys rehydrated, 0 stale-baseline · 3 calls …
+```
+
+Hydrated must equal attempted, `keys rehydrated` must be non-zero, and `movements` > 0 if anything
+moved. `baseline 0/0 games` means hydration had nothing to do, not that it worked — and **any
+`N read failures` in that line voids the check** (that is a `line_snapshots` timeout, D68, not this
+feature). Then:
+
+```sql
+select baseline_source, count(*), round(avg(gap_min)) from line_movements
+where detected_at > now() - interval '1 hour' group by 1;
+```
+
+`rehydrated` rows right after the restart, `in-process` thereafter, `gap_min is null` matching **no**
+new rows.
+
+**Check 2 — does the staleness bound govern?** **Do not use `ODDS_MOVE_MAX_GAP_MIN=0`** (an earlier
+draft of this file said to; it cannot work). The bound is also the hydration read window, so at 0
+hydration returns nothing, every key is a first sighting, and the run reports `0 movements` *and*
+`0 stale-baseline` — the pre-fix signature. Instead: `ODDS_MOVE_MAX_GAP_MIN=3 npm start` (below
+`ODDS_STRIKE_MIN`'s 4 minutes), let it run until a *later* odds run logs `N calls` with N ≥ 1, and
+read that run: its baselines came from the previous run, so every gap exceeds 3 minutes and every
+key whose line changed must report `0 movements` with a **non-zero** `stale-baseline`. Restart on the
+default and the same pair reports `movements` > 0 with `0 stale-baseline`.
+
+**What check 2 proves is that the bound governs — and nothing else.** It is not evidence that the
+baseline persisted: the decisive run's baselines came from the previous run of the *same process*, and
+`lastLines` is module-level, so it already survived run-to-run inside one process before this fix. The
+bug was strictly **cross-process** loss. Rehydration is tested by **check 1 (the restart) and only by
+check 1** — hydration could be entirely broken and check 2 would still pass exactly as described.
+
+If `stale-baseline` stays 0 *and* the default run shows 0 movements, nothing on the slate moved:
+inconclusive, not failed. Full recipe in the spec.
+
+Needs a slate to show anything, so it is **unproven until ingestion resumes on 1 November**.
 
 ## The migration is done
 
@@ -38,7 +114,11 @@ boolean` was a syntax error, and the SQL editor runs a multi-statement script in
 ## Current state
 
 `main` carries all six merges; production deploys from it. **63 tests pass** against merged
-`main` (`cd edge-tracker-agents && npm test`), it boots clean, and 54 agents register.
+`main` (`cd edge-tracker-agents && npm test`). On the baseline branch the suite is **80 tests, 77
+pass, 3 fail** — the three are the pre-existing `degradation-channel` failures (environmental: no
+`node_modules` in this worktree), and the new coverage is `test/odds-movement-baseline.test.js` plus
+`test/odds-movement-baseline-runs.test.js`. `node tools/smoke.mjs` is **96 passed / 0 failed /
+0 skipped** there, up from 74. It boots clean and 54 agents register.
 
 - **#130** — five silent data-integrity faults fixed, plus the test suite and `reportDegraded`,
   the channel that lets an agent say "I succeeded and produced nothing usable".
@@ -149,15 +229,17 @@ In this order. All four were fixed blind and become observable together.
 2. **NCAAB entering season adds 0.06 to `sumAlloc`** and recomputes every ceiling downward —
    NCAAF at 0.26 has more to lose than before. Revisit shares after football season; MLB at 0.04
    will be wrong by spring.
-3. **Line-movement phases still owed** (#133 did the attribution layer, not these):
-   - **Persist the `lastLines` baseline** — `odds/index.js` holds it in a process-local Map, so
-     every redeploy blinds movement detection. Confirmed live: the first odds run after a
-     redeploy reported `0 movements`. Would make `book-move` denser.
+3. **Two line-movement phases still owed** (phase 1, the baseline, is on
+   `feat/persist-movement-baseline`; #133 did the attribution layer):
    - **Point `sharp` / `public-splits` at a history reader** instead of `getIntel('movements')`,
      the in-memory array from only the most recent odds run — which is why `sharp` has reported
      "no recent line movement" across 13,000+ runs.
+     With the baseline fixed, `line_movements` is finally worth reading — this is where phase 1
+     starts paying out.
    - **Generalize open→close movement to all 12 sports** — spec at
-     `docs/specs/line-move-all-sports.md`.
+     `docs/specs/line-move-all-sports.md`. No design work left, just scheduling.
+   Note `book-move` deliberately does **not** migrate onto `line_movements` (D74): that table has
+   no within-batch arrival order and no `last_update`, so a switch would lose data shape.
 4. **Check the Games view on a phone**, then decide Phase 2 of the IA reorg. Stats is the natural
    follow-up but is a real data merge across 5 implementations. Log is the worst risk profile in
    the file (9 localStorage arrays).
@@ -180,7 +262,8 @@ In this order. All four were fixed blind and become observable together.
 
 - **Decision numbering:** parallel sessions collided repeatedly. #129's entries were renumbered
   to **D42–D51**, #133's to **D52–D59**, #134's to **D60–D67**, and the migration to **D68–D70**.
-  `main`'s D15–D19 are unused gaps. **Next free number is D71.**
+  `main`'s D15–D19 are unused gaps, and this session's baseline work is **D71–D75**.
+  **Next free number is D76.**
 - **If you are in a long-lived worktree, `grep -rn src/` lies.** A branch cut weeks ago does not
   contain later merges, and reading it produced a confident, entirely wrong diagnosis of the
   budget on 2026-10-27. Use `git show origin/main:<path>`.

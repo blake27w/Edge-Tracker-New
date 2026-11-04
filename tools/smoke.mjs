@@ -337,6 +337,119 @@ ok('every KEYS entry has a landing frequency', kn.KEYS.every((x) => kn.LAND_PCT[
   ok('no totals-range move can cross a key number', hits.length === 0, `fired at ${hits.join(', ')}`);
 }
 
+// ── 12. Movement baseline persistence ───────────────────────────
+// `lastLines` is process-local, so movement detection used to need two
+// consecutive fetches by the same process — every redeploy wiped it and the
+// next fetch of each key detected nothing (D71). The baseline is now
+// rehydrated from our own line_snapshots. Three properties are load-bearing and
+// none of them shows up in a passing run: it costs ZERO Odds API credits, the
+// read is bounded and rides an index that exists, and a gap wider than the
+// bound reseeds instead of emitting a fabricated magnitude.
+const oddsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/odds/index.js'), 'utf8');
+// The two consumers of odds' in-memory movement feeds — which one reads which
+// key is the invariant, not a detail (D74).
+const splitsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-splits/index.js'), 'utf8');
+const sharpSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/sharp/index.js'), 'utf8');
+const hydrateFn = (oddsSrc.match(/async function hydrateBaseline[\s\S]*?\n\}\n/) || [''])[0];
+
+ok('the baseline is rehydrated from line_snapshots', /db\.select\('line_snapshots'/.test(hydrateFn),
+  'the odds agent already writes those rows every run from odds we have already paid for');
+ok('hydration spends nothing — no fetch in its body', !/fetch\(/.test(hydrateFn),
+  'the zero-spend property is structural, not a promise; same check as book-move');
+ok('the snapshot read matches on game_id AND market',
+  /match:\s*\{\s*game_id:[^}]*\bmarket\b[^}]*\}/.test(hydrateFn),
+  'without market the line_snapshots_game_idx prefix stops at game_id and Postgres sorts every snapshot row the game ever accumulated');
+ok('the read is newest-first and bounded',
+  /ascending:\s*false/.test(hydrateFn) && /limit:\s*\w+/.test(hydrateFn),
+  'ASC + limit truncates the newest rows; no limit is the unbounded sort this exists to avoid');
+ok('hydration never rehydrates by in(game_id, [...])', !/\bin:\s*\{/.test(hydrateFn),
+  'ordering across many game_ids cannot use the composite index');
+ok('the hydration caps exist', /ODDS_HYDRATE_MAX_GAMES/.test(oddsSrc) && /ODDS_HYDRATE_COLD_MAX/.test(oddsSrc));
+ok('the staleness bound defaults to 360 minutes',
+  /MOVE_MAX_GAP_MIN\s*=[^;]*ODDS_MOVE_MAX_GAP_MIN[^;]*360/.test(oddsSrc),
+  'a line compared across three days conflates an unknown number of moves into one row');
+ok('the staleness bound is read so that 0 is honoured',
+  /hdrNum\(process\.env\.ODDS_MOVE_MAX_GAP_MIN\)/.test(oddsSrc),
+  "`Number('0') || 360` is 360, which defeats the manual check that proves the bound governs");
+ok('the emit condition tests the baseline age', /prev\.at/.test(oddsSrc) && /MOVE_MAX_GAP_MIN \* 60_000/.test(oddsSrc));
+ok('every baseline entry is stamped', /lastLines\.set\([^)]*at:/.test(oddsSrc),
+  'an entry with no age cannot be bounded by anything');
+ok('the comparison lives in one exported function', /export function movementFrom/.test(oddsSrc)
+  && !/prev\.line !== line/.test(oddsSrc),
+  'the old inline comparison in normalize() had no gap guard and no provenance');
+ok('baselines are evicted when their game leaves the slate', /lastLines\.delete\(/.test(oddsSrc),
+  'the Map was never pruned: ~66 keys per game, ~150 new games a day');
+ok('the line_movements insert survives un-run DDL',
+  /isMissingColumn\(e\)/.test(oddsSrc) && /extraCols = false/.test(oddsSrc)
+  && /gap_min,\s*baseline_source,\s*\.\.\.rest/.test(oddsSrc),
+  'PostgREST rejects the WHOLE insert on an unknown column — the D70 failure shape');
+ok('only a missing COLUMN latches extraCols off, never a missing table',
+  /export function isMissingColumn/.test(oddsSrc) && !/db\.isMissingRelation\(e\)/.test(oddsSrc),
+  'isMissingRelation also matches 42P01 — latching on an absent TABLE would keep writing gap_min-less rows once it came back, and the reader rule calls those non-authoritative');
+ok('the strip-and-retry leaves no false degradation standing',
+  /clearDegraded\('write\|line_movements'\)/.test(oddsSrc),
+  'the failed probe already fired reportWriteFailure — unretracted, /data-health calls movement writes broken for 90 min while every row lands');
+ok('the baseline counts are reported unconditionally, zeros included',
+  /const baselineBit = `baseline \$\{hydr\.games\}\/\$\{hydr\.attempted\}/.test(oddsSrc)
+  && /\$\{baselineBit\}/.test(oddsSrc) && /staleBaseline/.test(oddsSrc) && /stale-baseline/.test(oddsSrc),
+  'reported only when non-zero, a silent no-op is indistinguishable from the feature working — and keys filled is not the same unit as games hydrated');
+ok('a failed hydration read is not recorded as settled',
+  /if \(!baselineFailed\.has\(ev\.id\)\) baselineDone\.add/.test(oddsSrc)
+  && /if \(failed\) \{ baselineFailed\.add\(gameId\); return; \}/.test(oddsSrc),
+  'line_snapshots statement-timeouts (D68); a failure counted as done disables rehydration for that game for the life of the process');
+ok('a run that hydrated nothing does not burn the cold allowance',
+  /if \(hydr\.attempted > 0 && hydr\.games === 0\) \{\s*\n\s*hydrateFailRuns\+\+;/.test(oddsSrc)
+  && /hydrateFailRuns = 0;\s*\n\s*hydratedOnce = true;/.test(oddsSrc),
+  'otherwise one timed-out boot read leaves a long-lived process behaving exactly as it did pre-fix, forever');
+ok('and "hydrated nothing" includes a run with NOTHING to hydrate',
+  /\} else if \(hydr\.games > 0\) \{/.test(oddsSrc),
+  'an empty slate, or a run where every game was already settled, fetched and hydrated nothing too — spending the allowance there leaves the first real slate on the steady cap, and clearing the breaker there retracts it with no successful read behind it');
+ok('but a PERSISTENT read failure backs off instead of retrying forever',
+  /const HYDRATE_FAIL_RUNS = \d+/.test(oddsSrc)
+  && /const broken = hydrateFailRuns >= HYDRATE_FAIL_RUNS/.test(oddsSrc)
+  && /broken \? HYDRATE_PROBE_GAMES/.test(oddsSrc),
+  'not burning the cold allowance means re-spending it every run: 240 timing-out selects before any normalize, on the one table already in distress, with the orchestrator awaiting odds');
+ok('the breaker is logged, not silent', /consecutive runs/.test(oddsSrc)
+  && /circuit-broken after/.test(oddsSrc),
+  'a 5-minute latency spike per run has to be readable in the summary, not inferred');
+ok('hydration does not select the hand-migrated last_update column',
+  !/fetched_at,last_update/.test(oddsSrc),
+  'baselineFromSnapshots never reads it, and PostgREST rejects the WHOLE select on an unknown column — 100% of hydration reads fail where that alter table was never run (D69/D70)');
+ok('the steam feed is gap-filtered before it is published',
+  /export function steamSafeMovements/.test(oddsSrc)
+  && /setIntel\('movements', steamFeed\)/.test(oddsSrc)
+  && /const STEAM_MAX_GAP_MIN = Math\.min\(/.test(oddsSrc),
+  'sharp reads getIntel(movements) as SIMULTANEITY (3+ books one way = steam), so a rehydrated six-hour drift in that array is published as coordinated money — and flows on into corroborate, public-fade, sharp-divergence and export');
+ok('the complete movement feed is published too, under its own key',
+  /setIntel\('movementsAll', movements\)/.test(oddsSrc),
+  'public-splits asks whether the public\'s own number moved and takes `?? 0`, so a row WITHHELD by the steam filter reads there as a line that did not move — a reverse line move published as a freeze (D74)');
+ok('public-splits reads the complete feed, not the steam feed',
+  /getIntel\('movementsAll'\)/.test(splitsSrc) && !/getIntel\('movements'\)/.test(splitsSrc),
+  'the two consumers ask different questions of the same rows: simultaneity for sharp, did-it-move for public-splits');
+ok('sharp still reads the gap-filtered feed',
+  /getIntel\('movements'\)/.test(sharpSrc) && !/movementsAll/.test(sharpSrc),
+  'routing sharp at the complete feed restores the steam corruption this branch fixed — an afternoon of drift at three books republished as coordinated money');
+ok('the steam bound admits a real mid-tier gap, and is never wider than the emit bound',
+  /hdrNum\(process\.env\.ODDS_STEAM_MAX_GAP_MIN\) \?\? 35/.test(oddsSrc)
+  && /Math\.min\(\s*\n\s*MOVE_MAX_GAP_MIN,/.test(oddsSrc),
+  "MID_MIN is 30 but a real MID gap is 30 + the wake grid (3 min) + the fetch, and gap_min rounds to 1dp — at 30 a refetch 3 seconds late measured 30.1 and was dropped, leaving only strike (4) and near (10). 35 admits MID; a row we refuse to write still cannot be steam");
+ok('the steam filter type-checks gap_min before it coerces it',
+  /typeof raw !== 'number' && typeof raw !== 'string'/.test(oddsSrc)
+  && /gap >= 0 && gap <= STEAM_MAX_GAP_MIN/.test(oddsSrc),
+  "Number('  '), Number([]) and Number(false) are all 0 and finite, so any of them would read as a row whose gap is ZERO — the most simultaneous row there is. A negative gap is not a narrow gap either");
+ok('hydration does not read h2h', /const BASELINE_MARKETS = \['spreads', 'totals'\]/.test(oddsSrc),
+  "h2h outcomes carry no `point`, so every h2h row has a null line and can never produce a baseline entry — book-move's list for the same reason");
+
+ok('schema.sql declares gap_min', /alter table line_movements add column if not exists gap_min/.test(schema));
+ok('schema.sql declares baseline_source', /alter table line_movements add column if not exists baseline_source/.test(schema));
+ok('schema.sql records what a null gap_min means', /gap_min is null/.test(schema),
+  'pre-fix rows are a sample biased by deploy timing — the predicate has to be written down');
+// Two assertions the spec asked for are deliberately NOT here, both recorded as
+// deviations in docs/specs/persist-movement-baseline.md: "line_movements still
+// absent from data-health.js" (data-health has counted it by detected_at since
+// 2026-10-17), and a second copy of section 10's `book-move reads snapshots,
+// not line_movements` — which stands there, undisturbed, rather than twice.
+
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
 if (skips.length) {

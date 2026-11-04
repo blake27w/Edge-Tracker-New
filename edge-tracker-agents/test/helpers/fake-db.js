@@ -32,8 +32,11 @@ export function fakeDb(tables = {}) {
     isMissingRelation: (e) => !!e && (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(e.code)
       || /does not exist|could not find|schema cache/i.test(e.message || '')),
 
-    async select(table, _cols, opts = {}) {
-      calls.select.push({ table, opts });
+    async select(table, cols, opts = {}) {
+      // `cols` is recorded too: a projection that names a hand-migrated column
+      // makes PostgREST reject the whole select, so which columns a read asks
+      // for is part of the query shape, not a detail.
+      calls.select.push({ table, cols, opts });
       if (api.fail[`select:${table}`]) throw api.fail[`select:${table}`];
       let out = (data[table] || []).filter((r) => matches(r, opts));
       if (opts.order) {
