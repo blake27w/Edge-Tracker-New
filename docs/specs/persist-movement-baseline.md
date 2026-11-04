@@ -1,4 +1,4 @@
-# Persist the line-movement baseline
+# Persist the line-movement baseline [SHIPPED 2026-11-04]
 
 Branch: `feat/persist-movement-baseline` (off `main` @ `50b4fbb`). Phase 1 of the three line-movement
 phases owed in `HANDOFF.md` next-step 3.
