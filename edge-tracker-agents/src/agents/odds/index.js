@@ -87,6 +87,21 @@ export function getOddsBudget() {
   };
 }
 
+// The per-sport ceiling table, for the dashboard. getOddsBudget() publishes
+// what each sport has SPENT but not what it is allowed to spend, and
+// currentCeiling() is module-private — so the one number that explains a
+// budget-skip was unreachable from any client.
+//
+// `denom` is deliberately passed through raw: `null` means nothing has
+// published a denominator yet, which is NOT the same claim as "every sport"
+// (D65). The consumer renders the difference.
+export function getOddsCeilings() {
+  const sports = Object.keys(oddsApi.allocation);
+  const ceilings = {};
+  for (const s of sports) ceilings[s] = currentCeiling(s);
+  return { pool: POOL, denom: lastDenom, allocation: { ...oddsApi.allocation }, ceilings };
+}
+
 // Budget guard for discretionary Odds-API consumers (props, tennis,
 // derivatives). Returns false when fewer than `reserve` monthly credits remain
 // so core odds ingestion is protected. `budget.remaining` is reconciled from the

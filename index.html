@@ -167,6 +167,15 @@ textarea.inp{resize:none;font-family:var(--B);font-size:13px}
 .flt:active{transform:scale(.95)}
 .flt.on{background:var(--saddle);color:var(--cream);box-shadow:var(--shadow-md)}
 
+/* Signal dashboard tables. At 375px these are wider than the viewport by
+   design (8 columns of book stats), so the WRAPPER scrolls and the page
+   never does — a sideways-scrolling page is the thing to avoid. */
+.sigtbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -2px}
+.sigtbl{width:100%;min-width:430px;border-collapse:collapse;font-family:var(--M);font-size:10px}
+.sigtbl th{font-size:8px;color:var(--leather);text-align:right;font-weight:400;padding:3px 5px;white-space:nowrap}
+.sigtbl td{padding:4px 5px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.04)}
+.sigtbl .l{text-align:left}
+
 .sec-l{font-family:var(--H);font-size:11px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin:20px 0 10px;font-weight:400}
 
 /* Loading */
@@ -471,7 +480,11 @@ var state = {
   rBody:'', rSport:'', rMatchup:'', rIsPick:false, rMarket:'total', rSide:'', rLine:'', rOdds:'', rConf:'',
   agentsDismissed: ls('et_agents_dismissed',[]),
   agentsHealth: [], agentsPlays: [], agentsProps: [], agentsFeed: [], agentsSystem: null,
-  agentsLoading: false, agentsError: null, agentsLastLoad: null
+  agentsLoading: false, agentsError: null, agentsLastLoad: null,
+  // ── 📡 Signal dashboard (home section 'signal') — in-memory only, never persisted ──
+  sigView:'health',      // active panel: health | budget | books | steam
+  sigSrc:{},             // per-source outcome of the LAST refresh — see loadAgentsData
+  agentsSharp:[]         // steam signals from /plays.sharp
 };
 
 function ls(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
@@ -3262,7 +3275,7 @@ function render(){
   // Page dots: show position among the 6 home sections (hidden on launcher/sport views).
   var _pd=$('pagedots');
   if(_pd){
-    var _ord=['dash','plays','rec','stats','log','agents','games'];
+    var _ord=['dash','plays','rec','stats','log','agents','games','signal'];
     var _i=state.homeScreen?_ord.indexOf(state.homeTab):-1;
     if(_i>=0){ _pd.innerHTML=_ord.map(function(_,k){return '<span class="pd'+(k===_i?' on':'')+'"></span>'}).join(''); _pd.style.display='flex'; }
     else _pd.style.display='none';
@@ -3361,7 +3374,7 @@ function renderMyBetsList(){
   return h;
 }
 
-// The 7 home destinations (rendered as a launcher grid, not a bottom bar).
+// The 8 home destinations (rendered as a launcher grid, not a bottom bar).
 var HOME_TABS=[
   {id:'dash',icon:'🏟️',label:'Sports'},
   {id:'plays',icon:'🎯',label:'Plays'},
@@ -3369,7 +3382,8 @@ var HOME_TABS=[
   {id:'stats',icon:'📈',label:'My Stats'},
   {id:'log',icon:'➕',label:'Log'},
   {id:'agents',icon:'🤖',label:'Agents'},
-  {id:'games',icon:'📅',label:'Games'}
+  {id:'games',icon:'📅',label:'Games'},
+  {id:'signal',icon:'📡',label:'Signal'}
 ];
 function goMenu(){ state.homeTab='menu'; if(!state.homeScreen){ goHome(); return; } render(); }
 window.goMenu=goMenu;
@@ -3398,6 +3412,7 @@ function renderHomeScreen(){
   else if(state.homeTab==='agents'||state.homeTab==='plays')renderAgentsView();
   else if(state.homeTab==='stats')renderHomeStats();
   else if(state.homeTab==='games')renderHomeGames();
+  else if(state.homeTab==='signal')renderSignalView();
   else renderLauncher();
 }
 
@@ -5972,6 +5987,7 @@ function applyAgentsBag(bag){
     if(bag.bePlays)state.agentsFairLine=bag.bePlays.fairLine||[];
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];state.agentsNflPace=bag.bePlays.nflPrep.pace||null;state.agentsNflStyle=bag.bePlays.nflPrep.style||[];}
+    if(bag.bePlays)state.agentsSharp=bag.bePlays.sharp||[];
     if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsBookMoves=bag.bePlays.bookMoves||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];state.agentsNflLive=bag.bePlays.nflLive||[];}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
@@ -5999,8 +6015,11 @@ function hydrateAgentsCache(){
   return false;
 }
 function loadAgentsData(){
-  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec')};
-  var rerender=function(){if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
+  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec'||state.homeTab==='signal')};
+  // The signal branch comes FIRST: 'signal' is not 'rec', so without it the
+  // else-arm would repaint the Agents tab into #sport-selector and the
+  // dashboard would silently lose every live refresh.
+  var rerender=function(){if(state.homeTab==='signal')renderSignalContent();else if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
   var tasks=[];
   // Supabase reads
   if(SB.url&&SB.key){
@@ -6027,6 +6046,27 @@ function loadAgentsData(){
   state.agentsError=null;
   return Promise.all(tasks).then(function(res){
     var bag={};res.forEach(function(o){Object.assign(bag,o)});
+    // ── Per-source outcome of THIS refresh ──
+    // Every backend fetch above ends `.catch(function(){return {}})` and
+    // applyAgentsBag guards each assignment with `if(bag.X)`. So a failed
+    // read leaves the PREVIOUS value in place and is indistinguishable from
+    // a successful one — which is exactly how a dead feed reads as live.
+    // Key presence in `bag` is the only signal available, and it has to be
+    // read before applyAgentsBag runs.
+    //
+    // `okAt` carries forward the last time the source DID answer, because
+    // the failed-state copy has to name the age of the last good copy as
+    // well as the age of the failed refresh.
+    //
+    // Deliberately NOT written into `bag`: etBagCache is replayed on the
+    // next cold open, and a cached `ok:true` would be a claim about a
+    // refresh that has not happened yet.
+    var _now=Date.now();
+    [['health','beHealth'],['plays','bePlays'],['feed','beFeed'],['budget','beBudget'],['dataHealth','beDataHealth'],['splits','beSplits']].forEach(function(pair){
+      var prev=state.sigSrc[pair[0]]||{};
+      var good=!!bag[pair[1]];
+      state.sigSrc[pair[0]]={ok:good,at:_now,okAt:good?_now:(prev.okAt||null)};
+    });
     applyAgentsBag(bag);
     state.agentsLastLoad=new Date().toISOString();
     // Persist for instant paint on next open (best-effort; quota errors ignored).
@@ -6686,16 +6726,9 @@ function renderAgentsContent(){
       });
       h+='</div>';
     }
-    (bm.live||[]).slice(0,20).forEach(function(m){
-      var arrow=m.direction==='up'?'↑':'↓';
-      h+='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
-      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-      h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
-      h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+(m.score!=null?m.score:'—')+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
-      h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?m.line_from+'→'+m.line_to:'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span></div>';
-      if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
-      h+='</div>';
-    });
+    // One card implementation, shared with the Signal dashboard's Books
+    // panel (sigEpisodeCard) so the two renderings cannot drift.
+    (bm.live||[]).slice(0,20).forEach(function(m){h+=sigEpisodeCard(m);});
     h+='<div style="height:8px"></div>';
   }
   } // end !onPlays (book movement)
@@ -6714,6 +6747,451 @@ function renderAgentsContent(){
   } // end !onPlays (live feed)
 
   $('sport-selector').innerHTML=h;
+}
+
+
+// ══════════════════════════════════════
+// 📡 SIGNAL DASHBOARD  (home section 'signal')
+//
+// Four panels — Health → Budget → Books → Steam — behind a chip row, with only
+// the active one in the DOM (four concatenated panels is an unusable scroll on
+// a phone). Health is first because "is anything even running" gates the
+// meaning of everything below it.
+//
+// ZERO network traffic of its own. Every number here comes out of the one-shot
+// bag loadAgentsData() already fetches for the Agents tab, so switching to this
+// tab costs no requests and a cold open paints from etBagCache first. There is
+// deliberately no `fetch(` anywhere in this block, and the smoke harness
+// asserts it: a second /plays read would be another 1.36MB per tab switch.
+//
+// THE HONEST EMPTY STATES ARE THE POINT OF THIS SCREEN, not decoration. This
+// system's signature failure is that "nothing happened" and "I cannot see it"
+// render identically — that is what hid the sharp agent's dead feed for 13,000+
+// runs, and it is what the dead public_splits feed is doing right now. So every
+// panel resolves to exactly one of five states, each with its own words:
+//
+//   loading  nothing cached on this device and no refresh has finished
+//   nodata   the source answered and the honest answer is zero
+//   stale    the payload's own timestamp is older than the panel's bound
+//   off      the payload is here but the mechanism provably is not producing
+//   failed   the source did not answer on the last refresh
+//
+// `stale` and `failed` are banners OVER whatever data exists, never instead of
+// it: unlabelled stale numbers are one failure, and hiding them is another.
+//
+// Every state.agents* read is defaulted. hydrateAgentsCache replays an OLD
+// etBagCache bag into this new code on first paint, so any field added after a
+// user's last visit is simply absent — this repo has shipped bugs from exactly
+// that, and the panels must degrade to a banner rather than to `undefined`.
+// ══════════════════════════════════════
+var SIG_PANELS=[{id:'health',label:'Health'},{id:'budget',label:'Budget'},{id:'books',label:'Books'},{id:'steam',label:'Steam'}];
+// Staleness bounds, each 2x the producing agent's cadence (AGENT_STALE_MS), so
+// one missed run is not an alarm and two is.
+var SIG_BOOKS_BOUND=(AGENT_STALE_MS['book-move']||1800000)*2;
+var SIG_STEAM_BOUND=(AGENT_STALE_MS.sharp||300000)*2;
+var SIG_DH_BOUND=1800000;
+
+function renderSignalView(){
+  startAgentsPoll();
+  hydrateAgentsCache(); // paint the last-known data instantly; live fetch replaces it
+  // First entry: kick a load if we have nothing yet.
+  if(!state.agentsLastLoad&&!state.agentsLoading){state.agentsLoading=true;Promise.resolve(loadAgentsData()).then(function(){state.agentsLoading=false})}
+  renderSignalContent();
+}
+function sigSetView(v){state.sigView=v;renderSignalContent();}
+window.sigSetView=sigSetView;
+
+function renderSignalContent(){
+  var h='';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
+  h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">📡 SIGNAL</div>';
+  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):(state.agentsCachedAt?'refreshing…':'loading…'))+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
+  h+='</div>';
+  var v=state.sigView||'health';
+  h+='<div class="flt-row">';
+  SIG_PANELS.forEach(function(p){h+='<button class="flt'+(p.id===v?' on':'')+'" onclick="sigSetView(\''+p.id+'\')">'+p.label+'</button>';});
+  h+='</div>';
+  if(v==='budget')h+=renderSigBudget();
+  else if(v==='books')h+=renderSigBooks();
+  else if(v==='steam')h+=renderSigSteam();
+  else h+=renderSigHealth();
+  $('sport-selector').innerHTML=h;
+}
+
+// ── The five-state machinery ─────────────────────────────────────
+// → 'loading' | 'failed' | 'stale' | 'nodata' | 'ok'.
+//
+// `off` is never inferred here: only a panel knows whether its own mechanism is
+// PROVABLY not producing, and guessing it from an empty array is the mistake
+// this whole screen exists to stop making.
+//
+// `payload == null` means the panel has nothing to show at all. It separates
+// into `loading` (no refresh has finished and nothing was cached) and `nodata`
+// (a refresh finished and the field simply is not there) on `src.at`.
+function sigState(src,payload,count,bound,ts){
+  var s=src||{};
+  if(s.ok===false)return 'failed';
+  if(payload==null)return s.at?'nodata':'loading';
+  if(bound&&ts){var age=Date.now()-new Date(ts).getTime();if(age===age&&age>bound)return 'stale';}
+  return count?'ok':'nodata';
+}
+// The five states' words, in one place, so no panel can quietly invent a
+// gentler phrasing. Each reads differently on purpose: a reader has to be able
+// to tell a zero from a silence without asking anybody.
+function sigBanner(kind,o){
+  o=o||{};
+  var txt,col;
+  if(kind==='loading'){
+    txt='Loading — no cached copy on this device yet.';
+    col='var(--muted)';
+  } else if(kind==='nodata'){
+    txt='Feed answered. 0 '+(o.things||'items')+' right now.'+(o.at?' as of '+o.at:'');
+    col='var(--muted)';
+  } else if(kind==='stale'){
+    txt='Last produced '+(o.ago||'—')+' ago — older than '+(o.bound||'its cadence')+'. Shown as history, not as now.';
+    col='var(--brass)';
+  } else if(kind==='off'){
+    // o.text carries a panel's own diagnosis when it has one that is more
+    // specific than the template — naming the actual broken mechanism beats
+    // naming the category.
+    txt=o.text||('NOT FIRING — '+(o.reason||'the mechanism is not producing')+'. Blank because the signal isn\'t being produced, not because there is nothing to see.');
+    col='var(--rust)';
+  } else if(kind==='failed'){
+    txt='Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.');
+    col='var(--wine)';
+  } else return '';
+  return '<div style="border-left:3px solid '+col+';background:rgba(255,255,255,.03);border-radius:6px;padding:7px 10px;margin:0 0 8px;font-size:9px;line-height:1.55;color:'+col+'">'+esc(txt)+'</div>';
+}
+// Assemble the failed-state copy's two ages out of one sigSrc entry: when the
+// read failed, and when the source last actually answered.
+function sigFailOpts(name,src){
+  var s=src||{};
+  // `cached` falls back to the etBagCache timestamp: when a source has not
+  // answered once in this session but numbers ARE on screen, they came out of
+  // localStorage, and claiming "nothing is cached" over visible data would be
+  // its own small lie.
+  var at=s.okAt||(state.agentsCachedAt||null);
+  return {src:name,
+    ago:s.at?agentAgo(new Date(s.at).toISOString()):'—',
+    cached:at?agentAgo(new Date(at).toISOString()):null};
+}
+// agentAgo returns '12m ago'; the stale copy supplies its own 'ago' and would
+// otherwise read 'older than 12m ago ago'.
+function sigDur(ts){return agentAgo(ts).replace(/ ago$/,'');}
+// Never 0 for a null, and never a coercion. A missing number and a zero are
+// different claims; keeping them apart is this screen's whole job.
+function sigNum(v,suffix){return (v==null||v!==v)?'—':(v+(suffix||''));}
+function sigAt(ts){if(!ts)return '';try{return new Date(ts).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}catch(e){return ''}}
+// The only hand-rolled graphic here: one <svg>, one <polyline> per series, with
+// shared scaling. No charting dependency — there is no build step, and the
+// smoke harness forbids external script tags.
+function sigSpark(series,w,h){
+  var ss=(series||[]).filter(function(x){return x&&x.pts&&x.pts.length>1});
+  if(!ss.length)return '';
+  var mx=0,my=0;
+  ss.forEach(function(x){x.pts.forEach(function(p){if(p[0]>mx)mx=p[0];if(p[1]>my)my=p[1];})});
+  if(!mx)mx=1; if(!my)my=1;
+  var g=ss.map(function(x){
+    var pts=x.pts.map(function(p){return (1+p[0]/mx*(w-2)).toFixed(1)+','+(h-1-p[1]/my*(h-2)).toFixed(1)}).join(' ');
+    return '<polyline points="'+pts+'" fill="none" stroke="'+(x.color||'var(--brass)')+'" stroke-width="1.5"'+(x.dash?' stroke-dasharray="3 3"':'')+'/>';
+  }).join('');
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="display:block">'+g+'</svg>';
+}
+function sigCard(inner){return '<div class="card" style="padding:11px 12px;margin:0 0 8px">'+inner+'</div>';}
+function sigHdr(t){return '<div style="font-family:var(--H);font-size:9px;letter-spacing:1.2px;color:var(--leather);margin:0 0 6px">'+t+'</div>';}
+
+// ── Panel 1 · HEALTH ─────────────────────────────────────────────
+// Is anything running, and is anything writing rows. An all-green roster is
+// three lines here, not 53 cards — the point of the panel is the exceptions.
+function renderSigHealth(){
+  var h='';
+  var roster=state.agentsHealth||[];
+  var healthBy={};roster.forEach(function(r){if(r&&r.name&&!healthBy[r.name])healthBy[r.name]=r;});
+  var hs=sigState(state.sigSrc.health,roster.length?roster:null,roster.length,0,null);
+  if(hs==='failed')h+=sigBanner('failed',sigFailOpts('/health',state.sigSrc.health));
+  if(hs==='loading')return h+sigBanner('loading',{});
+  if(hs==='nodata')h+=sigBanner('nodata',{things:'agent statuses',at:sigAt(state.agentsLastLoad)});
+
+  var n={run:0,idle:0,err:0,none:0},bad=[];
+  AGENTS_META.forEach(function(a){
+    var run=healthBy[a.name],s=agentStatus(run,a.name);
+    if(s.label==='Error')n.err++;
+    else if(s.label==='No data')n.none++;
+    else if(s.label==='Idle')n.idle++;
+    else n.run++;
+    if(s.label!=='Running'&&s.label!=='Healthy')bad.push({a:a,run:run,s:s});
+  });
+  var tiles=[{l:'running',v:n.run,c:'var(--sage)'},{l:'stale',v:n.idle,c:'var(--brass)'},{l:'errored',v:n.err,c:'var(--wine)'},{l:'no data',v:n.none,c:'var(--muted)'}];
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px">';
+  tiles.forEach(function(t){
+    h+='<div style="background:var(--saddle);border-radius:10px;padding:9px 3px;text-align:center;box-shadow:var(--shadow-sm)">';
+    h+='<div style="font-family:var(--M);font-size:16px;font-weight:700;color:'+t.c+'">'+t.v+'</div>';
+    h+='<div style="font-size:6.5px;color:var(--sand);margin-top:2px;text-transform:uppercase;letter-spacing:.3px">'+t.l+'</div></div>';
+  });
+  h+='</div>';
+
+  if(!roster.length){
+    // The banner above already said the roster is absent. A 50-row table of
+    // '⚪ No data' restates it once per agent and buries everything below.
+  } else if(!bad.length){
+    h+=sigCard(sigHdr('EXCEPTIONS')+'<div style="font-size:10px;color:var(--sage)">All '+AGENTS_META.length+' agents reporting healthy.</div>');
+  } else {
+    var tb=sigHdr('NOT OK · '+bad.length+' of '+AGENTS_META.length);
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">agent</th><th class="l">state</th><th>last run</th><th class="l">summary</th></tr></thead><tbody>';
+    bad.forEach(function(b){
+      var ts=b.run&&(b.run.finished_at||b.run.lastRunAt||b.run.started_at);
+      tb+='<tr><td class="l" style="color:var(--cream)">'+esc(b.a.label||b.a.name)+'</td>';
+      tb+='<td class="l" style="color:'+b.s.color+'">'+b.s.dot+' '+esc(b.s.label)+'</td>';
+      tb+='<td style="color:var(--muted)">'+(ts?agentAgo(ts):'—')+'</td>';
+      tb+='<td class="l" style="color:var(--dim);white-space:normal;max-width:150px">'+esc((b.run&&(b.run.error||b.run.result))||'')+'</td></tr>';
+    });
+    tb+='</tbody></table></div>';
+    h+=sigCard(tb);
+  }
+
+  // Degraded conditions. An absent list and an empty one are different claims:
+  // an old cached bag (or a Supabase-only setup) has no list at all.
+  var deg=(state.agentsSystem||{}).degraded;
+  var dgb=sigHdr('DEGRADED CONDITIONS');
+  if(!deg)dgb+=sigBanner('off',{reason:'the backend did not publish a degraded list on this refresh'});
+  else if(!(deg||[]).length)dgb+=sigBanner('nodata',{things:'degraded conditions',at:sigAt(state.agentsLastLoad)});
+  else (deg||[]).forEach(function(d){
+    if(!d)return;
+    dgb+='<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:9.5px;line-height:1.5"><span style="font-family:var(--M);color:var(--rust)">'+esc(d.key||'')+'</span> <span style="color:var(--dim)">'+esc(d.detail||'')+'</span></div>';
+  });
+  h+=sigCard(dgb);
+
+  // Rows written today, per monitored table. "0 today" on an in-season feed is
+  // the signal — it is the only place a dead writer shows up as a number.
+  var dh=state.agentsDataHealth;
+  var ds=sigState(state.sigSrc.dataHealth,dh,dh&&(dh.tables||[]).length,SIG_DH_BOUND,dh&&dh.generated);
+  var dhb=sigHdr('ROWS TODAY / TOTAL'+(dh&&dh.generated?' · as of '+sigAt(dh.generated):''));
+  if(ds==='failed')dhb+=sigBanner('failed',sigFailOpts('/data-health',state.sigSrc.dataHealth));
+  if(ds==='loading')dhb+=sigBanner('loading',{});
+  else if(ds==='stale')dhb+=sigBanner('stale',{ago:dh&&dh.generated?sigDur(dh.generated):'—',bound:'30m'});
+  else if(ds==='nodata')dhb+=sigBanner('nodata',{things:'monitored tables',at:sigAt(dh&&dh.generated)});
+  if(dh&&dh.degraded)dhb+=sigBanner('off',{reason:'some table counts could not be read on this refresh ('+((dh.queryErrors||[]).length||'some')+' query errors), so a blank count here is not a zero'});
+  if(dh&&(dh.tables||[]).length){
+    var zeroes=(dh.tables||[]).filter(function(t){return t&&t.today===0}).length;
+    dhb+='<div style="font-size:7.5px;color:var(--muted);margin:-2px 0 5px">'+(dh.tables||[]).length+' tables monitored · '+zeroes+' wrote nothing today · '+(dh.dbConnected===false?'<span style="color:var(--wine)">DB not connected</span>':(dh.errorsToday?'<span style="color:var(--wine)">'+dh.errorsToday+' agent error'+(dh.errorsToday===1?'':'s')+' today</span>':'<span style="color:var(--sage)">no errors today</span>'))+'</div>';
+    dhb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">table</th><th>today</th><th>total</th></tr></thead><tbody>';
+    (dh.tables||[]).forEach(function(t){
+      if(!t)return;
+      var zero=t.today===0;
+      dhb+='<tr><td class="l" style="color:'+(zero?'var(--muted)':'var(--cream)')+'">'+esc(DH_LBL[t.table]||t.table||'')+'</td>';
+      dhb+='<td style="color:'+(zero?'var(--muted)':'var(--sage)')+'">'+sigNum(t.today)+'</td>';
+      dhb+='<td style="color:var(--muted)">'+sigNum(t.total)+(t.total_mode&&t.total_mode!=='exact'?' <span style="font-size:7px">'+esc(t.total_mode)+'</span>':'')+'</td></tr>';
+    });
+    dhb+='</tbody></table></div>';
+  }
+  h+=sigCard(dhb);
+
+  // Movement-baseline rehydration (D71/D72). These counters exist only inside
+  // the odds agent's run summary, so they are parsed back out of it — and when
+  // the segment is absent that is a fact about the BUILD, not about the data.
+  var oddsRun=healthBy.odds||null;
+  var sum=(oddsRun&&oddsRun.result)||'';
+  var mb=sum.match(/baseline\s+(\d+)\/(\d+)\s+games[^0-9]*(\d+)\s+keys rehydrated/);
+  var ms=sum.match(/(\d+)\s+stale-baseline/);
+  var bb=sigHdr('MOVEMENT BASELINE'+(oddsRun?' · odds run '+agentAgo(oddsRun.finished_at||oddsRun.lastRunAt):''));
+  if(!mb&&!ms)bb+=sigBanner('off',{text:'Baseline counters not in the run summary — this build predates the rehydration fix.'});
+  else {
+    bb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">counter</th><th>value</th></tr></thead><tbody>';
+    bb+='<tr><td class="l" style="color:var(--cream)">games hydrated</td><td>'+(mb?esc(mb[1]+'/'+mb[2]):'—')+'</td></tr>';
+    bb+='<tr><td class="l" style="color:var(--cream)">keys rehydrated</td><td>'+(mb?esc(mb[3]):'—')+'</td></tr>';
+    bb+='<tr><td class="l" style="color:var(--cream)">stale-baseline (gap over bound)</td><td style="color:'+(ms&&+ms[1]>0?'var(--brass)':'var(--muted)')+'">'+(ms?esc(ms[1]):'—')+'</td></tr>';
+    bb+='</tbody></table></div>';
+    bb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">Baselines are refilled from line_snapshots at zero Odds-API cost; a gap past the bound is reseeded rather than reported as a move (D72).</div>';
+  }
+  h+=sigCard(bb);
+  return h;
+}
+
+// ── Panel 2 · BUDGET ─────────────────────────────────────────────
+function renderSigBudget(){
+  var b=state.agentsBudget;
+  var h='';
+  var st=sigState(state.sigSrc.budget,b,b&&b.budget!=null,0,null);
+  if(st==='failed')h+=sigBanner('failed',sigFailOpts('/budget',state.sigSrc.budget));
+  if(st==='loading')return h+sigBanner('loading',{});
+  if(!b||b.budget==null)return h+sigBanner('nodata',{things:'odds-API credit records',at:sigAt(state.agentsLastLoad)});
+
+  var used=b.used||0,cap=b.budget||0;
+  var pct=Math.max(0,Math.min(100,b.pctUsed||0));
+  var over=b.projectedMonthly!=null&&b.projectedMonthly>cap;
+  var barCol=over||pct>=90?'var(--wine)':pct>=70?'var(--brass)':'#34d399';
+  var head='';
+  head+='<div style="display:flex;justify-content:space-between;align-items:flex-end"><div><span style="font-family:var(--M);font-size:22px;font-weight:700;color:var(--txt)">'+used+'</span><span style="font-size:11px;color:var(--muted)"> / '+cap+' credits</span></div><div style="font-family:var(--M);font-size:14px;font-weight:700;color:'+barCol+'">'+pct+'%</div></div>';
+  head+='<div style="height:7px;background:rgba(255,255,255,.06);border-radius:4px;margin-top:5px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+barCol+';border-radius:4px"></div></div>';
+  head+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:5px;color:var(--muted)"><span>day '+sigNum(b.dayOfMonth)+' of '+sigNum(b.daysInMonth)+' · '+esc(b.month||'')+'</span><span>pace '+sigNum(b.paceRatio,'×')+' · projected '+sigNum(b.projectedMonthly)+(over?' ⚠':'')+'</span></div>';
+  // The governor, stated rather than implied. `null` is a third answer and says
+  // so: an old backend build simply did not publish the field.
+  var closed=b.discretionaryActive===false;
+  var gcol=b.discretionaryActive==null?'var(--muted)':closed?'var(--wine)':'var(--sage)';
+  var gtxt=b.discretionaryActive==null?'GOVERNOR — not published by this backend build':closed?'GOVERNOR CLOSED (discretionary scanners paused)':'GOVERNOR OPEN';
+  head+='<div style="margin-top:9px;font-family:var(--H);font-size:10px;letter-spacing:1px;color:'+gcol+'">'+gtxt+'</div>';
+  head+='<div style="font-size:8px;color:var(--muted);margin-top:2px">reserve floor '+sigNum(b.reserve)+' · '+sigNum(b.remaining)+' left</div>';
+  // Projected pace, NOT a history: no per-day credit series is kept anywhere,
+  // so both lines are straight by construction and what they show is the slope
+  // difference — the paceRatio above, drawn.
+  var d=b.dayOfMonth||0,dim=b.daysInMonth||0;
+  if(d>0&&dim>0&&cap>0){
+    head+='<div style="margin-top:10px">'+sigSpark([
+      {pts:[[0,0],[dim,cap]],dash:true,color:'var(--leather)'},
+      {pts:[[0,0],[d,used]],color:barCol}
+    ],120,28)+'<div style="font-size:7.5px;color:var(--muted);margin-top:3px">solid = credits spent to day '+d+' · dashed = linear pace to '+cap+'. Straight by construction; no per-day history is kept.</div></div>';
+  }
+  h+=sigCard(head);
+
+  // Per-sport allocation vs ceiling vs spend.
+  var bs=b.bySport||{},cl=b.ceilings||null,al=b.allocation||{},denom=b.denom||null;
+  var tb=sigHdr('BY SPORT · alloc · ceiling · spend');
+  if(!cl)tb+=sigBanner('off',{text:'Ceilings unavailable — this backend build does not publish them.'});
+  var sports=Object.keys(cl||al||{});
+  Object.keys(bs).forEach(function(k){if(sports.indexOf(k)<0)sports.push(k);});
+  sports.sort(function(x,y){return (bs[y]||0)-(bs[x]||0)});
+  if(!sports.length)tb+=sigBanner('nodata',{things:'sports with credit activity',at:sigAt(state.agentsLastLoad)});
+  else {
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th>'+(cl?'<th>alloc</th><th>ceiling</th>':'')+'<th>spent</th>'+(cl?'<th>% of ceil</th>':'')+'</tr></thead><tbody>';
+    sports.forEach(function(s){
+      var spent=bs[s]||0,ceil=cl?cl[s]:null;
+      // denom === null is "nothing has published a denominator yet" (D65), not
+      // "every sport" — so no sport gets flagged in that case.
+      var outside=denom?denom.indexOf(s)<0:false;
+      var ofCeil=(ceil!=null&&ceil>0)?Math.round(spent/ceil*1000)/10:null;
+      tb+='<tr><td class="l" style="color:var(--cream)">'+esc(s)+(outside?' <span style="font-size:7px;color:var(--muted)">not in denominator</span>':'')+'</td>';
+      if(cl)tb+='<td style="color:var(--muted)">'+(al[s]!=null?Math.round(al[s]*1000)/10+'%':'—')+'</td><td style="color:var(--dim)">'+sigNum(ceil)+'</td>';
+      tb+='<td style="color:var(--cream)">'+spent+'</td>';
+      if(cl)tb+='<td style="color:'+(ofCeil==null?'var(--muted)':ofCeil>=90?'var(--wine)':ofCeil>=70?'var(--brass)':'var(--dim)')+'">'+sigNum(ofCeil,'%')+'</td>';
+      tb+='</tr>';
+    });
+    tb+='</tbody></table></div>';
+    if(cl)tb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+'</div>';
+  }
+  h+=sigCard(tb);
+
+  var cu=b.claude||null;
+  var cb=sigHdr('CLAUDE · MONTH TO DATE');
+  if(!cu)cb+=sigBanner('off',{reason:'the backend did not publish Claude usage on this refresh'});
+  else if(!cu.calls)cb+=sigBanner('nodata',{things:'Claude calls',at:sigAt(state.agentsLastLoad)})+'<div style="font-size:8px;color:var(--muted)">Model '+(cu.model?esc(cu.model):'<b style="color:var(--rust)">not detected</b> — the Claude-backed agents (injury, weather, power, public splits) cannot run without a key')+'.</div>';
+  else cb+='<div style="font-size:10px;color:var(--cream)">$'+sigNum(cu.cost)+' MTD · ~$'+sigNum(cu.projectedMonthly)+'/mo · '+sigNum(cu.calls)+' calls'+(cu.webSearches?' · '+cu.webSearches+' searches':'')+'<div style="font-size:8px;color:var(--muted);margin-top:2px">'+esc(cu.model||'model not reported')+'</div></div>';
+  h+=sigCard(cb);
+  return h;
+}
+
+// ── Panel 3 · BOOKS ──────────────────────────────────────────────
+// Who moves first, and did it matter. Public % is MARKET-WIDE (no per-book
+// splits exist, D53/D57), so nothing here claims to know where sharps bet.
+function renderSigBooks(){
+  var bm=state.agentsBookMoves;
+  var h='';
+  var books=(bm&&bm.byBook)||[];
+  var live=(bm&&bm.live)||[];
+  var st=sigState(state.sigSrc.plays,bm,books.length+live.length,SIG_BOOKS_BOUND,bm&&bm.updated);
+  if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',state.sigSrc.plays));
+  if(st==='loading')return h+sigBanner('loading',{});
+  if(st==='stale')h+=sigBanner('stale',{ago:(bm&&bm.updated)?sigDur(bm.updated):'—',bound:'60m (2× the book-move cadence)'});
+  if(st==='nodata')h+=sigBanner('nodata',{things:'book-movement episodes',at:sigAt(bm&&bm.updated)});
+
+  // vs_public is CONFIRMED unavailable in production: public_splits has no rows
+  // today, so every episode's against-public component (weight 0.20) is null.
+  // The column header and every cell say so, and the banner names the weight —
+  // rendering 0% here would be a lie the score itself does not make.
+  var episodes=0;books.forEach(function(x){if(x)episodes+=(x.n||0)});
+  var pubN=0;books.forEach(function(x){if(x)pubN+=(x.vs_public_n||0)});
+  var noPub=books.length>0&&!pubN;
+
+  if(books.length){
+    var tb=sigHdr('BOOKS · '+books.length+' · '+episodes+' episodes in window');
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">book</th><th class="l">role</th><th>n</th><th>led%</th><th>follow%</th><th>avg move</th><th>key-x</th><th>'+(noPub?'vs-pub —':'vs-pub')+'</th></tr></thead><tbody>';
+    books.forEach(function(x){
+      if(!x)return;
+      tb+='<tr'+(x.small?' style="opacity:.5"':'')+'>';
+      tb+='<td class="l" style="color:var(--cream)">'+esc(x.label||x.book||'')+(x.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'</td>';
+      tb+='<td class="l" style="color:var(--dim)">'+esc(x.role||'')+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(x.n)+'</td>';
+      tb+='<td style="color:'+(x.led_pct==null?'var(--muted)':'var(--brass)')+'">'+sigNum(x.led_pct,'%')+'</td>';
+      tb+='<td style="color:var(--muted)">'+sigNum(x.follow_pct,'%')+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(x.avg_moved)+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(x.key_cross_n)+'</td>';
+      tb+='<td style="color:var(--muted)">'+(x.vs_public_pct!=null?x.vs_public_pct+'%':'—')+'</td>';
+      tb+='</tr>';
+    });
+    tb+='</tbody></table></div>';
+    h+=sigCard(tb);
+  }
+  if(noPub)h+=sigBanner('off',{text:'vs-public: UNAVAILABLE — 0 of '+episodes+' episodes carry a public split, so the against-public component (weight 0.20) contributes nothing to any score on this page. This is not 0%.'});
+
+  if(bm){
+    var eb=sigHdr('LIVE EPISODES'+(live.length?' · '+live.length:''));
+    if(!live.length)eb+=sigBanner('nodata',{things:'live episodes',at:sigAt(bm.updated)});
+    h+=eb;
+  }
+  live.slice(0,25).forEach(function(m){h+=sigEpisodeCard(m);});
+  if(bm&&bm.note)h+='<div style="font-size:7.5px;color:var(--muted);line-height:1.5;margin:4px 2px 0">'+esc(bm.note)+(bm.window_h!=null?' · window '+bm.window_h+'h'+(bm.truncated_queries?' (truncated)':''):'')+(bm.min_score!=null?' · min score '+bm.min_score:'')+'</div>';
+  return h;
+}
+// One card implementation for a book-movement episode, called from BOTH the
+// Agents tab and the Books panel so the two renderings cannot drift.
+function sigEpisodeCard(m){
+  if(!m)return '';
+  var arrow=m.direction==='up'?'↑':m.direction==='down'?'↓':'·';
+  var h='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+  h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
+  h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+sigNum(m.score)+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
+  h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?esc(m.line_from+'→'+m.line_to):'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span>'+(m.crossed_key?' <span style="color:var(--brass)">key ✕</span>':'')+(m.hours_to_start!=null?' <span style="color:var(--muted)">'+m.hours_to_start+'h to start</span>':'')+'</div>';
+  if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
+  h+='</div>';
+  return h;
+}
+
+// ── Panel 4 · STEAM ──────────────────────────────────────────────
+// This panel is EXPECTED to be empty today, and the empty state has to say why.
+// The sharp agent reads only the most recent odds run's in-memory movement
+// array, so with the odds run detecting nothing there is nothing to group —
+// which is the bug the shelved history reader fixes. An unexplained blank here
+// is exactly how that went unnoticed for 13,000+ runs.
+function renderSigSteam(){
+  var sg=state.agentsSharp||[];
+  var h='';
+  var src=state.sigSrc.plays||{};
+  var latest=null;sg.forEach(function(s){if(s&&s.detected_at&&(!latest||s.detected_at>latest))latest=s.detected_at;});
+  var loaded=!!(src.at||state.agentsCachedAt||state.agentsLastLoad);
+  var st=sigState(src,loaded?sg:null,sg.length,SIG_STEAM_BOUND,latest);
+  if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',src));
+  if(st==='loading')return h+sigBanner('loading',{});
+  if(st==='stale')h+=sigBanner('stale',{ago:latest?sigDur(latest):'—',bound:'10m (2× the sharp agent\'s cadence)'});
+
+  var run=null;(state.agentsHealth||[]).forEach(function(r){if(r&&r.name==='sharp'&&!run)run=r;});
+  var res=(run&&run.result)||'';
+  if(st==='nodata'){
+    // A zero and a dead mechanism are different claims. The agent's own run
+    // summary is the only thing that can tell them apart, so read it.
+    if(/no recent line movement/.test(res))h+=sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "no recent line movement". It reads only the most recent odds run\'s in-memory array; expect this to stay empty until the history reader lands (docs/specs/sharp-history-reader.md).'});
+    else h+=sigBanner('nodata',{things:'steam signals',at:sigAt((run&&(run.finished_at||run.lastRunAt))||state.agentsLastLoad)});
+  }
+  // The agent's own line is shown whatever the state: it is the evidence for
+  // the banner above, and the thing to check first when the panel fills up.
+  h+=sigCard(sigHdr('SHARP AGENT')+'<div style="font-family:var(--M);font-size:9.5px;color:var(--dim);line-height:1.5">'+(run?(agentStatus(run,'sharp').dot+' '+esc(agentStatus(run,'sharp').label)+' · last run '+agentAgo(run.finished_at||run.lastRunAt)+'<div style="color:var(--muted);margin-top:2px">'+esc(res||'no run summary')+'</div>'):'<span style="color:var(--muted)">no status for the sharp agent in this payload</span>')+'</div>');
+
+  if(sg.length){
+    var tb=sigHdr('STEAM SIGNALS · '+sg.length);
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th class="l">game</th><th class="l">market</th><th class="l">side</th><th>strength</th><th>books</th><th>detected</th></tr></thead><tbody>';
+    sg.forEach(function(s){
+      if(!s)return;
+      tb+='<tr><td class="l" style="color:var(--cream)">'+esc(s.sport||'')+'</td>';
+      tb+='<td class="l" style="color:var(--muted)">'+esc(String(s.game_id||'').slice(0,10))+'</td>';
+      tb+='<td class="l" style="color:var(--dim)">'+esc(s.market||'')+'</td>';
+      tb+='<td class="l" style="color:var(--cream)">'+esc(s.side||'')+'</td>';
+      tb+='<td style="color:'+((s.strength||0)>=60?'var(--brass)':'var(--dim)')+'">'+sigNum(s.strength)+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum((s.books||[]).length)+'</td>';
+      tb+='<td style="color:var(--muted)">'+(s.detected_at?agentAgo(s.detected_at):'—')+'</td></tr>';
+    });
+    tb+='</tbody></table></div>';
+    h+=sigCard(tb);
+  }
+  return h;
 }
 
 function agentPlayKey(p){return (p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'')}
@@ -6782,9 +7260,12 @@ function gbOdds(p){if(p==null)return '';return p>0?'+'+p:''+p;}
 
 var TIER_COST={free:0,starter:30,pro:99};
 // Data-health panel: is data actually being written? per-table rows today/total.
+// Friendly names for the monitored tables. Module-level because the Signal
+// dashboard's Health panel renders the same rows — a second copy is a second
+// thing to forget when a table is added.
+var DH_LBL={line_snapshots:'Odds snapshots',monitor_scores:'Plays scored',clv_records:'CLV records',opp_results:'Opps graded',ev_opportunities:'+EV flags',line_signals:'Stale/key/div',book_edge_log:'Book edges',sharp_signals:'Steam signals',injury_updates:'Injuries',game_weather:'Weather',public_splits:'Public splits'};
 function renderDataHealth(d){
   if(!d||!d.tables)return '';
-  var LBL={line_snapshots:'Odds snapshots',monitor_scores:'Plays scored',clv_records:'CLV records',opp_results:'Opps graded',ev_opportunities:'+EV flags',line_signals:'Stale/key/div',book_edge_log:'Book edges',sharp_signals:'Steam signals',injury_updates:'Injuries',game_weather:'Weather',public_splits:'Public splits'};
   var h='<div class="card" style="padding:13px 14px;margin-bottom:6px">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim)">🩺 DATA HEALTH</div>';
   if(!d.dbConnected)h+='<span style="font-size:8px;color:var(--wine)">DB not connected</span>';
@@ -6796,7 +7277,7 @@ function renderDataHealth(d){
     var today=t.today==null?'—':t.today;
     var zero=t.today===0;
     h+='<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">';
-    h+='<span style="font-size:10px;color:'+(zero?'var(--muted)':'var(--cream)')+'">'+esc(LBL[t.table]||t.table)+'</span>';
+    h+='<span style="font-size:10px;color:'+(zero?'var(--muted)':'var(--cream)')+'">'+esc(DH_LBL[t.table]||t.table)+'</span>';
     h+='<span style="font-family:var(--M);font-size:9px"><span style="color:'+(zero?'var(--muted)':'var(--sage)')+'">'+today+' today</span> <span style="color:var(--muted)">/ '+(t.total==null?'—':t.total)+'</span></span>';
     h+='</div>';
   });
@@ -7799,9 +8280,9 @@ document.addEventListener('visibilitychange',function(){
   }catch(e){}
 })();
 
-// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents→Games).
+// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents→Games→Signal).
 (function(){
-  var order=['dash','plays','rec','stats','log','agents','games'];
+  var order=['dash','plays','rec','stats','log','agents','games','signal'];
   var sx=0,sy=0,track=false;
   var main=document.getElementById('main');
   if(!main)return;
