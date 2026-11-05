@@ -1,88 +1,8 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-05 — **Signal dashboard built on `feat/signal-dashboard`: a 📡 Signal home tab
-in the PWA with Health / Budget / Books / Steam panels, plus the two backend fields the data needed.
-Not yet committed by the builder; not yet seen on a phone.**
+Last updated: 2026-11-05 — **three PRs open and unmerged: loud blocked agents (#137), the Signal dashboard with its restyle (#138), automatic seasonality (new).** `main` is still at `fefc1dc`.
 
-## Current state
-
-Branch `feat/signal-dashboard`, based on `427eada`. Dependencies are installed, so the real baseline
-is **zero failures** — see D82; there is no "3 expected failures" allowance any more.
-
-**What this branch does.** Four things the system already knew — agent/data health, odds spend, book
-reputation, steam — each lived in a different corner of a 580-line `renderAgentsContent()` or in no
-renderer at all, with no single screen. It is now a home tab (`signal`), four panels behind a chip
-row, only the active one in the DOM.
-
-- **Zero new network traffic.** Every number comes from the one-shot bag `loadAgentsData()` already
-  fetches for the Agents tab. There is no `fetch(` in the new block and smoke asserts it: a second
-  `/plays` read is another 1.36MB per tab switch. A cold open paints from `etBagCache` first.
-- **Five honest empty states**, one shared `sigBanner`: `loading` / `nodata` / `stale` / `off` /
-  `failed`, each with its own words. `stale` and `failed` are banners **over** the data, never
-  instead of it.
-- **A real bug fixed to make that possible.** Every backend fetch ends `.catch(() => ({}))` and
-  `applyAgentsBag` guards each assignment with `if (bag.X)`, so **a failed read silently preserved
-  the stale value and was indistinguishable from a success.** `state.sigSrc` now records per-source
-  outcome from key presence in `bag`, written *before* `applyAgentsBag` consumes it, and is
-  deliberately **not** persisted into `etBagCache` (a cached `ok:true` is a claim about a refresh
-  that has not happened). See D83.
-- **Backend, two additive fields.** `/plays` gains `sharp: getIntel('sharp')` — written on every run
-  and previously exposed by no endpoint. `/budget` spreads a new exported `getOddsCeilings()`, so the
-  per-sport ceiling behind "3 budget-skips" is reachable for the first time.
-
-## Verified vs unverified
-
-- **Verified:** `node tools/smoke.mjs` → **161 passed, 0 failed, 0 skipped** (was 134).
-  `npm test` from `edge-tracker-agents/` → **156 tests, 156 pass, 0 fail** (was 148).
-  Every new assertion mutation-tested, including all seven tab-registration sites, the `sigSrc`
-  ordering, `vs_public_pct || 0`, a bare `state.agents*` dereference, a duplicated episode card, a
-  `fetch(` in the block, and `currentCeiling` → `sportCap` in the backend test.
-  All four panels and all five states were rendered in a Node/vm DOM shim against **today's live
-  payloads** — including the old-cached-bag path, a cold open, and an all-sources-failed refresh.
-- **Unverified:** **nobody has opened this on a phone.** The vm shim is not a browser: nothing about
-  touch, the swipe handler, the real service-worker cache path, or whether the tables actually scroll
-  inside their cards at 375px has been seen. Run the manual recipe in
-  `docs/specs/signal-dashboard.md` — **step 5 (throttle Offline, tap refresh) is the one that tests
-  the central requirement**, and step 6 is the stale-cache path.
-
-## What each panel shows against today's live data
-
-| panel | state | why |
-|---|---|---|
-| Health | **ok** | 47 running / 3 stale / 0 errored; 45 tables, 22 wrote nothing today; one degraded condition (`clv\|unmeasurable`); baseline counters present and all zero |
-| Budget | **ok**, with `off` on the ceiling columns | 6548/20000, pace **1.96×**, governor OPEN. The ceiling columns show `Ceilings unavailable — this backend build does not publish them.` until the backend deploys — by design (spec Risk 2). Claude usage is `nodata` with the model reading **not detected** |
-| Books | **ok**, with the `vs_public` `off` banner | 10 books, 1013 episodes, 40 live. `vs-pub` header reads `vs-pub —`, every cell is `—`, and the banner says `0 of 1013 episodes carry a public split … This is not 0%.` |
-| Steam | **off** | `Steam: NOT FIRING — the sharp agent reports "no recent line movement"` and names the shelved spec. Expected and correct; do not pad it |
-
-## OWED NOW — deploy the backend
-
-The Budget panel's ceiling columns and the Steam panel's data source both exist only after
-`edge-tracker-agents/` redeploys. Nothing breaks before that: both fall back to a labelled `off`
-banner. Nothing to hand-run — no DDL, no schema change, no new localStorage key.
-
-## Open items for Blake
-
-1. **Chase `vs_public` now or later?** `/data-health` confirms **`public_splits: 0 today`**, so the
-   cause is upstream — the splits agent produced nothing (it is Claude-web-search sourced and
-   `ANTHROPIC_API_KEY` is unset in production, which the Budget panel now also says out loud). The
-   join is innocent and the `PUBLIC_HEAVY`/`SPLIT_SPORTS` filters are not the story. The missing
-   `h2h` entry in `SPLIT_MARKET` (`book-move/index.js:95`) is still a real, separate contributor:
-   `againstPublic` returns `null` for every moneyline episode by construction. Until one is fixed the
-   0.20-weight against-public component contributes nothing to any score, and the dashboard says so.
-2. **The Steam panel is the instrument for the shelved `sharp` history reader.** It will stay empty
-   until that lands, and will show whether it worked the moment it does.
-3. **1 November budget reset — now readable.** Pace is **1.96×** and projected **39288 against a
-   20000 budget**, which the panel flags with ⚠. NBA (1910), NFL (1233), NCAAB (1203) and NHL (1151)
-   lead; MLB has spent 1. This is the open item from the last two handoffs and the Budget panel is
-   the answer to it — worth reading before the next allocation change.
-4. **`book_move_log` is still not in the watchdog's schema probes** — one line, and those probes
-   exist to catch exactly the failure this repo keeps having.
-5. **Watchdog alerts still reach zero recipients** (`notifyAll` needs `ALERT_NUMBERS` or `SMTP_*`).
-   Deprioritised 2026-10-28; every "make it loud" path still terminates here.
-6. **`docs/specs/web-app-revival.md` is abandoned.** It proposed a separate Next.js app; Blake chose
-   the PWA. Delete it or mark it rejected so a future session does not build it.
-
-## OWED NOW — Railway env (both are Blake's, neither is code)
+## OWED NOW — Railway env (both Blake's, neither is code)
 
 ```
 ANTHROPIC_API_KEY=<your key>          # revives public-splits + combat-weighin; REQUIRES A RESTART
@@ -90,29 +10,78 @@ ODDS_ALLOC_NFL=0.26   ODDS_ALLOC_NCAAF=0.13   ODDS_ALLOC_MLB=0.02
 ODDS_ALLOC_NBA=0.22   ODDS_ALLOC_NCAAB=0.14   ODDS_ALLOC_NHL=0.14
 ```
 
-The key needs a **restart** — the Anthropic client is built once at module load and `detectModel()`
-runs once at boot and is never retried. The allocation shares do **not**: `capOf()` reads them per
-call. See D81, D86.
+The key needs a **restart**: the Anthropic client is built once at module load and `detectModel()` runs once
+at boot, never retried (D81). The shares do **not** — `capOf()` reads them per call (D86). Once seasonality
+merges, the shares become a *shape* knob only; membership takes care of itself.
+
+## Current state — three branches, all green, none merged
+
+| PR | branch | what | tests / smoke |
+|---|---|---|---|
+| #137 | `feat/loud-agent-skips` | a persistently `blocked` agent announces itself via `reportDegraded` → watchdog + `/health`; threshold 1; reason from one audited helper that distinguishes "key not set" from "key set but no model detected" (D80, D81) | 148 / 134 — tester verdict **merge** |
+| #138 | `feat/signal-dashboard` | a 📡 Signal home tab (Health · Budget · Books · Steam), zero new fetches, five honest empty states; fixes `applyAgentsBag` swallowing failed reads; **restyled** to the look Blake chose — mint accent, JetBrains Mono, chamfers, grid + scanlines, scoped under `.sighud` (D83–D85) | 156 / 167 — verified in a browser at 375px against the live backend |
+| new | `feat/auto-seasonality` | a sport's share releases itself when its season ends, from the already-made free `/sports` call — entry immediate, release after 14 **observed** quiet days, fail-safe tight, D6's football backstop kept (D89–D91) | 231 / 196 — tester drove a 132-day simulated season against an independent oracle, verdict **merge** |
+
+**Install deps first.** There is no "expected failures" allowance any more — `npm ci` in `edge-tracker-agents/` and
+everything is 0-fail (D82). Any failure is real.
+
+## What the live render told us (the dashboard, day 5 of November)
+
+- **All ten books classify as `follower`** (led% 1.3–16.2). Nobody leads — D22's ceiling made visible: no
+  originating book in the feed, so the metric measures who copies the market fastest.
+- **The month is NOT overrunning; the shape was wrong.** `projectedMonthly 39372` is unreachable — ceilings sum to
+  ~17 000 by construction (D87, and D15 was right). But NCAAB/NHL/NBA sat at 91/87/87% of their ceilings while
+  football held 0.48 of the pool at 18–28% used and MLB held 0.14 through its offseason (D86). Aggregate demand is
+  ~2.3× the pool, so ceilings will switch sports off one at a time — September's "no games on the slate" by a
+  different route. Reallocation changes *which* sports go dark, not *whether*.
+- **`public_splits` wrote 0 rows today** (671 total) because `ANTHROPIC_API_KEY` is unset — so the against-public
+  component of every `book-move` score is contributing nothing. Scores are narrower, not wrong: a missing component
+  is renormalized to neutral. The dashboard says *"This is not 0%."* rather than rendering a flattering zero.
+- **The ceilings in that analysis were modelled, not observed** (D88) — `getOddsCeilings()` is written but not
+  deployed. Landing #138 + the Railway deploy makes the next tuning pass measured.
+
+## In flight / loose ends
+
+- **A second git worktree** exists at `<scratchpad>/wt-dash` on `feat/signal-dashboard` (used to port the restyle
+  while a tester held the main worktree). Remove with `git worktree remove <path>` once #138 merges; its work is
+  pushed.
+- **Two design artifacts** (Signal HUD mockup; the options page Blake chose from) live in the scratchpad only. They
+  are references, not deliverables — the restyle in #138 is the deliverable.
+- **`ios-app/capacitor.config.json` points `server.url` at `https://blake27w.github.io`** — the old GitHub Pages
+  address, not Vercel. It is a thin shell over the live site (`www/index.html` is a 205-byte stub), so if that
+  wrapper is in use it is loading a stale copy. If Blake uses the Safari home-screen PWA instead, this is moot.
+- **The seasonality feature's first live release is ~19 Nov** (MLB and WNBA after 14 observed quiet days). Until
+  then the claim rests on the simulation. Watch `denom N/12 (…)` in the odds run summary and the `why in` column
+  on the dashboard's Budget panel.
 
 ## Next steps
 
-1. **Run the manual check recipe** in `docs/specs/signal-dashboard.md`. Steps 5 and 6 are the ones
-   that matter. Start with `lsof -nP -iTCP -sTCP:LISTEN` and read the port `npx serve` actually
-   prints — it silently falls back to a random one.
-2. **Merge, then deploy `edge-tracker-agents/`** and confirm the ceiling columns and `off` banner
-   swap over.
-3. **Phase: point `sharp` at a history reader** (`docs/specs/sharp-history-reader.md`, shelved) —
-   why `sharp` has reported "no recent line movement" across 13,000+ runs. The Steam panel is now
-   the instrument that will show it working.
-4. **Phase: generalize open→close movement to all 12 sports** (`docs/specs/line-move-all-sports.md`,
-   shelved; store shape and renames already decided). Today the Books panel can only describe
-   intraday episodes.
-5. **Fix the `vs_public` join** (open item 1) — now a known upstream cause plus one known code bug.
+1. **Merge #137, #138 and the seasonality PR** — in that order is simplest; they are independent of each other
+   and all branch from `main`. Vercel auto-deploys `main`, so merging IS the frontend deploy; the PWA on the phone
+   picks it up on next open (network-first SW with `skipWaiting`, `no-cache` on `index.html` — no reinstall).
+2. **Deploy the backend on Railway** (seasonality, loud skips, `getOddsCeilings()` are all server-side) and set the
+   two env blocks above. The dashboard's Budget panel shows *"Ceilings unavailable"* until that build is live.
+3. **Watch three things after deploy:** `public-splits` flips off `"skipped — no Claude"` and the `blocked`
+   watchdog issue clears by itself; `vs_public_n` on `bookMoves.byBook` starts climbing; `staleBaseline` and
+   `baseline <hydrated>/<attempted>` in the odds summary on the first redeploy (D76).
+4. **Decide the Odds API tier.** Demand measured at ~2.3× the allocatable pool (D87). Rebalancing and seasonality
+   change *who* goes dark; only cadence cuts or a larger tier change *whether*. Blake picked rebalance only; the
+   other two levers are untouched and the question is still open.
+5. **Phase: point `sharp` at a history reader** — spec written and shelved at `docs/specs/sharp-history-reader.md`.
+   The Steam panel renders NOT FIRING until this lands; it is the thing the dashboard most visibly cannot show.
+6. **Phase: generalize open→close movement to all 12 sports** — `docs/specs/line-move-all-sports.md`.
+7. **Teach `public-splits` absent-vs-zero** — the two-feed split (D77) worked around the `?? 0` trap, not fixed it.
+8. **`book_move_log` still not in the watchdog's schema probes** — one line.
+9. **Watchdog alerts still reach zero recipients** (`notifyAll` needs `ALERT_NUMBERS` or `SMTP_*`). Every "make it
+   loud" path this session built terminates here. The old `~/edge-tracker` build had Twilio wired — possibly a
+   solved problem sitting in the archive. Deprioritised by Blake 2026-10-28; noted, not dropped.
 
-## House rule earned this session
+## House rules earned this session
 
-**A caught fetch error that leaves the previous value in place is not error handling; it is a lie
-with a `try` around it.** `.catch(() => ({}))` plus `if (bag.X)` had been shipping "the data is
-fine" on every failed read in this app, and nothing in the UI could have told anyone. Any loader
-that swallows an error must record that it swallowed one, in state the renderer can see — and that
-record must never be cached, because it describes a refresh, not a payload.
+- `Number('')`, `Number(null)`, `Number('  ')`, `Number([])`, `Number(false)` are all a finite `0`, and `0` is never
+  neutral here. Six shipped bugs now (D10, D67, #133's `crossedKey(null)`, D79, the `intEnv` motivation, D79 again
+  in `steamSafeMovements`). **Type-check before coercing; never let `Number.isFinite` stand in for a presence check.**
+- **"Nothing happened" and "I cannot see it" must never look the same.** The 13 000-run `sharp` silence,
+  `applyAgentsBag`'s swallowed reads, the un-alerted dead `public_splits` feed, and the silent sentinel write were
+  all the same bug. Every new condition this session reports *why*, including when the answer is "no data".
+- **A standing allowance for known-failing tests is how regressions hide** (D82). Baseline is zero.

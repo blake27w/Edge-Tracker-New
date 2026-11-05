@@ -1,4 +1,4 @@
-# Auto-seasonality for the odds budget denominator
+# Automatic seasonality for the odds budget [SHIPPED 2026-11-05]
 
 Branch `feat/auto-seasonality`, based on `001acd6`.
 
