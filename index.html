@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}</script>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Courier+Prime:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 :root {
   /* BATCOMPUTER theme — Wayne Enterprises command console. Variable NAMES kept
@@ -175,6 +175,144 @@ textarea.inp{resize:none;font-family:var(--B);font-size:13px}
 .sigtbl th{font-size:8px;color:var(--leather);text-align:right;font-weight:400;padding:3px 5px;white-space:nowrap}
 .sigtbl td{padding:4px 5px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.04)}
 .sigtbl .l{text-align:left}
+
+/* ── 📡 Signal HUD ──────────────────────────────────────────────
+   Mission-control skin for the Signal tab ONLY. Every rule is prefixed with
+   .sighud — the root renderSignalContent paints into #sport-selector — so the
+   28px grid, the scanline overlay and the chamfered corners are properties of
+   that one view and never of body: the rest of the app keeps its rounded
+   surfaces. Mint is the STRUCTURAL accent here (rails, headings, the active
+   chip, fill bars, glows); mint/brass/wine on a number is a semantic claim
+   (good/warning/off). The two live on different kinds of element on purpose,
+   so an accent and a verdict never compete on the same pixel. */
+.sighud{--hud:#2ee6a8;--hud-ink:#04070c;--hud-line:#182338;--hud-line2:#24395a;--hud-p2:#060c15;
+  --HM:'JetBrains Mono','Courier Prime',ui-monospace,Menlo,monospace;
+  --glow-hud:0 0 12px rgba(46,230,168,.35);--glow-brass:0 0 12px rgba(242,194,48,.35);--glow-wine:0 0 12px rgba(255,82,82,.35);
+  --notch:10px;--notch-s:6px;
+  position:relative;margin:-16px -16px calc(-28px - env(safe-area-inset-bottom));padding:14px 12px calc(36px + env(safe-area-inset-bottom));
+  color:var(--txt);font-family:var(--H);font-size:14px;line-height:1.35;
+  background-image:linear-gradient(rgba(108,182,224,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(108,182,224,.045) 1px,transparent 1px);
+  background-size:28px 28px}
+.sighud::after{content:"";pointer-events:none;position:absolute;inset:0;z-index:0;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px)}
+.sighud>*{position:relative;z-index:1}
+.sighud .sh-lnk{cursor:pointer;text-decoration:underline;color:var(--dim)}
+/* status strip */
+.sighud .sh-strip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--hud-line);
+  background:linear-gradient(90deg,rgba(46,230,168,.08),transparent 60%);font-family:var(--HM);font-size:11px;color:var(--dim);
+  clip-path:polygon(var(--notch) 0,100% 0,100% calc(100% - var(--notch)),calc(100% - var(--notch)) 100%,0 100%,0 var(--notch))}
+.sighud .sh-strip b{color:var(--hud);font-weight:400;letter-spacing:.08em}
+.sighud .sh-strip b.off{color:var(--wine)}
+.sighud .sh-strip .right{margin-left:auto;display:flex;gap:12px}
+.sighud .sh-brand{font-family:var(--H);font-weight:700;letter-spacing:.32em;text-transform:uppercase;color:var(--txt);font-size:13px}
+.sighud .sh-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:1px}
+.sighud .sh-dot.on{background:var(--hud);box-shadow:var(--glow-hud)}
+.sighud .sh-dot.off{background:var(--wine);box-shadow:var(--glow-wine)}
+.sighud .sh-dot.pulse{animation:shPulse 1.6s ease-in-out infinite}
+@keyframes shPulse{0%,100%{opacity:1}50%{opacity:.35}}
+/* chip nav as a segmented HUD control; each chip carries a live sub-status */
+.sighud .sh-nav{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:12px 0}
+.sighud .sh-nav button{position:relative;display:block;width:100%;min-width:0;text-align:center;padding:9px 2px;border:1px solid var(--hud-line);color:var(--dim);
+  font-family:var(--H);font-weight:600;letter-spacing:.18em;text-transform:uppercase;font-size:11px;background:var(--hud-p2);cursor:pointer;border-radius:0;
+  clip-path:polygon(var(--notch-s) 0,100% 0,100% calc(100% - var(--notch-s)),calc(100% - var(--notch-s)) 100%,0 100%,0 var(--notch-s))}
+.sighud .sh-nav button small{display:block;font-family:var(--HM);font-size:8px;letter-spacing:-.02em;text-transform:none;margin-top:3px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sighud .sh-nav button.on{color:var(--hud-ink);background:var(--hud);border-color:var(--hud);box-shadow:var(--glow-hud)}
+.sighud .sh-nav button.on small{color:rgba(4,7,12,.7)}
+.sighud .sh-nav button.warn small{color:var(--brass)}
+.sighud .sh-nav button.off small{color:var(--wine)}
+.sighud .sh-nav button.on.warn small,.sighud .sh-nav button.on.off small{color:rgba(4,7,12,.7)}
+/* panels */
+.sighud .sh-panel{position:relative;margin:0 0 14px;border:1px solid var(--hud-line);background:linear-gradient(180deg,#0d1626,#0a121e);
+  clip-path:polygon(var(--notch) 0,100% 0,100% calc(100% - var(--notch)),calc(100% - var(--notch)) 100%,0 100%,0 var(--notch))}
+.sighud .sh-panel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--hud);opacity:.7}
+.sighud .sh-ph{display:flex;align-items:baseline;gap:10px;padding:10px 14px 8px;border-bottom:1px solid var(--hud-line)}
+.sighud .sh-ph h2{margin:0;font-size:13px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--hud)}
+.sighud .sh-ph .meta,.sighud .sh-sh .meta{font-family:var(--HM);font-size:10px;color:var(--muted);margin-left:auto;text-align:right;font-weight:400;letter-spacing:0;text-transform:none}
+.sighud .sh-pb{padding:12px 14px}
+.sighud .sh-sec{padding:10px 0 0;margin-top:10px;border-top:1px dashed var(--hud-line)}
+.sighud .sh-sec:first-child{margin-top:0;padding-top:0;border-top:0}
+.sighud .sh-sh{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.sighud .sh-sh h3{margin:0;font-size:11px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--hud)}
+/* KPI tiles — 4-up, 2-up on a phone */
+.sighud .sh-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.sighud .sh-tile{padding:10px 10px 8px;border:1px solid var(--hud-line);background:var(--hud-p2);min-width:0;
+  clip-path:polygon(var(--notch-s) 0,100% 0,100% calc(100% - var(--notch-s)),calc(100% - var(--notch-s)) 100%,0 100%,0 var(--notch-s))}
+.sighud .sh-tile .n{font-family:var(--HM);font-size:24px;line-height:1;color:var(--txt);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sighud .sh-tile .l{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-top:6px}
+.sighud .sh-tile.good .n{color:var(--hud);text-shadow:var(--glow-hud)}
+.sighud .sh-tile.warn .n{color:var(--brass);text-shadow:var(--glow-brass)}
+.sighud .sh-tile.bad .n{color:var(--wine);text-shadow:var(--glow-wine)}
+.sighud .sh-tile.dim .n{color:var(--muted)}
+@media (max-width:520px){.sighud .sh-tiles{grid-template-columns:repeat(2,1fr)}}
+/* readout tables — the wrapper still scrolls (overflow-x:auto); only the skin changes */
+.sighud .sigtbl-wrap{margin:8px -14px 0;padding:0 14px}
+.sighud .sigtbl{font-family:var(--HM);font-size:11px}
+.sighud .sigtbl th{font-family:var(--H);font-weight:600;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);padding:6px 7px;border-bottom:1px solid var(--hud-line2)}
+.sighud .sigtbl td{padding:6px 7px;border-bottom:1px dashed rgba(24,35,56,.9);font-variant-numeric:tabular-nums}
+.sighud .sigtbl tr:hover td{background:rgba(46,230,168,.05)}
+.sighud .sh-bar{position:relative;display:inline-block;vertical-align:middle;width:70px;height:6px;background:#0f1a2b;border:1px solid var(--hud-line)}
+.sighud .sh-bar.full{display:block;width:100%;height:7px;margin-top:8px}
+.sighud .sh-bar i{position:absolute;left:0;top:0;bottom:0;background:var(--hud);box-shadow:var(--glow-hud)}
+.sighud .sh-bar.hot i{background:var(--brass);box-shadow:var(--glow-brass)}
+.sighud .sh-bar.over i{background:var(--wine);box-shadow:var(--glow-wine)}
+.sighud .sh-pip{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;margin-right:6px;background:var(--muted)}
+.sighud .sh-pip.on{background:var(--hud);box-shadow:var(--glow-hud)}
+.sighud .sh-pip.off{background:var(--wine);box-shadow:var(--glow-wine)}
+.sighud .sh-pip.lo{background:var(--brass);box-shadow:var(--glow-brass)}
+.sighud .sh-tag{display:inline-block;padding:1px 6px;border:1px solid currentColor;font-family:var(--H);font-weight:600;font-size:9px;letter-spacing:.12em;text-transform:uppercase}
+.sighud .sh-tag.follow{color:var(--dim)}
+.sighud .sh-tag.lead{color:var(--hud)}
+.sighud .sh-tag.mixed{color:var(--brass)}
+/* the five honest-state banners — copy is sigBanner's, untouched; only the frame is new */
+.sighud .sh-banner{padding:9px 12px;margin:0 0 8px;border:1px solid;font-family:var(--H);font-weight:500;font-size:12px;line-height:1.45}
+.sighud .sh-banner.off{border-color:rgba(255,82,82,.45);background:rgba(255,82,82,.06);color:#ffb3b3}
+.sighud .sh-banner.failed{border-color:rgba(255,82,82,.6);border-left:3px solid var(--wine);background:rgba(255,82,82,.09);color:#ffb3b3}
+.sighud .sh-banner.stale{border-color:rgba(242,194,48,.45);background:rgba(242,194,48,.06);color:#f3e2a8}
+.sighud .sh-banner.nodata,.sighud .sh-banner.loading{border-color:rgba(46,230,168,.3);background:rgba(46,230,168,.04);color:var(--ink)}
+/* captions, rows, prose */
+.sighud .sh-cap{font-family:var(--HM);font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5}
+.sighud .sh-cap b{color:var(--brass);font-weight:400}
+.sighud .sh-cap .good{color:var(--hud)}
+.sighud .sh-cap .bad{color:var(--wine)}
+.sighud .sh-row{padding:5px 0;border-bottom:1px dashed rgba(24,35,56,.9);font-size:12px;line-height:1.45}
+.sighud .sh-row .k{font-family:var(--HM);color:var(--wine)}
+.sighud .sh-row .d{color:var(--dim)}
+.sighud .sh-txt{font-size:12px;color:var(--ink);line-height:1.5}
+.sighud .sh-txt.good{color:var(--hud)}
+.sighud .sh-txt .mono{font-family:var(--HM)}
+.sighud .sh-gov{margin-top:10px;font-family:var(--H);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+/* sparkline (labelled projection, never a history) */
+.sighud .sh-sparkhd{display:flex;justify-content:space-between;font-family:var(--HM);font-size:10px;color:var(--muted);margin-top:10px}
+.sighud .sh-spark{display:block;width:100%;height:84px;margin-top:4px}
+/* episode cards — the SAME sigEpisodeCard markup the Agents tab paints; only the skin differs */
+.sighud .sh-eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px;margin-top:8px}
+.sighud .sigep{display:block;padding:10px 12px;margin:0;border:1px solid var(--hud-line);background:var(--hud-p2);border-radius:0;box-shadow:none;
+  clip-path:polygon(var(--notch-s) 0,100% 0,100% calc(100% - var(--notch-s)),calc(100% - var(--notch-s)) 100%,0 100%,0 var(--notch-s))}
+.sighud .sigep-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sighud .sigep-who{flex:1;min-width:0}
+.sighud .sigep-book{font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:12px;color:var(--txt)}
+.sighud .sigep-mkt{font-size:11px;color:var(--dim)}
+.sighud .sigep-game{color:var(--dim);font-size:12px}
+.sighud .sigep-sc{text-align:right}
+.sighud .sigep-score{font-family:var(--HM);font-size:22px;color:var(--brass);text-shadow:var(--glow-brass);font-variant-numeric:tabular-nums}
+.sighud .sigep-scl{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.sighud .sigep-move{font-family:var(--HM);font-size:11px;color:var(--ink);margin-top:4px}
+.sighud .sigep-move .dn{color:var(--wine)}
+.sighud .sigep-move .up{color:var(--hud)}
+.sighud .sigep-pub{color:var(--dim)}
+.sighud .sigep-key{color:var(--brass)}
+.sighud .sigep-hrs{color:var(--muted)}
+.sighud .sigep-why{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.sighud .sigep-r{font-family:var(--H);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);border:1px solid var(--hud-line);padding:1px 6px}
+.sighud .sigep-r.led{color:var(--hud);border-color:rgba(46,230,168,.4)}
+/* radar — the Steam panel's NOT FIRING empty state */
+.sighud .sh-radar{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center;margin-bottom:8px}
+.sighud .sh-radar svg{width:150px;height:150px;display:block}
+.sighud .sh-radar .sh-banner{margin:0}
+.sighud .sh-sweep{transform-origin:75px 75px;animation:shSweep 4s linear infinite}
+@keyframes shSweep{to{transform:rotate(360deg)}}
+@media (max-width:520px){.sighud .sh-radar{grid-template-columns:1fr;justify-items:center}}
+@media (prefers-reduced-motion:reduce){.sighud .sh-sweep,.sighud .sh-dot.pulse{animation:none}}
 
 .sec-l{font-family:var(--H);font-size:11px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin:20px 0 10px;font-weight:400}
 
@@ -6791,6 +6929,22 @@ var SIG_BOOKS_BOUND=(AGENT_STALE_MS['book-move']||1800000)*2;
 var SIG_STEAM_BOUND=(AGENT_STALE_MS.sharp||300000)*2;
 var SIG_DH_BOUND=1800000;
 
+// The Steam panel's honest empty state for NOT FIRING: a sweep that finds
+// nothing, drawn next to the banner that says why. Hand-rolled SVG, same as
+// sigSpark. It sits above the Signal block on purpose: the smoke harness pins
+// that block to exactly one <svg> (the sparkline) as its proxy for "no chart
+// library", and the radar is decoration, not a chart.
+function sigRadar(){
+  return '<svg viewBox="0 0 150 150" aria-label="radar sweep finding no steam">'
+    +'<circle cx="75" cy="75" r="72" fill="#060c15" stroke="#182338"/>'
+    +'<circle cx="75" cy="75" r="48" fill="none" stroke="#182338"/>'
+    +'<circle cx="75" cy="75" r="24" fill="none" stroke="#182338"/>'
+    +'<line x1="75" y1="3" x2="75" y2="147" stroke="#182338"/><line x1="3" y1="75" x2="147" y2="75" stroke="#182338"/>'
+    +'<path class="sh-sweep" d="M75 75 L75 3 A72 72 0 0 1 126 24 Z" fill="rgba(46,230,168,.22)"/>'
+    +'<line class="sh-sweep" x1="75" y1="75" x2="75" y2="3" stroke="#2ee6a8" stroke-width="1.5" style="filter:drop-shadow(0 0 4px #2ee6a8)"/>'
+    +'<circle cx="75" cy="75" r="2.5" fill="#2ee6a8"/></svg>';
+}
+
 function renderSignalView(){
   startAgentsPoll();
   hydrateAgentsCache(); // paint the last-known data instantly; live fetch replaces it
@@ -6801,20 +6955,37 @@ function renderSignalView(){
 function sigSetView(v){state.sigView=v;renderSignalContent();}
 window.sigSetView=sigSetView;
 
+// Everything paints under one root, .sighud, and every HUD rule in the
+// stylesheet is prefixed with it — the grid, the scanlines and the chamfers
+// belong to this view, not to body.
 function renderSignalContent(){
-  var h='';
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
-  h+='<div style="font-family:var(--H);font-size:13px;letter-spacing:2px;color:var(--txt);font-weight:600">📡 SIGNAL</div>';
-  h+='<div style="font-size:8px;color:var(--muted)">'+(state.agentsLastLoad?('updated '+agentAgo(state.agentsLastLoad)):(state.agentsCachedAt?'refreshing…':'loading…'))+' · <span onclick="agentSetApiUrl()" style="cursor:pointer;text-decoration:underline">backend</span> · <span onclick="loadAgentsData()" style="cursor:pointer;text-decoration:underline">refresh</span></div>';
+  var h='<div class="sighud">';
+  // Status strip. The backend word is the LAST refresh's /health outcome out
+  // of sigSrc, not the presence of a URL: a configured backend that did not
+  // answer is FAILED, and before any refresh has finished it is —.
+  var hsrc=state.sigSrc.health||{};
+  var link=hsrc.ok===true?'LINKED':hsrc.ok===false?'FAILED':'—';
+  var dot=hsrc.ok===true?' on pulse':hsrc.ok===false?' off':'';
+  var bd=state.agentsBudget||{};
+  h+='<div class="sh-strip">';
+  h+='<span class="sh-brand">📡 Signal</span>';
+  h+='<span><i class="sh-dot'+dot+'"></i><span class="sh-lnk" onclick="agentSetApiUrl()">backend</span> <b'+(hsrc.ok===false?' class="off"':'')+'>'+link+'</b></span>';
+  h+='<span>'+(state.agentsLastLoad?('updated <b>'+esc(agentAgo(state.agentsLastLoad))+'</b>'):(state.agentsCachedAt?'refreshing…':'loading…'))+'</span>';
+  h+='<span class="right">'+(bd.dayOfMonth!=null&&bd.daysInMonth!=null?'<span>day <b>'+esc(String(bd.dayOfMonth))+'</b>/'+esc(String(bd.daysInMonth))+'</span>':'')+'<span class="sh-lnk" onclick="loadAgentsData()">refresh</span></span>';
   h+='</div>';
   var v=state.sigView||'health';
-  h+='<div class="flt-row">';
-  SIG_PANELS.forEach(function(p){h+='<button class="flt'+(p.id===v?' on':'')+'" onclick="sigSetView(\''+p.id+'\')">'+p.label+'</button>';});
+  var cs=sigChipStatus();
+  h+='<div class="sh-nav">';
+  SIG_PANELS.forEach(function(p){
+    var c=cs[p.id]||{};
+    h+='<button class="'+(p.id===v?'on':'')+(c.cls?' '+c.cls:'')+'" onclick="sigSetView(\''+p.id+'\')">'+p.label+'<small>'+esc(c.txt||'—')+'</small></button>';
+  });
   h+='</div>';
   if(v==='budget')h+=renderSigBudget();
   else if(v==='books')h+=renderSigBooks();
   else if(v==='steam')h+=renderSigSteam();
   else h+=renderSigHealth();
+  h+='</div>';
   $('sport-selector').innerHTML=h;
 }
 
@@ -6840,27 +7011,24 @@ function sigState(src,payload,count,bound,ts){
 // to tell a zero from a silence without asking anybody.
 function sigBanner(kind,o){
   o=o||{};
-  var txt,col;
+  var txt;
   if(kind==='loading'){
     txt='Loading — no cached copy on this device yet.';
-    col='var(--muted)';
   } else if(kind==='nodata'){
     txt='Feed answered. 0 '+(o.things||'items')+' right now.'+(o.at?' as of '+o.at:'');
-    col='var(--muted)';
   } else if(kind==='stale'){
     txt='Last produced '+(o.ago||'—')+' ago — older than '+(o.bound||'its cadence')+'. Shown as history, not as now.';
-    col='var(--brass)';
   } else if(kind==='off'){
     // o.text carries a panel's own diagnosis when it has one that is more
     // specific than the template — naming the actual broken mechanism beats
     // naming the category.
     txt=o.text||('NOT FIRING — '+(o.reason||'the mechanism is not producing')+'. Blank because the signal isn\'t being produced, not because there is nothing to see.');
-    col='var(--rust)';
   } else if(kind==='failed'){
     txt='Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.');
-    col='var(--wine)';
   } else return '';
-  return '<div style="border-left:3px solid '+col+';background:rgba(255,255,255,.03);border-radius:6px;padding:7px 10px;margin:0 0 8px;font-size:9px;line-height:1.55;color:'+col+'">'+esc(txt)+'</div>';
+  // The kind is the class: wine for off/failed, brass for stale, mint-framed
+  // for the two quiet states. Colour never carries the distinction alone.
+  return '<div class="sh-banner '+kind+'">'+esc(txt)+'</div>';
 }
 // Assemble the failed-state copy's two ages out of one sigSrc entry: when the
 // read failed, and when the source last actually answered.
@@ -6884,64 +7052,154 @@ function sigNum(v,suffix){return (v==null||v!==v)?'—':(v+(suffix||''));}
 function sigAt(ts){if(!ts)return '';try{return new Date(ts).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}catch(e){return ''}}
 // The only hand-rolled graphic here: one <svg>, one <polyline> per series, with
 // shared scaling. No charting dependency — there is no build step, and the
-// smoke harness forbids external script tags.
+// smoke harness forbids external script tags. A series with `fill` also gets
+// an area under it and an end dot; the faint rules are at 1/3 and 2/3 of the
+// y-range. Labels are HTML (sh-sparkhd), never <text>: the svg is stretched
+// to the container width and stretched type is unreadable at 375px.
 function sigSpark(series,w,h){
   var ss=(series||[]).filter(function(x){return x&&x.pts&&x.pts.length>1});
   if(!ss.length)return '';
   var mx=0,my=0;
   ss.forEach(function(x){x.pts.forEach(function(p){if(p[0]>mx)mx=p[0];if(p[1]>my)my=p[1];})});
   if(!mx)mx=1; if(!my)my=1;
-  var g=ss.map(function(x){
-    var pts=x.pts.map(function(p){return (1+p[0]/mx*(w-2)).toFixed(1)+','+(h-1-p[1]/my*(h-2)).toFixed(1)}).join(' ');
-    return '<polyline points="'+pts+'" fill="none" stroke="'+(x.color||'var(--brass)')+'" stroke-width="1.5"'+(x.dash?' stroke-dasharray="3 3"':'')+'/>';
+  var X=function(v){return (1+v/mx*(w-2)).toFixed(1)},Y=function(v){return (h-1-v/my*(h-2)).toFixed(1)};
+  var g='<line x1="0" y1="'+Y(0)+'" x2="'+w+'" y2="'+Y(0)+'" stroke="#182338"/>';
+  g+='<line x1="0" y1="'+Y(my/3)+'" x2="'+w+'" y2="'+Y(my/3)+'" stroke="#182338" stroke-dasharray="2 4"/>';
+  g+='<line x1="0" y1="'+Y(my*2/3)+'" x2="'+w+'" y2="'+Y(my*2/3)+'" stroke="#182338" stroke-dasharray="2 4"/>';
+  g+=ss.map(function(x){
+    var col=x.color||'#f2c230';
+    var pts=x.pts.map(function(p){return X(p[0])+','+Y(p[1])}).join(' ');
+    var out='';
+    if(x.fill){
+      var last=x.pts[x.pts.length-1];
+      out+='<defs><linearGradient id="sigsparkg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+col+'" stop-opacity=".35"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs>';
+      out+='<polygon points="'+X(x.pts[0][0])+','+Y(0)+' '+pts+' '+X(last[0])+','+Y(0)+'" fill="url(#sigsparkg)"/>';
+    }
+    out+='<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="'+(x.fill?2:1.5)+'"'+(x.dash?' stroke-dasharray="4 4"':'')+'/>';
+    if(x.fill){var e=x.pts[x.pts.length-1];out+='<circle cx="'+X(e[0])+'" cy="'+Y(e[1])+'" r="3.5" fill="'+col+'" style="filter:drop-shadow(0 0 5px '+col+')"/>';}
+    return out;
   }).join('');
-  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="display:block">'+g+'</svg>';
+  return '<svg class="sh-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-label="credits spent vs linear pace">'+g+'</svg>';
 }
-function sigCard(inner){return '<div class="card" style="padding:11px 12px;margin:0 0 8px">'+inner+'</div>';}
-function sigHdr(t){return '<div style="font-family:var(--H);font-size:9px;letter-spacing:1.2px;color:var(--leather);margin:0 0 6px">'+t+'</div>';}
+// Layout primitives of the HUD. A panel is the one chamfered surface per tab;
+// sections inside it are divided by a dashed rule, and each has a Rajdhani
+// heading with an optional mono meta on the right.
+function sigPanel(title,meta,body){return '<section class="sh-panel"><div class="sh-ph"><h2>'+title+'</h2>'+(meta?'<span class="meta">'+meta+'</span>':'')+'</div><div class="sh-pb">'+body+'</div></section>';}
+function sigCard(inner){return '<div class="sh-sec">'+inner+'</div>';}
+function sigHdr(t,meta){return '<div class="sh-sh"><h3>'+t+'</h3>'+(meta?'<span class="meta">'+meta+'</span>':'')+'</div>';}
+function sigTile(l,v,cls){return '<div class="sh-tile'+(cls?' '+cls:'')+'"><div class="n">'+v+'</div><div class="l">'+l+'</div></div>';}
+function sigBar(pct,cls){return '<div class="sh-bar'+(cls?' '+cls:'')+'"><i style="width:'+Math.max(0,Math.min(100,pct||0))+'%"></i></div>';}
+function sigPip(cls){return '<i class="sh-pip'+(cls?' '+cls:'')+'"></i>';}
 
-// ── Panel 1 · HEALTH ─────────────────────────────────────────────
-// Is anything running, and is anything writing rows. An all-green roster is
-// three lines here, not 53 cards — the point of the panel is the exceptions.
-function renderSigHealth(){
-  var h='';
+// ── Shared facts, one source per panel ───────────────────────────
+// Each panel and its nav chip read the SAME object, so the chip's one-line
+// sub-status can never claim more than the panel underneath it shows.
+function sigHealthFacts(){
   var roster=state.agentsHealth||[];
-  var healthBy={};roster.forEach(function(r){if(r&&r.name&&!healthBy[r.name])healthBy[r.name]=r;});
-  var hs=sigState(state.sigSrc.health,roster.length?roster:null,roster.length,0,null);
-  if(hs==='failed')h+=sigBanner('failed',sigFailOpts('/health',state.sigSrc.health));
-  if(hs==='loading')return h+sigBanner('loading',{});
-  if(hs==='nodata')h+=sigBanner('nodata',{things:'agent statuses',at:sigAt(state.agentsLastLoad)});
-
+  var by={};roster.forEach(function(r){if(r&&r.name&&!by[r.name])by[r.name]=r;});
   var n={run:0,idle:0,err:0,none:0},bad=[];
   AGENTS_META.forEach(function(a){
-    var run=healthBy[a.name],s=agentStatus(run,a.name);
+    var run=by[a.name],s=agentStatus(run,a.name);
     if(s.label==='Error')n.err++;
     else if(s.label==='No data')n.none++;
     else if(s.label==='Idle')n.idle++;
     else n.run++;
     if(s.label!=='Running'&&s.label!=='Healthy')bad.push({a:a,run:run,s:s});
   });
-  var tiles=[{l:'running',v:n.run,c:'var(--sage)'},{l:'stale',v:n.idle,c:'var(--brass)'},{l:'errored',v:n.err,c:'var(--wine)'},{l:'no data',v:n.none,c:'var(--muted)'}];
-  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px">';
-  tiles.forEach(function(t){
-    h+='<div style="background:var(--saddle);border-radius:10px;padding:9px 3px;text-align:center;box-shadow:var(--shadow-sm)">';
-    h+='<div style="font-family:var(--M);font-size:16px;font-weight:700;color:'+t.c+'">'+t.v+'</div>';
-    h+='<div style="font-size:6.5px;color:var(--sand);margin-top:2px;text-transform:uppercase;letter-spacing:.3px">'+t.l+'</div></div>';
-  });
-  h+='</div>';
+  return {roster:roster,by:by,n:n,bad:bad,st:sigState(state.sigSrc.health,roster.length?roster:null,roster.length,0,null)};
+}
+function sigBudgetFacts(){
+  var b=state.agentsBudget;
+  var f={b:b,st:sigState(state.sigSrc.budget,b,b&&b.budget!=null,0,null),hot:null};
+  if(!b||b.budget==null)return f;
+  f.used=b.used||0;f.cap=b.budget||0;
+  f.pct=Math.max(0,Math.min(100,b.pctUsed||0));
+  f.over=b.projectedMonthly!=null&&b.projectedMonthly>f.cap;
+  // Sports at 70%+ of a published ceiling; null (not 0) when no ceilings came.
+  if(b.ceilings){f.hot=0;Object.keys(b.ceilings).forEach(function(s){var c=b.ceilings[s],sp=(b.bySport||{})[s]||0;if(c!=null&&c>0&&sp/c>=0.7)f.hot++;});}
+  return f;
+}
+function sigBooksFacts(){
+  var bm=state.agentsBookMoves;
+  var books=(bm&&bm.byBook)||[],live=(bm&&bm.live)||[];
+  var episodes=0,pubN=0;
+  books.forEach(function(x){if(x){episodes+=(x.n||0);pubN+=(x.vs_public_n||0);}});
+  return {bm:bm,books:books,live:live,episodes:episodes,noPub:books.length>0&&!pubN,
+    st:sigState(state.sigSrc.plays,bm,books.length+live.length,SIG_BOOKS_BOUND,bm&&bm.updated)};
+}
+function sigSteamFacts(){
+  var sg=state.agentsSharp||[];
+  var src=state.sigSrc.plays||{};
+  var latest=null;sg.forEach(function(s){if(s&&s.detected_at&&(!latest||s.detected_at>latest))latest=s.detected_at;});
+  var loaded=!!(src.at||state.agentsCachedAt||state.agentsLastLoad);
+  var run=null;(state.agentsHealth||[]).forEach(function(r){if(r&&r.name==='sharp'&&!run)run=r;});
+  var res=(run&&run.result)||'';
+  return {sg:sg,src:src,latest:latest,run:run,res:res,notFiring:/no recent line movement/.test(res),
+    st:sigState(src,loaded?sg:null,sg.length,SIG_STEAM_BOUND,latest)};
+}
+// One sub-status per chip. `off` tints the line wine, `warn` brass. When the
+// panel has nothing to say the chip says — and never a number.
+function sigChipStatus(){
+  var out={};
+  var H=sigHealthFacts();
+  if(H.st==='failed')out.health={txt:'read failed',cls:'off'};
+  else if(H.st==='ok')out.health={txt:H.n.run+' run · '+H.n.err+' err',cls:H.n.err?'off':H.n.idle?'warn':''};
+  else out.health={txt:H.st==='nodata'?'0 statuses':'—',cls:''};
+
+  var B=sigBudgetFacts();
+  if(B.st==='failed')out.budget={txt:'read failed',cls:'off'};
+  else if(!B.b||B.b.budget==null)out.budget={txt:'—',cls:''};
+  else out.budget={txt:sigNum(B.b.paceRatio,'×')+(B.hot!=null?' · '+B.hot+' hot':''),
+    cls:(B.over||B.pct>=90)?'off':(B.hot||B.pct>=70||(B.b.paceRatio!=null&&B.b.paceRatio>1))?'warn':''};
+
+  var K=sigBooksFacts();
+  if(K.st==='failed')out.books={txt:'read failed',cls:'off'};
+  else if(K.st==='loading')out.books={txt:'—',cls:''};
+  else out.books={txt:K.books.length+(K.noPub?' · vs-pub off':' books'),cls:(K.st==='stale'||K.noPub)?'warn':''};
+
+  var S=sigSteamFacts();
+  if(S.st==='failed')out.steam={txt:'read failed',cls:'off'};
+  else if(S.st==='loading')out.steam={txt:'—',cls:''};
+  else if(S.st==='nodata')out.steam=S.notFiring?{txt:'not firing',cls:'off'}:{txt:'0 signals',cls:''};
+  else out.steam={txt:S.sg.length+' signal'+(S.sg.length===1?'':'s'),cls:S.st==='stale'?'warn':''};
+  return out;
+}
+
+// ── Panel 1 · HEALTH ─────────────────────────────────────────────
+// Is anything running, and is anything writing rows. An all-green roster is
+// three lines here, not 53 cards — the point of the panel is the exceptions.
+function renderSigHealth(){
+  var h='';
+  var F=sigHealthFacts(),roster=F.roster,healthBy=F.by,n=F.n,bad=F.bad,hs=F.st;
+  var dh=state.agentsDataHealth;
+  var meta='/health · /data-health'+(dh&&dh.generated?' · as of '+sigAt(dh.generated):'');
+  if(hs==='failed')h+=sigBanner('failed',sigFailOpts('/health',state.sigSrc.health));
+  if(hs==='loading')return sigPanel('Health',meta,h+sigBanner('loading',{}));
+  if(hs==='nodata')h+=sigBanner('nodata',{things:'agent statuses',at:sigAt(state.agentsLastLoad)});
+
+  // Tiles. Mint only when something IS running; brass/wine only when the
+  // count is non-zero — a zero is neutral, never a verdict.
+  var tl='<div class="sh-tiles">';
+  tl+=sigTile('running',n.run,n.run?'good':'');
+  tl+=sigTile('stale',n.idle,n.idle?'warn':'');
+  tl+=sigTile('errored',n.err,n.err?'bad':'');
+  tl+=sigTile('no data',n.none,'');
+  tl+='</div>';
+  h+=sigCard(tl);
 
   if(!roster.length){
     // The banner above already said the roster is absent. A 50-row table of
     // '⚪ No data' restates it once per agent and buries everything below.
   } else if(!bad.length){
-    h+=sigCard(sigHdr('EXCEPTIONS')+'<div style="font-size:10px;color:var(--sage)">All '+AGENTS_META.length+' agents reporting healthy.</div>');
+    h+=sigCard(sigHdr('EXCEPTIONS')+'<div class="sh-txt good">All '+AGENTS_META.length+' agents reporting healthy.</div>');
   } else {
-    var tb=sigHdr('NOT OK · '+bad.length+' of '+AGENTS_META.length);
+    var tb=sigHdr('NOT OK',bad.length+' of '+AGENTS_META.length);
     tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">agent</th><th class="l">state</th><th>last run</th><th class="l">summary</th></tr></thead><tbody>';
     bad.forEach(function(b){
       var ts=b.run&&(b.run.finished_at||b.run.lastRunAt||b.run.started_at);
+      var pip=b.s.label==='Error'?'off':b.s.label==='Idle'?'lo':'';
       tb+='<tr><td class="l" style="color:var(--cream)">'+esc(b.a.label||b.a.name)+'</td>';
-      tb+='<td class="l" style="color:'+b.s.color+'">'+b.s.dot+' '+esc(b.s.label)+'</td>';
+      tb+='<td class="l" style="color:'+b.s.color+'">'+sigPip(pip)+esc(b.s.label)+'</td>';
       tb+='<td style="color:var(--muted)">'+(ts?agentAgo(ts):'—')+'</td>';
       tb+='<td class="l" style="color:var(--dim);white-space:normal;max-width:150px">'+esc((b.run&&(b.run.error||b.run.result))||'')+'</td></tr>';
     });
@@ -6957,15 +7215,16 @@ function renderSigHealth(){
   else if(!(deg||[]).length)dgb+=sigBanner('nodata',{things:'degraded conditions',at:sigAt(state.agentsLastLoad)});
   else (deg||[]).forEach(function(d){
     if(!d)return;
-    dgb+='<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:9.5px;line-height:1.5"><span style="font-family:var(--M);color:var(--rust)">'+esc(d.key||'')+'</span> <span style="color:var(--dim)">'+esc(d.detail||'')+'</span></div>';
+    dgb+='<div class="sh-row"><span class="k">'+esc(d.key||'')+'</span> <span class="d">'+esc(d.detail||'')+'</span></div>';
   });
   h+=sigCard(dgb);
 
   // Rows written today, per monitored table. "0 today" on an in-season feed is
-  // the signal — it is the only place a dead writer shows up as a number.
-  var dh=state.agentsDataHealth;
+  // the signal — it is the only place a dead writer shows up as a number. The
+  // "wrote today" pip is that same number read as yes/no; a missing count is
+  // a dash, not a red pip.
   var ds=sigState(state.sigSrc.dataHealth,dh,dh&&(dh.tables||[]).length,SIG_DH_BOUND,dh&&dh.generated);
-  var dhb=sigHdr('ROWS TODAY / TOTAL'+(dh&&dh.generated?' · as of '+sigAt(dh.generated):''));
+  var dhb=sigHdr('ROWS TODAY / TOTAL',dh&&dh.generated?'as of '+sigAt(dh.generated):'');
   if(ds==='failed')dhb+=sigBanner('failed',sigFailOpts('/data-health',state.sigSrc.dataHealth));
   if(ds==='loading')dhb+=sigBanner('loading',{});
   else if(ds==='stale')dhb+=sigBanner('stale',{ago:dh&&dh.generated?sigDur(dh.generated):'—',bound:'30m'});
@@ -6973,14 +7232,16 @@ function renderSigHealth(){
   if(dh&&dh.degraded)dhb+=sigBanner('off',{reason:'some table counts could not be read on this refresh ('+((dh.queryErrors||[]).length||'some')+' query errors), so a blank count here is not a zero'});
   if(dh&&(dh.tables||[]).length){
     var zeroes=(dh.tables||[]).filter(function(t){return t&&t.today===0}).length;
-    dhb+='<div style="font-size:7.5px;color:var(--muted);margin:-2px 0 5px">'+(dh.tables||[]).length+' tables monitored · '+zeroes+' wrote nothing today · '+(dh.dbConnected===false?'<span style="color:var(--wine)">DB not connected</span>':(dh.errorsToday?'<span style="color:var(--wine)">'+dh.errorsToday+' agent error'+(dh.errorsToday===1?'':'s')+' today</span>':'<span style="color:var(--sage)">no errors today</span>'))+'</div>';
-    dhb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">table</th><th>today</th><th>total</th></tr></thead><tbody>';
+    dhb+='<div class="sh-cap" style="margin:0 0 2px">'+(dh.tables||[]).length+' tables monitored · '+zeroes+' wrote nothing today · '+(dh.dbConnected===false?'<span class="bad">DB not connected</span>':(dh.errorsToday?'<span class="bad">'+dh.errorsToday+' agent error'+(dh.errorsToday===1?'':'s')+' today</span>':'<span class="good">no errors today</span>'))+'</div>';
+    dhb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">table</th><th>today</th><th>total</th><th class="l">wrote today</th></tr></thead><tbody>';
     (dh.tables||[]).forEach(function(t){
       if(!t)return;
       var zero=t.today===0;
+      var wrote=t.today==null?'—':(t.today>0?sigPip('on')+'yes':sigPip('off')+'no — 0 rows');
       dhb+='<tr><td class="l" style="color:'+(zero?'var(--muted)':'var(--cream)')+'">'+esc(DH_LBL[t.table]||t.table||'')+'</td>';
       dhb+='<td style="color:'+(zero?'var(--muted)':'var(--sage)')+'">'+sigNum(t.today)+'</td>';
-      dhb+='<td style="color:var(--muted)">'+sigNum(t.total)+(t.total_mode&&t.total_mode!=='exact'?' <span style="font-size:7px">'+esc(t.total_mode)+'</span>':'')+'</td></tr>';
+      dhb+='<td style="color:var(--muted)">'+sigNum(t.total)+(t.total_mode&&t.total_mode!=='exact'?' <span style="font-size:7px">'+esc(t.total_mode)+'</span>':'')+'</td>';
+      dhb+='<td class="l" style="color:'+(zero?'var(--dim)':'var(--cream)')+'">'+wrote+'</td></tr>';
     });
     dhb+='</tbody></table></div>';
   }
@@ -6993,7 +7254,7 @@ function renderSigHealth(){
   var sum=(oddsRun&&oddsRun.result)||'';
   var mb=sum.match(/baseline\s+(\d+)\/(\d+)\s+games[^0-9]*(\d+)\s+keys rehydrated/);
   var ms=sum.match(/(\d+)\s+stale-baseline/);
-  var bb=sigHdr('MOVEMENT BASELINE'+(oddsRun?' · odds run '+agentAgo(oddsRun.finished_at||oddsRun.lastRunAt):''));
+  var bb=sigHdr('MOVEMENT BASELINE',oddsRun?'odds run '+agentAgo(oddsRun.finished_at||oddsRun.lastRunAt):'');
   if(!mb&&!ms)bb+=sigBanner('off',{text:'Baseline counters not in the run summary — this build predates the rehydration fix.'});
   else {
     bb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">counter</th><th>value</th></tr></thead><tbody>';
@@ -7001,58 +7262,63 @@ function renderSigHealth(){
     bb+='<tr><td class="l" style="color:var(--cream)">keys rehydrated</td><td>'+(mb?esc(mb[3]):'—')+'</td></tr>';
     bb+='<tr><td class="l" style="color:var(--cream)">stale-baseline (gap over bound)</td><td style="color:'+(ms&&+ms[1]>0?'var(--brass)':'var(--muted)')+'">'+(ms?esc(ms[1]):'—')+'</td></tr>';
     bb+='</tbody></table></div>';
-    bb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">Baselines are refilled from line_snapshots at zero Odds-API cost; a gap past the bound is reseeded rather than reported as a move (D72).</div>';
+    bb+='<div class="sh-cap">Baselines are refilled from line_snapshots at zero Odds-API cost; a gap past the bound is reseeded rather than reported as a move (D72).</div>';
   }
   h+=sigCard(bb);
-  return h;
+  return sigPanel('Health',meta,h);
 }
 
 // ── Panel 2 · BUDGET ─────────────────────────────────────────────
 function renderSigBudget(){
-  var b=state.agentsBudget;
+  var F=sigBudgetFacts(),b=F.b,st=F.st;
   var h='';
-  var st=sigState(state.sigSrc.budget,b,b&&b.budget!=null,0,null);
+  var meta='/budget'+(b&&b.month?' · '+esc(b.month):'');
   if(st==='failed')h+=sigBanner('failed',sigFailOpts('/budget',state.sigSrc.budget));
-  if(st==='loading')return h+sigBanner('loading',{});
-  if(!b||b.budget==null)return h+sigBanner('nodata',{things:'odds-API credit records',at:sigAt(state.agentsLastLoad)});
+  if(st==='loading')return sigPanel('Budget',meta,h+sigBanner('loading',{}));
+  if(!b||b.budget==null)return sigPanel('Budget',meta,h+sigBanner('nodata',{things:'odds-API credit records',at:sigAt(state.agentsLastLoad)}));
 
-  var used=b.used||0,cap=b.budget||0;
-  var pct=Math.max(0,Math.min(100,b.pctUsed||0));
-  var over=b.projectedMonthly!=null&&b.projectedMonthly>cap;
-  var barCol=over||pct>=90?'var(--wine)':pct>=70?'var(--brass)':'#34d399';
-  var head='';
-  head+='<div style="display:flex;justify-content:space-between;align-items:flex-end"><div><span style="font-family:var(--M);font-size:22px;font-weight:700;color:var(--txt)">'+used+'</span><span style="font-size:11px;color:var(--muted)"> / '+cap+' credits</span></div><div style="font-family:var(--M);font-size:14px;font-weight:700;color:'+barCol+'">'+pct+'%</div></div>';
-  head+='<div style="height:7px;background:rgba(255,255,255,.06);border-radius:4px;margin-top:5px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+barCol+';border-radius:4px"></div></div>';
-  head+='<div style="display:flex;justify-content:space-between;font-size:9px;margin-top:5px;color:var(--muted)"><span>day '+sigNum(b.dayOfMonth)+' of '+sigNum(b.daysInMonth)+' · '+esc(b.month||'')+'</span><span>pace '+sigNum(b.paceRatio,'×')+' · projected '+sigNum(b.projectedMonthly)+(over?' ⚠':'')+'</span></div>';
+  var used=F.used,cap=F.cap,pct=F.pct,over=F.over;
+  var barCls=over||pct>=90?'over':pct>=70?'hot':'';
+  var barHex=over||pct>=90?'#ff5252':pct>=70?'#f2c230':'#2ee6a8';
   // The governor, stated rather than implied. `null` is a third answer and says
   // so: an old backend build simply did not publish the field.
   var closed=b.discretionaryActive===false;
   var gcol=b.discretionaryActive==null?'var(--muted)':closed?'var(--wine)':'var(--sage)';
   var gtxt=b.discretionaryActive==null?'GOVERNOR — not published by this backend build':closed?'GOVERNOR CLOSED (discretionary scanners paused)':'GOVERNOR OPEN';
-  head+='<div style="margin-top:9px;font-family:var(--H);font-size:10px;letter-spacing:1px;color:'+gcol+'">'+gtxt+'</div>';
-  head+='<div style="font-size:8px;color:var(--muted);margin-top:2px">reserve floor '+sigNum(b.reserve)+' · '+sigNum(b.remaining)+' left</div>';
+  var head='<div class="sh-tiles">';
+  head+=sigTile('credits used',used,'');
+  head+=sigTile('remaining',sigNum(b.remaining),b.remaining==null?'dim':'');
+  head+=sigTile('pace',sigNum(b.paceRatio,'×'),b.paceRatio==null?'dim':over?'bad':b.paceRatio>1?'warn':'');
+  head+=sigTile('governor',b.discretionaryActive==null?'—':closed?'CLOSED':'OPEN',b.discretionaryActive==null?'dim':closed?'bad':'good');
+  head+='</div>';
+  head+=sigBar(pct,barCls+' full');
+  head+='<div class="sh-cap" style="display:flex;justify-content:space-between;gap:8px"><span>'+used+' / '+cap+' credits · '+pct+'%</span><span>day '+sigNum(b.dayOfMonth)+' of '+sigNum(b.daysInMonth)+' · '+esc(b.month||'')+'</span></div>';
+  head+='<div class="sh-cap">pace '+sigNum(b.paceRatio,'×')+' · projected '+sigNum(b.projectedMonthly)+(over?' ⚠':'')+' · reserve floor '+sigNum(b.reserve)+' · '+sigNum(b.remaining)+' left</div>';
+  head+='<div class="sh-gov" style="color:'+gcol+'">'+gtxt+'</div>';
   // Projected pace, NOT a history: no per-day credit series is kept anywhere,
   // so both lines are straight by construction and what they show is the slope
   // difference — the paceRatio above, drawn.
   var d=b.dayOfMonth||0,dim=b.daysInMonth||0;
   if(d>0&&dim>0&&cap>0){
-    head+='<div style="margin-top:10px">'+sigSpark([
-      {pts:[[0,0],[dim,cap]],dash:true,color:'var(--leather)'},
-      {pts:[[0,0],[d,used]],color:barCol}
-    ],120,28)+'<div style="font-size:7.5px;color:var(--muted);margin-top:3px">solid = credits spent to day '+d+' · dashed = linear pace to '+cap+'. Straight by construction; no per-day history is kept.</div></div>';
+    head+='<div class="sh-sparkhd"><span style="color:'+barHex+'">'+used+' · d'+d+'</span><span>'+cap+'</span></div>';
+    head+=sigSpark([
+      {pts:[[0,0],[dim,cap]],dash:true,color:'#5d6f86'},
+      {pts:[[0,0],[d,used]],color:barHex,fill:true}
+    ],600,84);
+    head+='<div class="sh-cap">solid = credits spent to day '+d+' · dashed = linear pace to '+cap+'. Straight by construction; no per-day history is kept.</div>';
   }
   h+=sigCard(head);
 
   // Per-sport allocation vs ceiling vs spend.
   var bs=b.bySport||{},cl=b.ceilings||null,al=b.allocation||{},denom=b.denom||null;
-  var tb=sigHdr('BY SPORT · alloc · ceiling · spend');
+  var tb=sigHdr('BY SPORT','alloc · ceiling · spend');
   if(!cl)tb+=sigBanner('off',{text:'Ceilings unavailable — this backend build does not publish them.'});
   var sports=Object.keys(cl||al||{});
   Object.keys(bs).forEach(function(k){if(sports.indexOf(k)<0)sports.push(k);});
   sports.sort(function(x,y){return (bs[y]||0)-(bs[x]||0)});
   if(!sports.length)tb+=sigBanner('nodata',{things:'sports with credit activity',at:sigAt(state.agentsLastLoad)});
   else {
-    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th>'+(cl?'<th>alloc</th><th>ceiling</th>':'')+'<th>spent</th>'+(cl?'<th>% of ceil</th>':'')+'</tr></thead><tbody>';
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th>'+(cl?'<th>alloc</th><th>ceiling</th>':'')+'<th>spent</th>'+(cl?'<th class="l">used</th><th>% of ceil</th>':'')+'</tr></thead><tbody>';
     sports.forEach(function(s){
       var spent=bs[s]||0,ceil=cl?cl[s]:null;
       // denom === null is "nothing has published a denominator yet" (D65), not
@@ -7062,34 +7328,32 @@ function renderSigBudget(){
       tb+='<tr><td class="l" style="color:var(--cream)">'+esc(s)+(outside?' <span style="font-size:7px;color:var(--muted)">not in denominator</span>':'')+'</td>';
       if(cl)tb+='<td style="color:var(--muted)">'+(al[s]!=null?Math.round(al[s]*1000)/10+'%':'—')+'</td><td style="color:var(--dim)">'+sigNum(ceil)+'</td>';
       tb+='<td style="color:var(--cream)">'+spent+'</td>';
-      if(cl)tb+='<td style="color:'+(ofCeil==null?'var(--muted)':ofCeil>=90?'var(--wine)':ofCeil>=70?'var(--brass)':'var(--dim)')+'">'+sigNum(ofCeil,'%')+'</td>';
+      if(cl)tb+='<td class="l">'+(ofCeil==null?'<span style="color:var(--muted)">—</span>':sigBar(ofCeil,ofCeil>=90?'over':ofCeil>=70?'hot':''))+'</td><td style="color:'+(ofCeil==null?'var(--muted)':ofCeil>=90?'var(--wine)':ofCeil>=70?'var(--brass)':'var(--dim)')+'">'+sigNum(ofCeil,'%')+'</td>';
       tb+='</tr>';
     });
     tb+='</tbody></table></div>';
-    if(cl)tb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+'</div>';
+    if(cl)tb+='<div class="sh-cap">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+'</div>';
   }
   h+=sigCard(tb);
 
   var cu=b.claude||null;
-  var cb=sigHdr('CLAUDE · MONTH TO DATE');
+  var cb=sigHdr('CLAUDE','month to date');
   if(!cu)cb+=sigBanner('off',{reason:'the backend did not publish Claude usage on this refresh'});
-  else if(!cu.calls)cb+=sigBanner('nodata',{things:'Claude calls',at:sigAt(state.agentsLastLoad)})+'<div style="font-size:8px;color:var(--muted)">Model '+(cu.model?esc(cu.model):'<b style="color:var(--rust)">not detected</b> — the Claude-backed agents (injury, weather, power, public splits) cannot run without a key')+'.</div>';
-  else cb+='<div style="font-size:10px;color:var(--cream)">$'+sigNum(cu.cost)+' MTD · ~$'+sigNum(cu.projectedMonthly)+'/mo · '+sigNum(cu.calls)+' calls'+(cu.webSearches?' · '+cu.webSearches+' searches':'')+'<div style="font-size:8px;color:var(--muted);margin-top:2px">'+esc(cu.model||'model not reported')+'</div></div>';
+  else if(!cu.calls)cb+=sigBanner('nodata',{things:'Claude calls',at:sigAt(state.agentsLastLoad)})+'<div class="sh-cap">Model '+(cu.model?esc(cu.model):'<b style="color:var(--rust)">not detected</b> — the Claude-backed agents (injury, weather, power, public splits) cannot run without a key')+'.</div>';
+  else cb+='<div class="sh-txt"><span class="mono">$'+sigNum(cu.cost)+'</span> MTD · <span class="mono">~$'+sigNum(cu.projectedMonthly)+'</span>/mo · <span class="mono">'+sigNum(cu.calls)+'</span> calls'+(cu.webSearches?' · <span class="mono">'+cu.webSearches+'</span> searches':'')+'<div class="sh-cap">'+esc(cu.model||'model not reported')+'</div></div>';
   h+=sigCard(cb);
-  return h;
+  return sigPanel('Budget',meta,h);
 }
 
 // ── Panel 3 · BOOKS ──────────────────────────────────────────────
 // Who moves first, and did it matter. Public % is MARKET-WIDE (no per-book
 // splits exist, D53/D57), so nothing here claims to know where sharps bet.
 function renderSigBooks(){
-  var bm=state.agentsBookMoves;
+  var F=sigBooksFacts(),bm=F.bm,books=F.books,live=F.live,st=F.st,episodes=F.episodes,noPub=F.noPub;
   var h='';
-  var books=(bm&&bm.byBook)||[];
-  var live=(bm&&bm.live)||[];
-  var st=sigState(state.sigSrc.plays,bm,books.length+live.length,SIG_BOOKS_BOUND,bm&&bm.updated);
+  var meta='book-move'+(books.length?' · '+books.length+' books':'')+(bm&&bm.byBook?' · '+episodes+' episodes'+(bm.window_h!=null?' / '+bm.window_h+'h':''):'');
   if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',state.sigSrc.plays));
-  if(st==='loading')return h+sigBanner('loading',{});
+  if(st==='loading')return sigPanel('Books',meta,h+sigBanner('loading',{}));
   if(st==='stale')h+=sigBanner('stale',{ago:(bm&&bm.updated)?sigDur(bm.updated):'—',bound:'60m (2× the book-move cadence)'});
   if(st==='nodata')h+=sigBanner('nodata',{things:'book-movement episodes',at:sigAt(bm&&bm.updated)});
 
@@ -7097,20 +7361,19 @@ function renderSigBooks(){
   // today, so every episode's against-public component (weight 0.20) is null.
   // The column header and every cell say so, and the banner names the weight —
   // rendering 0% here would be a lie the score itself does not make.
-  var episodes=0;books.forEach(function(x){if(x)episodes+=(x.n||0)});
-  var pubN=0;books.forEach(function(x){if(x)pubN+=(x.vs_public_n||0)});
-  var noPub=books.length>0&&!pubN;
-
   if(books.length){
-    var tb=sigHdr('BOOKS · '+books.length+' · '+episodes+' episodes in window');
-    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">book</th><th class="l">role</th><th>n</th><th>led%</th><th>follow%</th><th>avg move</th><th>key-x</th><th>'+(noPub?'vs-pub —':'vs-pub')+'</th></tr></thead><tbody>';
+    var tb=sigHdr('BOOKS',books.length+' · '+episodes+' episodes in window');
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">book</th><th class="l">role</th><th>n</th><th>led%</th><th class="l">lead rate</th><th>follow%</th><th>avg move</th><th>key-x</th><th>'+(noPub?'vs-pub —':'vs-pub')+'</th></tr></thead><tbody>';
     books.forEach(function(x){
       if(!x)return;
+      var role=String(x.role||'');
+      var tag=/maker|lead/i.test(role)?'lead':/follow/i.test(role)?'follow':/mixed/i.test(role)?'mixed':'';
       tb+='<tr'+(x.small?' style="opacity:.5"':'')+'>';
       tb+='<td class="l" style="color:var(--cream)">'+esc(x.label||x.book||'')+(x.small?' <span style="font-size:7px;color:var(--muted)">small</span>':'')+'</td>';
-      tb+='<td class="l" style="color:var(--dim)">'+esc(x.role||'')+'</td>';
+      tb+='<td class="l">'+(role?'<span class="sh-tag'+(tag?' '+tag:'')+'">'+esc(role)+'</span>':'')+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(x.n)+'</td>';
       tb+='<td style="color:'+(x.led_pct==null?'var(--muted)':'var(--brass)')+'">'+sigNum(x.led_pct,'%')+'</td>';
+      tb+='<td class="l">'+(x.led_pct==null?'<span style="color:var(--muted)">—</span>':sigBar(x.led_pct,''))+'</td>';
       tb+='<td style="color:var(--muted)">'+sigNum(x.follow_pct,'%')+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(x.avg_moved)+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(x.key_cross_n)+'</td>';
@@ -7123,25 +7386,41 @@ function renderSigBooks(){
   if(noPub)h+=sigBanner('off',{text:'vs-public: UNAVAILABLE — 0 of '+episodes+' episodes carry a public split, so the against-public component (weight 0.20) contributes nothing to any score on this page. This is not 0%.'});
 
   if(bm){
-    var eb=sigHdr('LIVE EPISODES'+(live.length?' · '+live.length:''));
+    var eb=sigHdr('LIVE EPISODES',live.length?String(live.length):'');
     if(!live.length)eb+=sigBanner('nodata',{things:'live episodes',at:sigAt(bm.updated)});
-    h+=eb;
+    else {
+      eb+='<div class="sh-eps">';
+      live.slice(0,25).forEach(function(m){eb+=sigEpisodeCard(m,true);});
+      eb+='</div>';
+    }
+    if(bm.note)eb+='<div class="sh-cap">'+esc(bm.note)+(bm.window_h!=null?' · window '+bm.window_h+'h'+(bm.truncated_queries?' (truncated)':''):'')+(bm.min_score!=null?' · min score '+bm.min_score:'')+'</div>';
+    h+=sigCard(eb);
   }
-  live.slice(0,25).forEach(function(m){h+=sigEpisodeCard(m);});
-  if(bm&&bm.note)h+='<div style="font-size:7.5px;color:var(--muted);line-height:1.5;margin:4px 2px 0">'+esc(bm.note)+(bm.window_h!=null?' · window '+bm.window_h+'h'+(bm.truncated_queries?' (truncated)':''):'')+(bm.min_score!=null?' · min score '+bm.min_score:'')+'</div>';
-  return h;
+  return sigPanel('Books',meta,h);
 }
 // One card implementation for a book-movement episode, called from BOTH the
-// Agents tab and the Books panel so the two renderings cannot drift.
-function sigEpisodeCard(m){
+// Agents tab and the Books panel so the two renderings cannot drift. `hud`
+// drops the inline styles so the Signal tab's scoped stylesheet can skin the
+// same markup; without it the card paints exactly as it always has.
+function sigEpisodeCard(m,hud){
   if(!m)return '';
+  var ST=hud?{}:{card:'padding:8px 12px;margin:0 0 5px',top:'display:flex;justify-content:space-between;align-items:center',who:'flex:1;min-width:0',
+    book:'font-size:11px;font-weight:600;color:var(--txt)',mkt:'font-size:9px;color:var(--dim)',game:'font-size:8px;color:var(--dim)',sc:'text-align:right',
+    score:'font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)',scl:'font-size:7.5px;color:var(--muted)',
+    move:'font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px',pub:'color:var(--dim)',key:'color:var(--brass)',hrs:'color:var(--muted)',
+    why:'font-size:8px;color:var(--leather);margin-top:2px'};
+  var S=function(k){return ST[k]?' style="'+ST[k]+'"':''};
   var arrow=m.direction==='up'?'↑':m.direction==='down'?'↓':'·';
-  var h='<div class="card" style="padding:8px 12px;margin:0 0 5px">';
-  h+='<div style="display:flex;justify-content:space-between;align-items:center">';
-  h+='<div style="flex:1;min-width:0"><span style="font-size:11px;font-weight:600;color:var(--txt)">'+esc(m.label||m.book||'')+'</span> <span style="font-size:9px;color:var(--dim)">'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div style="font-size:8px;color:var(--dim)">'+esc(m.matchup||'')+'</div></div>';
-  h+='<div style="text-align:right"><span style="font-family:var(--M);font-size:13px;font-weight:700;color:var(--brass)">'+sigNum(m.score)+'</span><div style="font-size:7.5px;color:var(--muted)">score</div></div></div>';
-  h+='<div style="font-family:var(--M);font-size:9px;color:var(--cream);margin-top:3px">'+(m.line_from!=null?esc(m.line_from+'→'+m.line_to):'')+' '+arrow+' <span style="color:var(--dim)">'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span>'+(m.crossed_key?' <span style="color:var(--brass)">key ✕</span>':'')+(m.hours_to_start!=null?' <span style="color:var(--muted)">'+m.hours_to_start+'h to start</span>':'')+'</div>';
-  if(m.reasons&&m.reasons.length)h+='<div style="font-size:8px;color:var(--leather);margin-top:2px">'+esc((m.reasons||[]).join(' · '))+'</div>';
+  var dir=m.direction==='up'?'up':m.direction==='down'?'dn':'';
+  var h='<div class="card sigep"'+S('card')+'>';
+  h+='<div class="sigep-top"'+S('top')+'>';
+  h+='<div class="sigep-who"'+S('who')+'><span class="sigep-book"'+S('book')+'>'+esc(m.label||m.book||'')+'</span> <span class="sigep-mkt"'+S('mkt')+'>'+esc(m.market||'')+' '+esc(m.side||'')+'</span><div class="sigep-game"'+S('game')+'>'+esc(m.matchup||'')+'</div></div>';
+  h+='<div class="sigep-sc"'+S('sc')+'><span class="sigep-score"'+S('score')+'>'+sigNum(m.score)+'</span><div class="sigep-scl"'+S('scl')+'>score</div></div></div>';
+  h+='<div class="sigep-move"'+S('move')+'>'+(m.line_from!=null?esc(m.line_from+'→'+m.line_to):'')+' <span class="'+dir+'">'+arrow+'</span> <span class="sigep-pub"'+S('pub')+'>'+(m.public_pct!=null?m.public_pct+'% public':'no public data')+'</span>'+(m.crossed_key?' <span class="sigep-key"'+S('key')+'>key ✕</span>':'')+(m.hours_to_start!=null?' <span class="sigep-hrs"'+S('hrs')+'>'+m.hours_to_start+'h to start</span>':'')+'</div>';
+  if(m.reasons&&m.reasons.length){
+    var rs=(m.reasons||[]);
+    h+='<div class="sigep-why"'+S('why')+'>'+(hud?rs.map(function(r){return '<span class="sigep-r'+(/\bled\b/i.test(String(r))?' led':'')+'">'+esc(String(r))+'</span>'}).join(''):esc(rs.join(' · ')))+'</div>';
+  }
   h+='</div>';
   return h;
 }
@@ -7153,30 +7432,29 @@ function sigEpisodeCard(m){
 // which is the bug the shelved history reader fixes. An unexplained blank here
 // is exactly how that went unnoticed for 13,000+ runs.
 function renderSigSteam(){
-  var sg=state.agentsSharp||[];
+  var F=sigSteamFacts(),sg=F.sg,src=F.src,latest=F.latest,st=F.st,run=F.run,res=F.res;
   var h='';
-  var src=state.sigSrc.plays||{};
-  var latest=null;sg.forEach(function(s){if(s&&s.detected_at&&(!latest||s.detected_at>latest))latest=s.detected_at;});
-  var loaded=!!(src.at||state.agentsCachedAt||state.agentsLastLoad);
-  var st=sigState(src,loaded?sg:null,sg.length,SIG_STEAM_BOUND,latest);
+  var meta='sharp'+(run?' · last run '+agentAgo(run.finished_at||run.lastRunAt)+' · '+esc(agentStatus(run,'sharp').label.toLowerCase()):'');
   if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',src));
-  if(st==='loading')return h+sigBanner('loading',{});
+  if(st==='loading')return sigPanel('Steam',meta,h+sigBanner('loading',{}));
   if(st==='stale')h+=sigBanner('stale',{ago:latest?sigDur(latest):'—',bound:'10m (2× the sharp agent\'s cadence)'});
 
-  var run=null;(state.agentsHealth||[]).forEach(function(r){if(r&&r.name==='sharp'&&!run)run=r;});
-  var res=(run&&run.result)||'';
   if(st==='nodata'){
     // A zero and a dead mechanism are different claims. The agent's own run
-    // summary is the only thing that can tell them apart, so read it.
-    if(/no recent line movement/.test(res))h+=sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "no recent line movement". It reads only the most recent odds run\'s in-memory array; expect this to stay empty until the history reader lands (docs/specs/sharp-history-reader.md).'});
+    // summary is the only thing that can tell them apart, so read it. Only the
+    // proven-dead case earns the radar: a sweep over a feed that merely found
+    // nothing would dress a zero up as a diagnosis.
+    if(F.notFiring)h+='<div class="sh-radar">'+sigRadar()+'<div>'+sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "no recent line movement". It reads only the most recent odds run\'s in-memory array; expect this to stay empty until the history reader lands (docs/specs/sharp-history-reader.md).'})+'</div></div>';
     else h+=sigBanner('nodata',{things:'steam signals',at:sigAt((run&&(run.finished_at||run.lastRunAt))||state.agentsLastLoad)});
   }
   // The agent's own line is shown whatever the state: it is the evidence for
   // the banner above, and the thing to check first when the panel fills up.
-  h+=sigCard(sigHdr('SHARP AGENT')+'<div style="font-family:var(--M);font-size:9.5px;color:var(--dim);line-height:1.5">'+(run?(agentStatus(run,'sharp').dot+' '+esc(agentStatus(run,'sharp').label)+' · last run '+agentAgo(run.finished_at||run.lastRunAt)+'<div style="color:var(--muted);margin-top:2px">'+esc(res||'no run summary')+'</div>'):'<span style="color:var(--muted)">no status for the sharp agent in this payload</span>')+'</div>');
+  var rs=run?agentStatus(run,'sharp'):null;
+  var rpip=rs?(rs.label==='Error'?'off':rs.label==='Idle'?'lo':rs.label==='No data'?'':'on'):'';
+  h+=sigCard(sigHdr('SHARP AGENT')+'<div class="sh-txt">'+(run?(sigPip(rpip)+esc(rs.label)+' · last run '+agentAgo(run.finished_at||run.lastRunAt)+'<div class="sh-cap">'+esc(res||'no run summary')+'</div>'):'<span style="color:var(--muted)">no status for the sharp agent in this payload</span>')+'</div>');
 
   if(sg.length){
-    var tb=sigHdr('STEAM SIGNALS · '+sg.length);
+    var tb=sigHdr('STEAM SIGNALS',String(sg.length));
     tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th class="l">game</th><th class="l">market</th><th class="l">side</th><th>strength</th><th>books</th><th>detected</th></tr></thead><tbody>';
     sg.forEach(function(s){
       if(!s)return;
@@ -7191,7 +7469,7 @@ function renderSigSteam(){
     tb+='</tbody></table></div>';
     h+=sigCard(tb);
   }
-  return h;
+  return sigPanel('Steam',meta,h);
 }
 
 function agentPlayKey(p){return (p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'')}
