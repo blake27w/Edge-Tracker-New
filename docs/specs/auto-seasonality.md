@@ -263,10 +263,12 @@ including the ones that are *in*? Also: `grep -n 'sportCap' edge-tracker-agents/
 2. `node tools/smoke.mjs` then `cd edge-tracker-agents && npm ci && npm test`. Proves the static
    assertions and the whole suite, including the simulated season boundary. **This is the decisive
    step** — see 6.
-3. `cd edge-tracker-agents && node --test test/odds-season-denominator.test.js` with
-   `ODDS_SEASON_GRACE_DAYS=0  # NOTE: floored to 7 in production; the test drives grace 0 through the pure function, not the env` in the environment. Proves the release path end-to-end through the
-   real `run()` — grace 0 is a season boundary summoned on demand, since every sport absent from the
-   stubbed `/sports` response is released on its first run.
+3. `cd edge-tracker-agents && node --test test/odds-season-denominator.test.js`. Proves the release
+   path end-to-end through the real `run()`: the test sets grace **0 itself**, on the mocked config
+   object, so every sport absent from the stubbed `/sports` response is released on its first run — a
+   season boundary summoned on demand. **Do not try to do this through the environment**:
+   `ODDS_SEASON_GRACE_DAYS` is floored at 7 in production on purpose (a one-character typo must not be
+   able to release every quiet sport), so env `0` becomes `7` and would prove nothing.
 4. `npx serve .` from the repo root (read the port it actually prints — it silently falls back to a
    random one), open the Signal tab → Budget. Before the backend deploys this must still show
    `Ceilings unavailable — this backend build does not publish them.` Proves the PWA change did not
