@@ -10,9 +10,16 @@ ODDS_ALLOC_NFL=0.26   ODDS_ALLOC_NCAAF=0.13   ODDS_ALLOC_MLB=0.02
 ODDS_ALLOC_NBA=0.22   ODDS_ALLOC_NCAAB=0.14   ODDS_ALLOC_NHL=0.14
 ```
 
+**Status 2026-11-05 23:30 UTC (read live from `/health` and `/budget`):** the new backend IS deployed; the key IS
+set — but `detectModel()` found no model at boot, so both Claude agents report `blocked` with the D81 "set but no
+model" message and `/budget.claude.model` is `null`. **Next action: one restart.** If it persists, read the Railway
+startup log for the `detectModel` line — the key is being rejected. The six shares are **not** set yet; note three
+of them (`NFL`, `NCAAF`, `MLB`) already exist in Railway with other values (0.30 / 0.26 / 0.04) and must be
+**edited**, not added (D92).
+
 The key needs a **restart**: the Anthropic client is built once at module load and `detectModel()` runs once
-at boot, never retried (D81). The shares do **not** — `capOf()` reads them per call (D86). Once seasonality
-merges, the shares become a *shape* knob only; membership takes care of itself.
+at boot, never retried (D81). The shares do **not** — `capOf()` reads them per call (D86). Seasonality is merged,
+so the shares are a *shape* knob only; membership takes care of itself (MLB is `seeding · 14d left`).
 
 ## What merged today (all on `main` now)
 
