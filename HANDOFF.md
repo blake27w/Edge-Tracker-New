@@ -1,6 +1,6 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-05 — **three PRs open and unmerged: loud blocked agents (#137), the Signal dashboard with its restyle (#138), automatic seasonality (new).** `main` is still at `fefc1dc`.
+Last updated: 2026-11-05 — **all three PRs merged (#137 loud blocked agents, #138 Signal dashboard + restyle, #139 automatic seasonality). `main` is at `c075e70`, zero open PRs, 231 tests / 202 smoke, no failures.** Nothing is deployed yet: Vercel auto-deploys `main` for the PWA, but the backend changes need a Railway deploy, and the two env blocks below are still unset.
 
 ## OWED NOW — Railway env (both Blake's, neither is code)
 
@@ -14,7 +14,7 @@ The key needs a **restart**: the Anthropic client is built once at module load a
 at boot, never retried (D81). The shares do **not** — `capOf()` reads them per call (D86). Once seasonality
 merges, the shares become a *shape* knob only; membership takes care of itself.
 
-## Current state — three branches, all green, none merged
+## What merged today (all on `main` now)
 
 | PR | branch | what | tests / smoke |
 |---|---|---|---|
@@ -42,9 +42,11 @@ everything is 0-fail (D82). Any failure is real.
 
 ## In flight / loose ends
 
-- **A second git worktree** exists at `<scratchpad>/wt-dash` on `feat/signal-dashboard` (used to port the restyle
-  while a tester held the main worktree). Remove with `git worktree remove <path>` once #138 merges; its work is
-  pushed.
+- **Scratch worktrees are cleaned up** (`wt-dash`, and a reviewer's `base`). The checkout at `~/Edge-Tracker-New`
+  itself is still at `50b4fbb` — pull it before working there.
+- **GitHub rejected every push to this repo for ~3 minutes during the merge** (`remote: fatal error in commit_refs`,
+  even for an empty probe commit on `main`; githubstatus reported all systems operational). It cleared on its own.
+  If a push fails with that message, wait and retry — it is not the branch.
 - **Two design artifacts** (Signal HUD mockup; the options page Blake chose from) live in the scratchpad only. They
   are references, not deliverables — the restyle in #138 is the deliverable.
 - **`ios-app/capacitor.config.json` points `server.url` at `https://blake27w.github.io`** — the old GitHub Pages
@@ -56,9 +58,9 @@ everything is 0-fail (D82). Any failure is real.
 
 ## Next steps
 
-1. **Merge #137, #138 and the seasonality PR** — in that order is simplest; they are independent of each other
-   and all branch from `main`. Vercel auto-deploys `main`, so merging IS the frontend deploy; the PWA on the phone
-   picks it up on next open (network-first SW with `skipWaiting`, `no-cache` on `index.html` — no reinstall).
+1. **Confirm the Vercel deploy of `main` went out** and open the app on the phone — the PWA picks it up on next
+   open (network-first SW with `skipWaiting`, `no-cache` on `index.html`; no reinstall). The 📡 Signal tile should be
+   on the home grid in the mint/JetBrains look.
 2. **Deploy the backend on Railway** (seasonality, loud skips, `getOddsCeilings()` are all server-side) and set the
    two env blocks above. The dashboard's Budget panel shows *"Ceilings unavailable"* until that build is live.
 3. **Watch three things after deploy:** `public-splits` flips off `"skipped — no Claude"` and the `blocked`
