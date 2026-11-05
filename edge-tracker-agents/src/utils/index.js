@@ -115,6 +115,16 @@ if (config.anthropic.apiKey) {
 
 export const hasClaude = () => !!anthropic && !!config.anthropic.model;
 
+// Why a Claude-backed agent is blocked, as one of two CONSTANT literals — never
+// an env value, so this can never carry a credential into /health, the watchdog
+// or a log. hasClaude() ANDs two separate things and they fail for different
+// reasons: no key at all, versus a key that is set but whose model probe never
+// landed. Reporting "not set" for the second case sends an operator to `env |
+// grep`, where they find it set and stop trusting the alert.
+export const claudeBlockReason = () => (!anthropic
+  ? 'ANTHROPIC_API_KEY is not set in this deployment'
+  : 'ANTHROPIC_API_KEY is set but no model was detected at boot — detectModel() runs once and is never retried, so the service must restart');
+
 // Modern models accept adaptive thinking + the web_search server tool.
 // The legacy fallback chain (claude-3-*) does not — detect and degrade.
 function isModern(model) {
@@ -293,4 +303,4 @@ export async function notifyAll(subject, body) {
   return { sms, email, total: sms + email };
 }
 
-export default { logger, getFeed, getMetrics, getClaudeUsage, detectModel, claude, claudeJson, parseJson, hasClaude, sendSms, sendEmail, notifyAll };
+export default { logger, getFeed, getMetrics, getClaudeUsage, detectModel, claude, claudeJson, parseJson, hasClaude, claudeBlockReason, sendSms, sendEmail, notifyAll };

@@ -9,7 +9,7 @@
 // the most reliable winning signal from manual testing.
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
-import { claudeJson, hasClaude, logger } from '../../utils/index.js';
+import { claudeJson, hasClaude, claudeBlockReason, logger } from '../../utils/index.js';
 import { getGames, getIntel, setIntel } from '../../store/index.js';
 
 const SPLIT_SPORTS = new Set(['NHL', 'NBA', 'MLB', 'NFL']);
@@ -51,7 +51,7 @@ function resolveSide(g, market, side) {
 const prevBets = new Map();
 
 async function run() {
-  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set in this deployment' };
+  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: claudeBlockReason() };
   const games = getGames().filter((g) => SPLIT_SPORTS.has(g.sport));
   if (!games.length) return { summary: 'no slate for public splits' };
 

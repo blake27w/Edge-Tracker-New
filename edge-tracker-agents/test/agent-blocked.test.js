@@ -17,6 +17,10 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 let orch, store, realConfig, cfg, warns, infos;
+// Toggled by the two end-to-end tests at the bottom, which drive the REAL
+// public-splits and combat-weighin modules on both sides of their gate. Every
+// other test in this file wants the production-incident value, false.
+let claudeAvailable = false;
 
 before(async () => {
   // The real config/store first: intEnv and getDegraded's TTL logic are both
@@ -64,7 +68,8 @@ before(async () => {
       getFeed: () => [],
       getMetrics: () => ({}),
       getClaudeUsage: async () => ({ projectedMonthly: 0 }),
-      hasClaude: () => false,
+      hasClaude: () => claudeAvailable,
+      claudeBlockReason: () => 'ANTHROPIC_API_KEY is not set in this deployment',
       detectModel: async () => null,
       parseJson: () => null,
       claude: async () => '',
@@ -410,9 +415,28 @@ test('the published strings are a closed template over the AUTHORED reason', asy
   // A sentinel under the real variable's name, in this test process only. If
   // any code path between the agent's return and a /health field, a log line
   // or a degraded detail read the variable, the value appears below.
+  //
+  // process.env ALONE IS NOT ENOUGH, and that is the whole point of this
+  // block. config.anthropic.apiKey is `clean(env.ANTHROPIC_API_KEY)` evaluated
+  // ONCE at module load (src/config/index.js:267), and before() has already
+  // imported config by the time this test runs — so a sentinel written only to
+  // process.env arrives too late to appear on the config object, and a leak
+  // through `config.anthropic.apiKey` (the most likely import path in this
+  // codebase, and the one the source greps below explicitly cannot see)
+  // interpolates the empty string and is INVISIBLE. Verified by mutation: with
+  // the sentinel in process.env only, a detail built as
+  // `${config.anthropic['api'+'Key']}...` passes this test, the greps, and
+  // smoke. So seed the loaded config too, on every credential field, and the
+  // behavioural claim becomes the real one it is advertised as.
   const SENTINEL = 'sk-ant-NOT-A-REAL-KEY-test-sentinel';
   const saved = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = SENTINEL;
+  // Every clean(env.*KEY|TOKEN) field config exposes, so the sweep does not
+  // depend on guessing which one a future edit would reach for.
+  const slots = [[cfg.anthropic, 'apiKey'], [cfg.supabase, 'key'],
+    [cfg.oddsApi, 'key'], [cfg.research, 'token']];
+  const savedSlots = slots.map(([o, k]) => (o ? o[k] : undefined));
+  for (const [o, k] of slots) if (o) o[k] = SENTINEL;
   try {
     const a = stub(() => ({ summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set' }));
     await orch.runAgentOnceForTest(a);
@@ -435,22 +459,52 @@ test('the published strings are a closed template over the AUTHORED reason', asy
       'no surface may carry the value of the variable it names');
     assert.ok(!/sk-ant|sk-[A-Za-z0-9]{8}/.test(published),
       'nor any prefix shaped like a key, however it got there');
+
+    // The same sweep over the two remaining sinks the reason string reaches,
+    // so "no credential in any sink" is asserted on the sinks rather than
+    // inferred from the detail: the watchdog issue the dashboard renders, and
+    // the whole /health payload the operator curls.
+    const { default: watchdog } = await import('../src/agents/watchdog/index.js');
+    await watchdog.run();
+    const wdIssues = JSON.stringify((store.getWatchdog() || {}).issues || []);
+    assert.ok(!wdIssues.includes(SENTINEL), 'no credential may reach a watchdog issue');
+    const blockedIssue = JSON.parse(wdIssues).find((i) => i.key === `data|${a.name}|blocked`);
+    assert.ok(blockedIssue, 'and the blocked entry does become an issue');
+    assert.equal(blockedIssue.type, 'blocked');
+    assert.equal(blockedIssue.agent, a.name, 'the agent is split back out of the key');
+    assert.equal(blockedIssue.label, `Agent blocked (${a.name})`);
+    assert.ok(!JSON.stringify(orch.getHealth()).includes(SENTINEL),
+      'nor any field of the /health payload');
   } finally {
     if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = saved;
+    slots.forEach(([o, k], i) => { if (o) o[k] = savedSlots[i]; });
   }
 });
 
-test('the two opted-in agents author their reason as a literal', async () => {
-  // The other half: the reason reaching the template above must itself be a
-  // single-quoted literal naming the variable, never an interpolation of it.
+test('the two opted-in agents source their reason from the audited helper', async () => {
+  // The other half: the reason reaching the template above must never be an
+  // interpolation of the value. The literals moved into claudeBlockReason() so
+  // there is ONE place to audit instead of one per opt-in agent, and so a key
+  // that is SET but unusable is not reported as missing — hasClaude() ANDs a
+  // client against a detected model and those fail for different reasons.
   const base = new URL('../src/', import.meta.url);
   for (const f of ['agents/public-splits/index.js', 'agents/combat-weighin/index.js']) {
     const code = codeOnly(await readFile(new URL(f, base), 'utf8'));
-    assert.match(code, /blocked: 'ANTHROPIC_API_KEY is not set[^']*'/,
-      `${f} opts in with an authored literal — no \${} and no concatenation`);
+    assert.match(code, /blocked: claudeBlockReason\(\)/,
+      `${f} opts in via the shared helper, not an inline string`);
     assert.equal(/process\.env\.ANTHROPIC/.test(code), false,
-      `${f} must name the variable in its reason, never interpolate its value`);
+      `${f} must never interpolate the value`);
+  }
+  // And the helper itself is the single place a credential could enter: exactly
+  // two constant literals, no template, no concatenation, no env or config read.
+  const utils = codeOnly(await readFile(new URL('utils/index.js', base), 'utf8'));
+  const body = (utils.match(/export const claudeBlockReason[\s\S]*?;\n/) || [''])[0];
+  assert.ok(body.length > 0, 'claudeBlockReason is exported from utils');
+  assert.match(body, /is not set/, 'it covers the missing-key case');
+  assert.match(body, /no model was detected/, 'and the set-but-unusable case, distinctly');
+  for (const bad of [/\$\{/, /\+/, /process\.env/, /apiKey/i]) {
+    assert.equal(bad.test(body), false, `the helper cannot carry a value (${bad})`);
   }
 });
 
@@ -466,4 +520,334 @@ test('the orchestrator reads no env var and holds no credential', async () => {
   const code = codeOnly(await readFile(new URL('../src/orchestrator/index.js', import.meta.url), 'utf8'));
   assert.equal(/process\.env\b/.test(code), false, 'the orchestrator reads no env var at all');
   assert.equal(/apiKey/i.test(code), false, 'and holds no credential by any name');
+});
+
+// ══════════════════════════════════════════════════════════════
+// VERIFICATION PASS — state-machine exhaustiveness.
+//
+// The registry now carries four coupled pieces of state (consecutiveBlocked,
+// blockedReason, blockedSince, and a store entry with its own TTL and count),
+// and the published detail interpolates three of them. The failure mode this
+// section exists to catch is a detail string whose count, reason or timestamp
+// belongs to a DIFFERENT fault than the one it names — one such bug (the
+// reason change) was already found and fixed, so the question is whether it
+// has siblings. Rather than assert field-by-field per transition, assert one
+// invariant after EVERY transition: the four fields agree with each other and
+// with what was published.
+// ══════════════════════════════════════════════════════════════
+
+// The whole consistency contract in one function. `expect` is what the caller
+// believes the state should be; the invariant is what must hold regardless.
+function assertSelfConsistent(name, label) {
+  const h = healthFor(name);
+  const entries = degradedFor(name);
+
+  if (h.blockedRuns === 0) {
+    assert.equal(h.blockedReason, null, `${label}: no streak, so no reason may linger`);
+    assert.equal(h.blockedSince, null, `${label}: no streak, so no start time may linger`);
+    assert.equal(entries.length, 0,
+      `${label}: nothing is blocked, so no degraded entry may outlive the condition (D73)`);
+    return h;
+  }
+
+  assert.ok(h.blockedReason, `${label}: a live streak must name its reason`);
+  assert.ok(h.blockedSince, `${label}: a live streak must carry its start time`);
+  assert.ok(new Date(h.blockedSince).getTime() <= new Date(h.lastRunAt).getTime(),
+    `${label}: the streak cannot have started after the run that extended it`);
+
+  if (h.blockedRuns >= cfg.rules.blockedRunsMin) {
+    assert.equal(entries.length, 1, `${label}: at or above the threshold, exactly one entry`);
+    // The closed template, rebuilt from the registry. If the count, the reason
+    // or the timestamp in the published string belonged to a different fault,
+    // this equality is what fails.
+    assert.equal(entries[0].detail,
+      `not doing its job — ${h.blockedReason} (${h.blockedRuns} consecutive runs since ${h.blockedSince})`,
+      `${label}: the published detail must agree with the registry on all three`);
+  } else {
+    assert.equal(entries.length, 0, `${label}: below the threshold, nothing is published`);
+  }
+  return h;
+}
+
+// A programmable agent, so a test can walk it through an arbitrary sequence of
+// outcomes. `slow` keeps consecutive lastRunAt stamps distinguishable at ISO
+// millisecond precision — three runs inside one millisecond make every
+// blockedSince assertion vacuous.
+function scripted() {
+  const a = {
+    name: `stub-${++seq}`,
+    next: null,
+    run: async () => {
+      await new Promise((res) => setTimeout(res, SLOW_MS));
+      const n = a.next;
+      if (n.throws) throw new Error(n.throws);
+      return n.out;
+    },
+  };
+  a.step = async (next) => { a.next = next; await orch.runAgentOnceForTest(a); };
+  return a;
+}
+const BLOCKED_A = { out: { summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set' } };
+const BLOCKED_B = { out: { summary: 'skipped — no DB', blocked: 'DATABASE_URL is not set' } };
+const SUCCESS = { out: { summary: 'wrote 38 split rows' } };
+const BENIGN = { out: { summary: 'no games on the slate' } };
+const THROWS = { throws: 'splits fetch 503' };
+
+test('every transition out of blocked lands in a self-consistent state', async () => {
+  // The eight transitions, each asserted with the invariant above rather than
+  // with hand-written per-case expectations — the point is that no combination
+  // can produce a detail carrying another fault's count, reason or timestamp.
+  const paths = [
+    ['blocked → blocked', [BLOCKED_A, BLOCKED_A], { runs: 2, reported: true }],
+    ['blocked → success', [BLOCKED_A, SUCCESS], { runs: 0, reported: false }],
+    ['blocked → throw', [BLOCKED_A, THROWS], { runs: 0, reported: false }],
+    ['blocked → benign skip', [BLOCKED_A, BENIGN], { runs: 0, reported: false }],
+    ['blocked → reason change → blocked', [BLOCKED_A, BLOCKED_B, BLOCKED_B], { runs: 2, reported: true }],
+    ['success → blocked', [SUCCESS, BLOCKED_A], { runs: 1, reported: true }],
+    ['throw → blocked', [THROWS, BLOCKED_A], { runs: 1, reported: true }],
+    ['benign → blocked → benign', [BENIGN, BLOCKED_A, BENIGN], { runs: 0, reported: false }],
+    ['blocked → throw → blocked', [BLOCKED_A, THROWS, BLOCKED_A], { runs: 1, reported: true }],
+    ['reason A → B → A again', [BLOCKED_A, BLOCKED_B, BLOCKED_A], { runs: 1, reported: true }],
+  ];
+
+  for (const [label, steps, expect] of paths) {
+    const a = scripted();
+    // The invariant must hold after EVERY step, not only at the end — a
+    // transient inconsistency is still a state /health can be polled in.
+    for (const s of steps) { await a.step(s); assertSelfConsistent(a.name, label); }
+
+    const h = healthFor(a.name);
+    assert.equal(h.blockedRuns, expect.runs, `${label}: streak length`);
+    assert.equal(degradedFor(a.name).length, expect.reported ? 1 : 0, `${label}: published or not`);
+  }
+});
+
+test('a reason change never leaves the previous fault\'s count or clock in the report', async () => {
+  // The sibling-hunt, at a threshold where the count is observable: walk A up
+  // to a reported streak, switch to B, and assert nothing of A survives into
+  // B's published string — not its count, not its start time, not its text.
+  cfg.rules.blockedRunsMin = 2;
+  const a = scripted();
+  await a.step(BLOCKED_A); await a.step(BLOCKED_A); await a.step(BLOCKED_A);
+  const atA = healthFor(a.name);
+  assert.equal(atA.blockedRuns, 3);
+  const dA = degradedFor(a.name)[0];
+  assert.equal(dA.count, 2, 'A was published twice (runs 2 and 3)');
+
+  await a.step(BLOCKED_B);
+  const atB = healthFor(a.name);
+  assert.equal(atB.blockedRuns, 1, "B's first run is not A's fourth");
+  assert.equal(degradedFor(a.name).length, 0, 'and one run of B is below the threshold of 2');
+  assert.notEqual(atB.blockedSince, atA.blockedSince, "B's clock starts at B's first run");
+
+  await a.step(BLOCKED_B);
+  const dB = degradedFor(a.name)[0];
+  assertSelfConsistent(a.name, 'after switching to B');
+  assert.match(dB.detail, /DATABASE_URL is not set \(2 consecutive runs/);
+  assert.ok(!dB.detail.includes('ANTHROPIC'), "A's reason must not survive");
+  assert.ok(!dB.detail.includes(atA.blockedSince), "nor A's timestamp");
+  assert.equal(dB.count, 1, "and the store's own count restarted, so the watchdog cannot say \"seen 3× since <A's time>\"");
+  assert.equal(dB.since, dB.at, 'the store entry is genuinely new, not a revived one');
+});
+
+test('a throw between two blocked runs does not let the old clock back in', async () => {
+  // The three fields are cleared on the error path, so the blocked run AFTER a
+  // throw must start a fresh streak. If the catch block cleared only two of
+  // the three, blockedSince would survive and the next report would claim a
+  // streak reaching back before the failure.
+  cfg.rules.blockedRunsMin = 1;
+  const a = scripted();
+  await a.step(BLOCKED_A);
+  const first = healthFor(a.name).blockedSince;
+  await a.step(THROWS);
+  assertSelfConsistent(a.name, 'after the throw');
+  await a.step(BLOCKED_A);
+  const after = healthFor(a.name);
+  assert.equal(after.blockedRuns, 1, 'the throw reset the streak');
+  assert.notEqual(after.blockedSince, first, 'and the clock restarted with it');
+  assert.ok(degradedFor(a.name)[0].detail.includes(`since ${after.blockedSince}`),
+    'the report names the post-throw start, not the pre-throw one');
+  assert.ok(!degradedFor(a.name)[0].detail.includes(first));
+});
+
+test('a varying summary under blocked: true resets the streak every run', async () => {
+  // NOT a defect — a consequence of "a different reason is a different fault"
+  // meeting "blocked: true means the summary IS the reason". Pinned because it
+  // is a live trap for a future opt-in: an agent whose summary carries a count
+  // or a timestamp can never accumulate a streak, so AGENT_BLOCKED_RUNS_MIN > 1
+  // would silence it permanently. Both of today's opt-ins return a constant
+  // literal summary, so neither is affected.
+  cfg.rules.blockedRunsMin = 2;
+  let n = 0;
+  const a = { name: `stub-${++seq}`, run: async () => ({ summary: `skipped — no Claude (${++n})`, blocked: true }) };
+  for (let i = 0; i < 4; i++) await orch.runAgentOnceForTest(a);
+  assert.equal(healthFor(a.name).blockedRuns, 1,
+    'each run reads as a new fault, so the streak never grows');
+  assert.equal(degradedFor(a.name).length, 0,
+    'and with a threshold above 1 such an agent is never reported — the trap this pins');
+  assertSelfConsistent(a.name, 'varying summary');
+
+  // A CONSTANT summary under blocked: true accumulates normally, which is the
+  // contrast that shows the cause is the variation, not blocked: true itself.
+  const b = { name: `stub-${++seq}`, run: async () => ({ summary: 'skipped — no Claude', blocked: true }) };
+  await orch.runAgentOnceForTest(b); await orch.runAgentOnceForTest(b);
+  assert.equal(healthFor(b.name).blockedRuns, 2);
+  assert.equal(degradedFor(b.name).length, 1);
+});
+
+test('intEnv rejects every non-integer shape and honours a real zero', async () => {
+  // The probe battery, beyond the cases the build already pinned. A threshold
+  // is a run COUNT: anything that is not a non-negative integer must fall back
+  // rather than be coerced into one.
+  const { intEnv } = realConfig;
+  const D = 7;
+  for (const [label, v, want] of [
+    ['empty string', '', D], ['whitespace', '  ', D], ['string zero', '0', 0], ['number zero', 0, 0],
+    ['negative', '-1', D], ['fractional', '2.7', D], ['padded integer', ' 2 ', 2],
+    ['exponent', '1e3', 1000], ['hex', '0x10', 16],
+    ['null', null, D], ['undefined', undefined, D],
+    ['true', true, D], ['false', false, D],
+    ['empty array', [], D], ['single-element array', ['3'], 3], ['object', {}, D],
+    ['NaN', NaN, D], ['Infinity', Infinity, D], ['-Infinity', -Infinity, D],
+    ['letters', 'abc', D], ['quoted zero', '"0"', 0], ['leading plus', '+3', 3],
+    ['above MAX_SAFE_INTEGER', '9007199254740993', 9007199254740992],
+  ]) {
+    assert.equal(intEnv(v, D), want, `intEnv(${label}) must be ${want}`);
+  }
+  // The two properties the knob actually depends on, stated as properties.
+  assert.notEqual(intEnv('', D), 0, "a blank variable must never read as an explicit 0 (D79)");
+  assert.equal(intEnv('0', D), 0, 'while an explicit 0 must survive coercion');
+});
+
+test('a threshold of 0 and the shipped 1 are deliberately identical, and both report run 1', async () => {
+  // Honest note on an assertion that could look stronger than it is: the
+  // streak starts at 1, so `1 >= 0` and `1 >= 1` are both true and NO
+  // behavioural test can separate blockedRunsMin 0 from 1. The 0 path is
+  // pinned at the config layer instead (the child-process test above), where
+  // `intEnv(...) || 1` would be caught. This test states the equivalence so
+  // that raising the default re-opens the question rather than silently
+  // making the 0 branch dead.
+  for (const min of [0, 1]) {
+    cfg.rules.blockedRunsMin = min;
+    const a = stub(() => ({ summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set' }));
+    await orch.runAgentOnceForTest(a);
+    assert.equal(degradedFor(a.name).length, 1, `min=${min} reports the first blocked run`);
+    assert.match(degradedFor(a.name)[0].detail, /1 consecutive runs/,
+      `min=${min} counts the first run as 1, never 0`);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// The two opted-in agents, driven for real on BOTH sides of the gate.
+//
+// Everything above tests the orchestrator against stub agents, and the only
+// coverage of the two real opt-ins is a source grep for the literal. A grep
+// cannot tell whether the field is on the returned object, whether it is
+// reachable, or whether it DISAPPEARS when the key is present — so drive the
+// shipped modules through the shipped orchestrator with hasClaude() toggled.
+// ══════════════════════════════════════════════════════════════
+
+const OPTED_IN = ['public-splits', 'combat-weighin'];
+
+test('with no key, both opted-in agents produce the blocked condition end to end', async () => {
+  // The production incident, reproduced: hasClaude() false is exactly what an
+  // unset ANTHROPIC_API_KEY causes (the client is built once at module load and
+  // detectModel() resolves the model once; both are falsy without a key).
+  claudeAvailable = false;
+  for (const name of OPTED_IN) {
+    const mod = (await import(`../src/agents/${name}/index.js`)).default;
+    assert.equal(mod.name, name, 'the module under test is the one named');
+
+    // First the raw contract, so a failure localises to the agent or the
+    // orchestrator rather than somewhere between them.
+    const out = await mod.run();
+    assert.equal(out.summary, 'skipped — no Claude', `${name} still reports the same summary`);
+    assert.equal(typeof out.blocked, 'string', `${name} opts in with a string reason`);
+    assert.ok(out.blocked.includes('ANTHROPIC_API_KEY'), `${name} names the variable`);
+    assert.ok(!/sk-|key=|Bearer/i.test(out.blocked), `${name}'s reason carries no credential shape`);
+
+    // Then the whole path, through the real orchestrator.
+    await orch.runAgentOnceForTest(mod);
+    const h = healthFor(name);
+    assert.equal(h.blockedRuns, 1, `${name} is counted as blocked`);
+    assert.equal(h.lastResult, 'skipped — no Claude',
+      `${name} still reports the benign-looking summary — which is the whole problem`);
+    assert.equal(h.error, null, 'and still has no error');
+    assert.equal(h.consecutiveFailures, 0, 'and no failures');
+    assert.equal(degradedFor(name).length, 1,
+      `${name} now raises a degraded entry, where before it raised nothing`);
+    assertSelfConsistent(name, `${name} with no key`);
+  }
+});
+
+test('with the key present, both agents stop reporting and the entry is retracted', async () => {
+  // The other half, and the one the manual recipe explicitly cannot cover
+  // without a working key. A LABELLED FAKE is never constructed here: the gate
+  // is hasClaude(), so flipping that is both sufficient and the only honest way
+  // to simulate a usable key without one.
+  //
+  // Each agent is left blocked first, so this also proves the recovery
+  // RETRACTS rather than merely stops adding.
+  claudeAvailable = false;
+  for (const name of OPTED_IN) {
+    const mod = (await import(`../src/agents/${name}/index.js`)).default;
+    await orch.runAgentOnceForTest(mod);
+    assert.equal(degradedFor(name).length, 1, `${name} starts blocked`);
+  }
+
+  claudeAvailable = true;
+  try {
+    for (const name of OPTED_IN) {
+      const mod = (await import(`../src/agents/${name}/index.js`)).default;
+
+      // Past the gate there is no slate and no weigh-in window in this
+      // fixture, so each agent returns one of its BENIGN skips — which is the
+      // realistic post-fix state and must clear just the same.
+      const out = await mod.run();
+      assert.equal(out.blocked, undefined,
+        `${name} must not mark itself blocked once Claude is available`);
+
+      await orch.runAgentOnceForTest(mod);
+      const h = healthFor(name);
+      assert.equal(h.blockedRuns, 0, `${name}'s streak is reset`);
+      assert.equal(h.blockedReason, null);
+      assert.equal(h.blockedSince, null);
+      assert.equal(degradedFor(name).length, 0,
+        `${name}'s degraded entry is retracted on the first unblocked run, not left to the TTL`);
+      assertSelfConsistent(name, `${name} with a key`);
+    }
+  } finally {
+    claudeAvailable = false;
+  }
+});
+
+test('no OTHER agent opts in by accident, so the alert surface is exactly two', async () => {
+  // The anti-noise property at the level of the whole fleet. ~60 of the ~70
+  // skip sites are benign and must stay silent; if a future edit adds `blocked`
+  // to one of them (a budget pause, an offseason, `no DB` in local dev) this is
+  // what says so, because a third alert source is a policy change.
+  //
+  // Scoped to the agents the orchestrator actually IMPORTS, which is the list
+  // that can reach runAgent — src/agents/ also holds `shared/` helpers and a
+  // staged-but-unwired `nfl.live/`, neither of which runs.
+  //
+  // Over source rather than by executing the fleet: most agents reach for the
+  // network or a DB on the way to their gate, so running all ~50 in a unit
+  // test hangs (tried; it does). Comments are stripped first, so prose
+  // mentioning the field cannot fail the build.
+  const orchSrc = codeOnly(await readFile(new URL('../src/orchestrator/index.js', import.meta.url), 'utf8'));
+  const wired = [...orchSrc.matchAll(/^import \w+ from '\.\.\/agents\/([\w.-]+)\/index\.js';$/gm)]
+    .map((m) => m[1]);
+  assert.ok(wired.length > 40, `expected the whole wired fleet, found ${wired.length}`);
+  for (const n of OPTED_IN) {
+    assert.ok(wired.includes(n), `${n} must actually be wired into the orchestrator`);
+  }
+
+  const optedIn = [];
+  for (const name of wired) {
+    const code = codeOnly(await readFile(new URL(`../src/agents/${name}/index.js`, import.meta.url), 'utf8'));
+    if (/(^|[^\w.])blocked:/.test(code)) optedIn.push(name);
+  }
+  assert.deepEqual(optedIn.sort(), [...OPTED_IN].sort(),
+    'exactly the two agents the spec opted in — a third would be a new alert source');
 });

@@ -14,7 +14,7 @@
 // Boxing grades manually until a results feed exists. $0 beyond Claude calls.
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
-import { logger, hasClaude, claudeJson } from '../../utils/index.js';
+import { logger, hasClaude, claudeBlockReason, claudeJson } from '../../utils/index.js';
 import { getGames } from '../../store/index.js';
 import { combatLine } from '../combat-market/index.js';
 import { impliedProb } from '../shared/odds-math.js';
@@ -59,7 +59,7 @@ function cardsInWindow(sport, now) {
 
 async function run() {
   const now = Date.now();
-  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set in this deployment' };
+  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: claudeBlockReason() };
 
   // Decide which sports to check this tick.
   const active = []; // { sport, cards }

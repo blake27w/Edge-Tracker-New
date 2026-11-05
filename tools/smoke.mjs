@@ -538,9 +538,68 @@ ok('the reason is authored, never read — no env in the orchestrator',
 ok('and no credential by any name', !/apiKey/i.test(codeOnly(orchSrc)));
 ok('neither opted-in agent interpolates the env value',
   !/process\.env\.ANTHROPIC/.test(codeOnly(splitsSrc)) && !/process\.env\.ANTHROPIC/.test(codeOnly(weighinSrc))
-  && /blocked: 'ANTHROPIC_API_KEY is not set[^']*'/.test(splitsSrc)
-  && /blocked: 'ANTHROPIC_API_KEY is not set[^']*'/.test(weighinSrc),
-  'the reason is a single-quoted literal naming the variable — no ${} and no concatenation, so it never carries a value');
+  && /blocked: claudeBlockReason\(\)/.test(splitsSrc)
+  && /blocked: claudeBlockReason\(\)/.test(weighinSrc),
+  'the reason comes from the shared helper, not an inline string — so there is one place to audit');
+// The helper is the single place a credential could enter the reason, so pin its
+// shape rather than its wording: exactly two string literals, no template, no
+// concatenation, no env or config read. `hasClaude()` ANDs a client against a
+// detected model and those fail for different reasons; reporting "not set" for a
+// key that IS set sends an operator to `env | grep` and costs them the alert's
+// credibility. Wording may change; "cannot carry a value" may not.
+{
+  const utilsSrc = await readFile(join(root, 'edge-tracker-agents/src/utils/index.js'), 'utf8');
+  const body = (utilsSrc.match(/export const claudeBlockReason[\s\S]*?;\n/) || [''])[0];
+  ok('claudeBlockReason exists and distinguishes the two causes', body.length > 0
+    && /no model was detected/.test(body) && /is not set/.test(body),
+    'a key that is set but unusable must not be reported as missing');
+  ok('claudeBlockReason cannot carry a value',
+    body.length > 0 && !/\$\{/.test(body) && !/\+/.test(body)
+    && !/process\.env/.test(body) && !/apiKey/i.test(body),
+    'two constant literals only — no template, concatenation, env or config read');
+}
+
+// VERIFICATION PASS. The behavioural claim above — "a source grep cannot see a
+// credential that arrives via an import, the exact-equality assertion can" —
+// was NOT TRUE as first written, and this assertion is what stops it reverting
+// to untrue. config.anthropic.apiKey is clean(env.ANTHROPIC_API_KEY) evaluated
+// once at config module load, and the test's before() imports config before the
+// test body sets its sentinel — so a sentinel written only to process.env
+// arrives too late to reach the config object, and a detail built from
+// `config.anthropic['api'+'Key']` interpolated the empty string and passed the
+// test, both greps here, and the whole suite. Verified by mutation. The fix is
+// to seed the LOADED CONFIG's credential fields too; without that line the
+// import path — the likeliest one in this codebase, and the only one the greps
+// above admit they cannot see — is unguarded.
+ok('the credential sentinel is seeded into the loaded config, not just process.env',
+  /\[cfg\.anthropic, 'apiKey'\]/.test(blockedTestSrc) && /o\[k\] = SENTINEL/.test(blockedTestSrc),
+  "config.anthropic.apiKey is snapshotted at module load, so a process.env-only sentinel is already stale by the time the test runs and a leak through the import reads '' — making the one assertion that covers the import path silently vacuous");
+ok('every sink the reason reaches is swept for the sentinel, not just the detail',
+  /getWatchdog\(\)/.test(blockedTestSrc) && /orch\.getHealth\(\)\)\.includes\(SENTINEL\)/.test(blockedTestSrc),
+  'the detail is one of five sinks — /health, the watchdog issue, reportDegraded, the warn log and blockedReason; asserting only the detail leaves the other four to inference');
+
+// The TTL is the store's, not this feature's, and the two directions of
+// wrongness it can produce are a false alarm that outlives the fix and a live
+// condition that goes quiet. Both are pinned in their own file because
+// DEGRADED_TTL_MS is read once at store load, so a short TTL cannot share a
+// process with the timing-insensitive tests.
+// Read tolerantly: a bare `await readFile` turns a deleted or renamed test
+// file into an ENOENT stack trace that exits before the summary line, which
+// reads as "the smoke harness is broken" rather than "this coverage is gone".
+// An empty string makes the assertion below fail by name instead.
+const ttlTestSrc = await readFile(join(root, 'edge-tracker-agents/test/agent-blocked-ttl.test.js'), 'utf8')
+  .catch(() => '');
+ok('the blocked × TTL interaction is covered',
+  /DEGRADED_TTL_MS/.test(ttlTestSrc) && /re-publishes/.test(ttlTestSrc)
+  && /retracts the entry instead of waiting it out/.test(ttlTestSrc),
+  'a standing block outlives the 90-min TTL on a 4h agent, so the entry must re-publish on the next run (or the condition goes permanently silent) and must be retracted on recovery rather than left to age out (D73)');
+ok('both opted-in agents are driven on BOTH sides of their gate',
+  /with no key, both opted-in agents produce the blocked condition end to end/.test(blockedTestSrc)
+  && /with the key present, both agents stop reporting and the entry is retracted/.test(blockedTestSrc),
+  'the rest of the suite runs stub agents; without these two the only coverage of the real opt-ins is the source grep above, which cannot tell whether the field is reachable or whether it disappears once the key is present');
+ok('the opt-in set is asserted against the wired fleet, not just the two files',
+  /exactly the two agents the spec opted in/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; a third opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a

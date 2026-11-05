@@ -80,6 +80,7 @@ before(async () => {
       logger: fl.logger,
       notifyAll: async () => ({ total: 0 }),
       hasClaude: () => true,
+      claudeBlockReason: () => 'ANTHROPIC_API_KEY is not set in this deployment',
       // 78% of tickets on Over: lopsided, so the RLM / freeze rule engages.
       claudeJson: async () => ([{ game_id: 'g1', sport: 'NHL', market: 'total', side: 'Over', bets_pct: 78, handle_pct: 61 }]),
     },
