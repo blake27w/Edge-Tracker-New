@@ -105,6 +105,23 @@ test('every degradation key becomes its own issue', async () => {
   assert.deepEqual(keys.sort(), ['data|clv|schema', 'data|data-health|counts', 'data|grading|zero']);
 });
 
+// ── Blocked agents ride the same channel, under their own type ──
+test('a <agent>|blocked degradation becomes a blocked issue, not a data issue', async () => {
+  // The dashboard filters on type/label, which is why they are specified rather
+  // than left to the detail string: "the data is wrong" and "the agent is off"
+  // need different words in front of a human.
+  store.reportDegraded('public-splits|blocked', 'not doing its job — ANTHROPIC_API_KEY is not set (2 consecutive runs since 2026-11-04T00:00:00.000Z)');
+  await watchdog.run();
+
+  const i = issues().find((x) => x.key === 'data|public-splits|blocked');
+  assert.ok(i, 'the `data|` prefix stays — it keys the per-day dedup set');
+  assert.equal(i.type, 'blocked');
+  assert.equal(i.agent, 'public-splits', 'derived from key.split(\'|\')[0], so the key order matters');
+  assert.equal(i.label, 'Agent blocked (public-splits)');
+  assert.match(i.detail, /ANTHROPIC_API_KEY is not set/);
+  assert.equal(issues().some((x) => x.type === 'data'), false, 'and it is not ALSO reported as bad data');
+});
+
 test('a clean system raises nothing', async () => {
   await watchdog.run();
   assert.deepEqual(issues(), [], 'no crying wolf — a healthy run must be silent');

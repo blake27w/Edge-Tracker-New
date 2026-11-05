@@ -19,6 +19,18 @@ function num(v, dflt) {
   const n = Number(v);
   return Number.isFinite(n) ? n : dflt;
 }
+// A non-negative integer knob where 0 is an ACCEPTED value (e.g.
+// blockedRunsMin: 0 = report on the first blocked run), so '' / '  ' / null
+// must be rejected BEFORE coercion — Number('') is a finite 0, which is how
+// `num(env.X, 2)` and `Number(env.X) || 2` both silently discard the operator's
+// intent (the D10/D67/D79 family). Deliberately NOT a change to num(), which
+// has 40+ call sites that depend on its current behaviour.
+function intEnv(v, dflt) {
+  const s = clean(v);                 // '' for null/undefined/whitespace/quotes
+  if (s === '') return dflt;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 ? n : dflt;
+}
 function list(v, dflt = []) {
   if (!v) return dflt;
   return String(v).split(',').map((s) => s.trim()).filter(Boolean);
@@ -348,6 +360,16 @@ const config = {
     ],
     // Error recovery: after this many consecutive failures, back off the interval.
     maxConsecutiveFailures: 3,
+    // Consecutive runs an agent may report itself blocked before it is
+    // reported. Default 1 = report the first one, because an agent that
+    // returns `blocked` is ASSERTING the condition is real — for today's two
+    // opt-ins it is a missing env var, immutable for the life of the process
+    // (hasClaude() ANDs a client built once at module load with a detectModel()
+    // called once and never retried), so run 2 confirms run 1 by construction
+    // and a second run buys latency instead of signal. AGENT_BLOCKED_RUNS_MIN
+    // raises it for any future agent whose blocked cause is genuinely
+    // transient; 0 behaves as 1 and is accepted so the knob has no dead value.
+    blockedRunsMin: intEnv(env.AGENT_BLOCKED_RUNS_MIN, 1),
     backoffMultiplier: 4,
     // Alert if an agent has been failing for this long.
     downAlertMs: 30 * 60_000,
@@ -368,5 +390,10 @@ export function unitFor(score) {
   }
   return { mult: 0, label: 'skip', dollars: 0 };
 }
+
+// Exported for test/agent-blocked.test.js: the 0-is-valid behaviour is the
+// whole point of this reader, and asserting it through config.rules would need
+// a module reload per env permutation.
+export { intEnv };
 
 export default config;

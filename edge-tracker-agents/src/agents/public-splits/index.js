@@ -51,7 +51,7 @@ function resolveSide(g, market, side) {
 const prevBets = new Map();
 
 async function run() {
-  if (!hasClaude()) return { summary: 'skipped — no Claude' };
+  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set in this deployment' };
   const games = getGames().filter((g) => SPLIT_SPORTS.has(g.sport));
   if (!games.length) return { summary: 'no slate for public splits' };
 

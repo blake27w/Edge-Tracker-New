@@ -59,7 +59,7 @@ function cardsInWindow(sport, now) {
 
 async function run() {
   const now = Date.now();
-  if (!hasClaude()) return { summary: 'skipped — no Claude' };
+  if (!hasClaude()) return { summary: 'skipped — no Claude', blocked: 'ANTHROPIC_API_KEY is not set in this deployment' };
 
   // Decide which sports to check this tick.
   const active = []; // { sport, cards }

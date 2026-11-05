@@ -6,7 +6,7 @@
 import config from '../config/index.js';
 import db from '../db/index.js';
 import { logger, notifyAll } from '../utils/index.js';
-import { setHealth } from '../store/index.js';
+import { setHealth, reportDegraded, clearDegraded } from '../store/index.js';
 
 // Agent modules (each default-exports { name, run }).
 import odds from '../agents/odds/index.js';
@@ -117,8 +117,8 @@ function nextClockDelay(times, tz, days) {
   return best * 60_000;
 }
 
-function initRegistry() {
-  for (const agent of AGENTS) {
+function initRegistry(agents = AGENTS) {
+  for (const agent of agents) {
     const meta = config.AGENTS[agent.name] || {};
     registry[agent.name] = {
       name: agent.name,
@@ -140,6 +140,10 @@ function initRegistry() {
       alertedDown: false,
       gamesMonitored: 0,
       runs: 0,
+      // Self-reported "this run could not do its job" state — see runAgent.
+      consecutiveBlocked: 0,
+      blockedReason: null,
+      blockedSince: null,
     };
   }
 }
@@ -152,6 +156,9 @@ export function getHealth() {
     intervalMs: r.times ? null : r.everyMs,
     schedule: r.times ? `${r.times.join(', ')}${r.days ? ' · ' + r.days.map((d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join('/') : ''} ${r.tz}` : null,
     consecutiveFailures: r.consecutiveFailures, runs: r.runs,
+    // The DURABLE view of a blocked agent: the degraded channel ages out on
+    // the 90-min TTL, these three do not.
+    blockedRuns: r.consecutiveBlocked, blockedReason: r.blockedReason, blockedSince: r.blockedSince,
   }));
 }
 
@@ -183,6 +190,60 @@ async function runAgent(agent) {
     r.runs++;
     if (typeof out.gamesMonitored === 'number') r.gamesMonitored = out.gamesMonitored;
 
+    // ── Blocked: a run that SUCCEEDED while unable to do its job ──────
+    // An agent opts in by returning `blocked: '<reason>'` (or `true`, meaning
+    // "the summary is the reason"). Absent configuration will prevent the next
+    // run identically, so this is not a transient failure and the orchestrator
+    // cannot see it as one: status idle, error null, consecutiveFailures 0.
+    //
+    // The reason string is AUTHORED at the agent's call site and is never read
+    // or interpolated from process.env — it names a variable, never a value —
+    // so no credential (or prefix of one) can reach a log or a payload.
+    const blockedKey = `${agent.name}|blocked`;
+    const blocked = out.blocked === true ? summary
+      : (typeof out.blocked === 'string' && out.blocked.trim() ? out.blocked.trim() : null);
+    if (blocked) {
+      // A DIFFERENT reason is a different fault. Carrying the streak across
+      // would report "not doing its job — B (2 consecutive runs since <the
+      // first run that was blocked by A>)" — a count and a start time that
+      // belong to a condition that is no longer the problem. Clear the store
+      // entry too, or the watchdog's "seen 3x since <A's time>" says it again.
+      if (r.blockedReason && r.blockedReason !== blocked) {
+        r.consecutiveBlocked = 0;
+        r.blockedSince = null;
+        clearDegraded(blockedKey);
+      }
+      r.consecutiveBlocked++;
+      r.blockedReason = blocked;
+      // blockedSince latches the START of the streak — the one number a human
+      // reads to judge how long the agent has been down. Dropping the guard
+      // makes the detail say "since <the most recent run>", i.e. always "now".
+      if (!r.blockedSince) r.blockedSince = r.lastRunAt;
+      // Default threshold 1: the agent is ASSERTING the condition, and for the
+      // two opt-ins it cannot be transient (a missing env var, immutable for
+      // the process). A confirming run would buy one cadence of latency — 4h
+      // for public-splits — on exactly the incident this exists to catch.
+      // AGENT_BLOCKED_RUNS_MIN raises it for a genuinely transient cause.
+      if (r.consecutiveBlocked >= config.rules.blockedRunsMin) {
+        const detail = `not doing its job — ${blocked} (${r.consecutiveBlocked} consecutive runs since ${r.blockedSince})`;
+        reportDegraded(blockedKey, detail);
+        logger.warn(agent.name, detail);
+      }
+    } else {
+      // Clear on the DEFAULT branch, unconditionally: an unretracted
+      // reportDegraded latches for the full TTL and goes on double-reporting an
+      // obsolete reason (D73). clearDegraded is a delete — idempotent, and safe
+      // when nothing was ever set. A benign skip clears too, which is correct:
+      // the agent is no longer asserting that it is broken.
+      if (r.consecutiveBlocked > 0) {
+        logger.info(agent.name, `No longer blocked after ${r.consecutiveBlocked} run(s) — was: ${r.blockedReason}`);
+      }
+      r.consecutiveBlocked = 0;
+      r.blockedReason = null;
+      r.blockedSince = null;
+      clearDegraded(blockedKey);
+    }
+
     // Recovery: clear failure state, restore base interval.
     if (r.consecutiveFailures > 0 || r.everyMs !== r.baseEveryMs) {
       logger.info(agent.name, `Recovered — interval restored to ${Math.round(r.baseEveryMs / 1000)}s`);
@@ -209,6 +270,13 @@ async function runAgent(agent) {
     r.error = err.message;
     r.consecutiveFailures++;
     if (!r.downSince) r.downSince = started;
+
+    // A throw owns the reporting from here; leaving a blocked entry standing
+    // would double-report the same agent with an obsolete reason (D73).
+    r.consecutiveBlocked = 0;
+    r.blockedReason = null;
+    r.blockedSince = null;
+    clearDegraded(`${agent.name}|blocked`);
 
     logger.error(agent.name, `Failed (${r.consecutiveFailures}x): ${err.message}`);
     if (scanRow) {
@@ -267,6 +335,24 @@ export async function start() {
     const r = registry[agent.name];
     r.timer = setTimeout(() => runAgent(agent), i * 1500); // staggered cold start
   });
+}
+
+// TEST SEAM ONLY — the name says so because the behaviour is not what a
+// production caller wants. The blocked/failure bookkeeping lives inside
+// runAgent, which is otherwise only reachable through start(), and start() puts
+// all 50 real agents on timers. This runs exactly one agent through the full
+// path and then CANCELS its self-reschedule, which is right for a test (assert
+// the registry, leave no timer behind) and wrong for anything else: runAgent's
+// trailing setTimeout is the only thing keeping an agent alive, so calling this
+// from, say, a /run/:agent admin endpoint would unschedule that agent for the
+// rest of the process's life. Such an endpoint should call start()'s machinery
+// or re-arm the timer itself.
+export async function runAgentOnceForTest(agent) {
+  if (!registry[agent.name]) initRegistry([agent]);
+  await runAgent(agent);
+  const r = registry[agent.name];
+  if (r.timer) { clearTimeout(r.timer); r.timer = null; }
+  return r;
 }
 
 export function stop() {
