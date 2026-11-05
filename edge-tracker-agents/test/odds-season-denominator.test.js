@@ -202,8 +202,13 @@ test('a one-sport denominator cannot be priced at the whole pool', async () => {
   const pool = Math.floor(BUDGET * POOL);
   const alone = mod.nominalCap('MLB', ['MLB']);
   assert.ok(alone < pool, `a lone MLB must not be priced at the whole ${pool} pool (got ${alone})`);
-  assert.equal(alone, Math.floor(BUDGET * POOL * (ALLOC.MLB / 0.25)), 'floored at MIN_SUM_ALLOC');
-  assert.equal(mod.sumAllocOf(['MLB']), 0.25, 'the floor, not MLB\'s own 0.14');
+  // Two bounds compose here: sumAlloc is floored at 0.15, and the resulting
+  // ratio (0.14/0.15 = 0.93) is then capped at MAX_SPORT_POOL (0.6). The cap is
+  // what actually binds for a lone sport; the floor only has to catch sums so
+  // small that no believable board produces them.
+  assert.equal(alone, Math.floor(BUDGET * POOL * Math.min(ALLOC.MLB / 0.15, 0.6)), 'floor, then the per-sport cap');
+  assert.equal(alone, 10200, '60% of the pool, never 100%');
+  assert.equal(mod.sumAllocOf(['MLB']), 0.15, 'the floor, not MLB\'s own 0.14');
   // Every single-sport denominator, and the smallest two-sport one.
   for (const s of Object.keys(ALLOC)) {
     assert.ok(mod.nominalCap(s, [s]) <= Math.floor(pool * 0.6), `${s} alone is bounded by MAX_SPORT_POOL`);

@@ -104,7 +104,7 @@ test('with no published denominator, the ceiling is the tightest reading, not th
 
   // The two traps, quantified:
   //   sportCap(TENNIS)               = 600   unnormalised share
-  //   nominalCap(TENNIS, ['TENNIS'])  = 2040  sumAlloc is floored at 0.25
+  //   nominalCap(TENNIS, ['TENNIS'])  = 3400  sumAlloc is floored at 0.15 (0.03/0.15 = 0.2 of the pool)
   //
   // That second number USED to be 17000 — the whole pool — because sumAlloc was
   // the sport's own 0.03. The degenerate case became reachable when `billed` was
@@ -113,7 +113,7 @@ test('with no published denominator, the ceiling is the tightest reading, not th
   // which is why this branch must not choose it.
   const raw = Math.floor(BUDGET * ALLOC.TENNIS);
   const degenerate = nominalCap('TENNIS', ['TENNIS']);
-  assert.equal(degenerate, 2040, 'the single-element denominator is bounded, not the whole pool');
+  assert.equal(degenerate, 3400, 'the single-element denominator is bounded, not the whole pool');
   assert.ok(degenerate < Math.floor(BUDGET * 0.85), 'and strictly inside the pool');
 
   const c = currentCeiling('TENNIS');

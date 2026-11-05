@@ -261,13 +261,17 @@ const POOL = 0.85;
 // partially-recovered /sports board that lists one league for a grace window
 // would price that league at everything and, being active, let it spend it.
 //
-// 0.25 is below every real in-season set and above every collapsed one, which is
-// why it is a safety floor rather than tuning: deep winter after football is
-// NBA+NCAAB+NHL+SOCCER+UFC+BOXING = 0.31 and midsummer is
-// MLB+SOCCER+UFC+BOXING+WNBA+TENNIS+GOLF = 0.30, so the floor never binds on a
-// board we would believe — and that matters, because a HIGH floor would quietly
-// undo the feature by refusing to return a released share to the pool.
-const MIN_SUM_ALLOC = 0.25;
+// 0.15 is below every real in-season set, INCLUDING the ones the recommended
+// env shape produces — and that is the whole reason it is 0.15 and not 0.25.
+// Under the default shares deep winter is 0.31 and midsummer 0.30, but under the
+// winter ODDS_ALLOC_* shape (MLB at 0.02) the summer board after football,
+// hoops and hockey release sums to 0.18; a 0.25 floor would have bound there and
+// stranded ~28% of the pool for the month, which is precisely the "high floor
+// quietly undoes the feature" failure this comment exists to warn about. The
+// single-sport degenerate case is bounded by MAX_SPORT_POOL below, not by this
+// floor, so lowering it costs nothing there: this only has to catch sums so
+// small that no board we would believe produces them.
+const MIN_SUM_ALLOC = 0.15;
 // The second half of the same invariant, because a floor on the SUM cannot bound
 // a sport whose own share is larger than the floor: NFL at 0.32, alone in the
 // denominator, still divides by 0.32 and still gets the whole pool. So no single

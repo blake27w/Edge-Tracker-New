@@ -781,7 +781,7 @@ ok('both stamps are judged before the row is trusted',
   && /const seeded = firstOk && lastOk;/.test(seasonFns),
   "a half-written row ({first: '2026-09-06', last: '2026-11'}) took the seeded branch, dropped the unparseable `last`, and dated the release clock from `first` — releasing every quiet sport in one run");
 ok('the denominator cannot collapse',
-  /const MIN_SUM_ALLOC = 0\.25;/.test(oddsSrc) && /const MAX_SPORT_POOL = 0\.6;/.test(oddsSrc)
+  /const MIN_SUM_ALLOC = 0\.15;/.test(oddsSrc) && /const MAX_SPORT_POOL = 0\.6;/.test(oddsSrc)
   && /Math\.max\(MIN_SUM_ALLOC, raw \|\| 1\)/.test(oddsSrc)
   && /Math\.min\(share, MAX_SPORT_POOL\)/.test(oddsSrc),
   "gating `billed` by the season verdict made the degenerate case currentCeiling's own comment forbids REACHABLE: a thin /sports board listing one league would price it at the entire pool and, being active, let it spend it");

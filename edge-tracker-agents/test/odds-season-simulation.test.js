@@ -230,7 +230,7 @@ test('the published denominator equals the spec rules on every one of the 112 da
     assert.deepEqual(s.denom, s.oracle, `day ${s.day} (${s.date}): agent ${s.denom} vs oracle ${s.oracle}`);
     assert.equal(s.sumAlloc, Math.round(s.denom.reduce((t, x) => t + ALLOC[x], 0) * 1000) / 1000,
       `day ${s.day}: sumAlloc must be the raw sum over the denominator — the floor never binds on a real board`);
-    assert.ok(s.sumAlloc > 0.25, `day ${s.day}: the MIN_SUM_ALLOC floor must not bind on a believable board (${s.sumAlloc})`);
+    assert.ok(s.sumAlloc > 0.15, `day ${s.day}: the MIN_SUM_ALLOC floor must not bind on a believable board (${s.sumAlloc})`);
     assert.match(s.summary, /denom \d+\/12 \(/);
   }
 });
@@ -489,18 +489,18 @@ test('every member ceiling is its share of the pool over the live denominator, a
     const sum = s.denom.reduce((t, x) => t + ALLOC[x], 0);
     let total = 0;
     for (const x of s.denom) {
-      const want = Math.max(s.bySport[x] || 0, Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.25, sum), 0.6)));
+      const want = Math.max(s.bySport[x] || 0, Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.15, sum), 0.6)));
       // Within one credit: the agent sums the shares in its own order, and
       // floor() over a float sum can differ by one from a sum taken in another.
       assert.ok(Math.abs(s.ceilings[x] - want) <= 1, `day ${s.day} ${x}: ${s.ceilings[x]} vs ${want}`);
-      total += Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.25, sum), 0.6));
+      total += Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.15, sum), 0.6));
     }
     assert.ok(total <= BUDGET * POOL, `day ${s.day}: ${total}`);
     for (const x of Object.keys(ALLOC)) {
       if (s.denom.includes(x)) continue;
       const d = [...s.denom, x];
       const sum2 = d.reduce((t, y) => t + ALLOC[y], 0);
-      const want2 = Math.max(s.bySport[x] || 0, Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.25, sum2), 0.6)));
+      const want2 = Math.max(s.bySport[x] || 0, Math.floor(BUDGET * POOL * Math.min(ALLOC[x] / Math.max(0.15, sum2), 0.6)));
       assert.ok(Math.abs(s.ceilings[x] - want2) <= 1, `day ${s.day} ${x}: a non-member is priced against denom + itself (${s.ceilings[x]} vs ${want2})`);
     }
   }

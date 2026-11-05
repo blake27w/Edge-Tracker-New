@@ -165,12 +165,17 @@ test('grace 7 (the production floor): the same 8-day gap releases NBA for exactl
   assert.deepEqual(flipsOf(snaps).NBA, 2, 'out once, in once — and never again');
   assert.deepEqual(flipsOf(snaps).NHL, 2);
   assert.equal(flipsOf(snaps).MLB, undefined);
-  // Day 8 is the one day the board is just MLB + SOCCER (raw 0.17): the sum
-  // floor binds, the published sumAlloc says so, and MLB is priced at 0.14/0.25
-  // of the pool rather than 0.14/0.17 of it. The floor lets go as soon as the
-  // board is credible again.
-  assert.equal(snaps[8].sumAlloc, 0.25, 'the floor binds on a two-sport board, and the published number is the one priced against');
-  assert.equal(snaps[8].ceilings.MLB, Math.floor(BUDGET * 0.85 * (0.14 / 0.25)));
+  // Day 8 is the one day the board is just MLB + SOCCER (raw 0.17). The sum
+  // floor (0.15) sits BELOW that on purpose: a two-sport board is thin but
+  // believable, and a floor that bound here would strand credits — the summer
+  // board under the recommended winter ODDS_ALLOC_* shape sums to 0.18, and a
+  // 0.25 floor would have stranded ~28% of the pool for the month. So the
+  // published sumAlloc is the raw 0.17 and MLB is priced at 0.14/0.17; the
+  // degenerate single-sport case is bounded by MAX_SPORT_POOL, not by this.
+  assert.equal(snaps[8].sumAlloc, 0.17, 'the floor does not bind on a thin-but-real two-sport board');
+  // 0.14/0.17 = 0.82, which the per-sport cap (0.6) then bounds — so MLB gets
+  // 60% of the pool on its thin day, not 82% and not 100%.
+  assert.equal(snaps[8].ceilings.MLB, Math.floor(BUDGET * 0.85 * Math.min(0.14 / 0.17, 0.6)));
   assert.equal(snaps[9].sumAlloc, 0.33, 'and releases the moment the board does');
   for (let i = 9; i < snaps.length; i++) assert.equal(snaps[i].sumAlloc, 0.33);
 });
