@@ -610,6 +610,165 @@ ok('the opt-in set is asserted against the wired fleet, not just the two files',
 ok('/data-health gained no blocked-agent probe', !/blocked/i.test(codeOnly(dataHealth)),
   'the table count belongs in the diagnosis step after an alert, not in detection — a fourth mechanism was deliberately not built');
 
+// ── 14. Signal dashboard (📡 Signal home tab) ────────────────────
+// A tab has to be registered in SEVEN places. Missing any of the five display
+// sites gives a launcher tile that renders nothing, or dots/swipe that disagree
+// with the sections that exist; missing either of the two loadAgentsData sites
+// gives a tile that paints once from cache and then never updates — or worse,
+// one whose live refresh repaints the AGENTS tab over it. Each is its own
+// assertion so a failure names the site.
+const SIGNAL_SPEC = 'awaiting the signal dashboard (docs/specs/signal-dashboard.md)';
+const hasSignal = /function\s+renderSignalContent\s*\(/.test(html);
+if (!hasSignal) {
+  skipAll([
+    'HOME_TABS has a signal tile', 'renderHomeScreen dispatches signal',
+    'renderSignalView is defined', 'pagedots _ord includes signal',
+    'swipe order includes signal', 'loadAgentsData onView includes signal',
+    'loadAgentsData rerender includes signal', 'signal block found',
+    'no second /plays fetch', 'every empty state has distinct copy',
+    'vs_public is never rendered as 0%', 'per-source status is recorded',
+    'sigSrc is not persisted into etBagCache', 'backward compatible field access',
+    'wide tables scroll in their own container', 'no charting dependency',
+    "empty state 'loading' has its own copy", "empty state 'nodata' has its own copy",
+    "empty state 'stale' has its own copy", "empty state 'off' has its own copy",
+    "empty state 'failed' has its own copy", "the five states' copy lives in sigBanner",
+    'the episode card is not duplicated', 'the data-health labels are shared, not copied',
+    '/plays serves sharp', '/budget publishes ceilings',
+    'the ceilings payload is covered by a test',
+    'JetBrains Mono rides the existing fonts link', 'the Signal view paints under one root',
+    'HUD atmosphere and chamfers are scoped to the Signal root', 'every HUD rule is under the Signal root',
+    'prefers-reduced-motion guards the sweep', 'chip sub-status falls back to a dash',
+  ], SIGNAL_SPEC);
+} else {
+
+ok('HOME_TABS has a signal tile', /HOME_TABS[\s\S]{0,900}?id:\s*'signal'/.test(html));
+ok('renderHomeScreen dispatches signal', /homeTab===['"]signal['"]\s*\)\s*renderSignalView\(\)/.test(html));
+ok('renderSignalView is defined', /function\s+renderSignalView\s*\(/.test(html));
+ok('pagedots _ord includes signal', /_ord\s*=\s*\[[^\]]*'signal'/.test(html));
+ok('swipe order includes signal', /\border\s*=\s*\[[^\]]*'signal'/.test(html));
+// The two the spec flags as silent failures: both live inside loadAgentsData,
+// and neither shows up as an error — the tab just stops being live.
+ok('loadAgentsData onView includes signal', /onView\s*=[\s\S]{0,300}?homeTab===['"]signal['"]/.test(html),
+  'without it the live refresh never repaints the dashboard, so it shows the cached bag forever');
+ok('loadAgentsData rerender includes signal', /rerender\s*=[\s\S]{0,400}?homeTab===['"]signal['"]\s*\)\s*renderSignalContent\(\)/.test(html),
+  "and it must come FIRST in the chain: 'signal' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
+
+const sigBlock = html.slice(html.indexOf('function renderSignalContent'), html.indexOf('function agentPlayKey'));
+ok('signal block found', sigBlock.length > 2000, `${sigBlock.length} chars`);
+
+// The whole design premise: the dashboard reads the bag the Agents tab already
+// fetched. One `fetch(` here is a second 1.36MB /plays download per tab switch.
+ok('no second /plays fetch', !/fetch\(/.test(sigBlock),
+  'the dashboard must read state.agents* from the existing one-shot bag, never fetch its own');
+
+// Five states, five different sentences. If any two collapse into the same
+// words, "nothing happened" and "I cannot see it" are indistinguishable again —
+// which is the failure that hid the sharp bug for 13,000+ runs.
+for (const [state_, copy] of [
+  ['loading', 'Loading —'], ['nodata', 'Feed answered.'], ['stale', 'older than'],
+  ['off', 'NOT FIRING'], ['failed', 'Read failed —'],
+]) ok(`empty state '${state_}' has its own copy`, sigBlock.includes(copy), `missing: ${copy}`);
+ok('every empty state has distinct copy',
+  ['Loading —', 'Feed answered.', 'older than', 'NOT FIRING', 'Read failed —'].every((c) => sigBlock.includes(c)));
+// All five live in sigBanner, not scattered across the panels, so no panel can
+// quietly substitute a gentler phrasing of its own.
+const bannerFn = (sigBlock.match(/function sigBanner\(kind,o\)\{[\s\S]*?\n\}/) || [''])[0];
+ok('the five states\' copy lives in sigBanner',
+  ['Loading —', 'Feed answered.', 'older than', 'NOT FIRING', 'Read failed —'].every((c) => bannerFn.includes(c)),
+  'a panel-local rewording is how one of these five stops being distinguishable from the others');
+
+// vs_public_pct is null (not 0) for every book because public_splits has no
+// rows. `|| 0` anywhere on that path turns "we cannot measure this" into "this
+// measured zero" — the single most load-bearing distinction on the screen.
+ok('vs_public is never rendered as 0%',
+  /vs_public_n/.test(sigBlock) && /vs_public_pct!=null/.test(sigBlock)
+  && !/vs_public_pct\s*\|\|\s*0/.test(sigBlock),
+  'a null against-public percentage must render as — with the UNAVAILABLE banner, never as 0%');
+
+// Each backend fetch ends `.catch(() => ({}))` and applyAgentsBag guards every
+// assignment with `if (bag.X)`, so a failed read silently preserves the stale
+// value. Key presence in `bag`, recorded before applyAgentsBag runs, is the
+// only thing that can tell a failure from a success.
+const loaderFn = (html.match(/function loadAgentsData\(\)[\s\S]*?\n\}\n/) || [''])[0];
+ok('per-source status is recorded', /state\.sigSrc/.test(loaderFn)
+  && /applyAgentsBag\(bag\)/.test(loaderFn)
+  && loaderFn.indexOf('state.sigSrc') < loaderFn.indexOf('applyAgentsBag(bag)'),
+  'sigSrc must be written from key presence in `bag` BEFORE applyAgentsBag consumes it');
+// A cached ok:true is a claim about a refresh that has not happened yet.
+ok('sigSrc is not persisted into etBagCache',
+  !/bag\.sigSrc|sigSrc:/.test(loaderFn) && /etBagCache/.test(loaderFn),
+  'sigSrc describes the LAST refresh, so replaying it out of localStorage would assert a successful read that never happened');
+
+// hydrateAgentsCache replays an OLD etBagCache bag into this new code, so any
+// field added since a user's last visit is simply absent. This repo has shipped
+// bugs from exactly that.
+ok('backward compatible field access',
+  !/state\.agents\w+\.(length|forEach|map|slice)\b/.test(sigBlock),
+  'every state.agents* read must go through (x||[]) — an old cached bag has none of these fields');
+
+ok('wide tables scroll in their own container',
+  /\.sigtbl-wrap\{[^}]*overflow-x:\s*auto/.test(html) && /sigtbl-wrap/.test(sigBlock),
+  'at 375px the 8-column book table is wider than the viewport by design; the wrapper must scroll so the PAGE never does');
+
+// Comments stripped: the comment that documents sigSpark mentions <svg>, and
+// forbidding the substring in prose would fail the build for the explanation.
+ok('no charting dependency', (codeOnly(sigBlock).match(/<svg/g) || []).length === 1,
+  'the only graphic is the hand-rolled sigSpark polyline — no build step exists to carry a chart library');
+
+ok('the episode card is not duplicated',
+  /function\s+sigEpisodeCard\s*\(/.test(html)
+  && /\(bm\.live\|\|\[\]\)\.slice\(0,\s*20\)\.forEach\(function\(m\)\{h\+=sigEpisodeCard\(m\);\}\)/.test(html),
+  "renderAgentsContent's book-movement block must CALL the helper, not keep its own copy of the markup");
+ok('the data-health labels are shared, not copied',
+  /^var DH_LBL=/m.test(html) && (html.match(/DH_LBL\[/g) || []).length >= 2,
+  'the Health panel and renderDataHealth render the same table list; two copies is two things to forget when a table is added');
+
+// Backend: both fields are additive, and both are the only way the data becomes
+// reachable from a client at all.
+ok('/plays serves sharp', /sharp:\s*getIntel\('sharp'\)/.test(server),
+  "setIntel('sharp', …) is written on every run and was exposed by no endpoint");
+ok('/budget publishes ceilings',
+  /getOddsCeilings\(\)/.test(server) && /export function getOddsCeilings/.test(oddsSrc),
+  'currentCeiling() is module-private, so "3 budget-skips" in the run summary had no reachable explanation');
+const ceilTestSrc = await readFile(join(root, 'edge-tracker-agents/test/odds-ceilings-payload.test.js'), 'utf8')
+  .catch(() => '');
+ok('the ceilings payload is covered by a test',
+  /getOddsCeilings/.test(ceilTestSrc) && /POOL fraction/.test(ceilTestSrc) && /denom is null/.test(ceilTestSrc),
+  "D61's crossover is the live hazard: sportCap() sums to the entire month, and `denom: null` is a different claim from \"every sport\" (D65)");
+
+// ── 14b. The mission-control skin ────────────────────────────────
+// Blake uses the rest of the PWA on his phone every day, so the HUD is a
+// property of the Signal view's root (.sighud), never of body: the grid, the
+// scanline overlay and the chamfered corners must all hang off that one class.
+const fontLinks = html.match(/<link[^>]*fonts\.googleapis\.com[^>]*>/g) || [];
+ok('JetBrains Mono rides the existing fonts link',
+  fontLinks.length === 1 && /JetBrains\+Mono/.test(fontLinks[0]) && /Courier\+Prime/.test(fontLinks[0]) && /Rajdhani/.test(fontLinks[0]),
+  'one stylesheet <link> carries all three faces — a second link is a second render-blocking request, and a <script> would trip the no-src rule');
+ok('the Signal view paints under one root', /class="sighud"/.test(sigBlock),
+  'every HUD rule is prefixed .sighud, so the markup has to open that root or nothing is styled');
+const css = ((html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1]).replace(/\/\*[\s\S]*?\*\//g, '');
+// Flat rule list; @media wrappers fall away because `[^{}]+` cannot cross a brace.
+const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
+const leaked = rules.filter(([sel, body]) =>
+  (/clip-path:/.test(body) || /background-size:\s*28px 28px/.test(body)) && !/^\.sighud\b/.test(sel));
+ok('HUD atmosphere and chamfers are scoped to the Signal root',
+  leaked.length === 0 && rules.some(([sel, body]) => sel === '.sighud::after' && /repeating-linear-gradient/.test(body))
+  && !rules.some(([sel, body]) => /^body\b/.test(sel) && /28px 28px/.test(body)),
+  leaked.length ? `leaked: ${leaked.map(([sel]) => sel).join(', ')}` : 'the scanline overlay must be .sighud::after, not body::after');
+const unscoped = rules.filter(([sel]) => /\.(sh-|sigep)/.test(sel) && !/^\.sighud\b/.test(sel));
+ok('every HUD rule is under the Signal root', unscoped.length === 0,
+  unscoped.length ? `unscoped: ${unscoped.map(([sel]) => sel).join(', ')}` : '');
+ok('prefers-reduced-motion guards the sweep',
+  /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.sighud \.sh-sweep[^}]*animation:\s*none/.test(css)
+  && /\.sighud \.sh-sweep\{[^}]*animation:/.test(css),
+  'the radar sweep and the pulse dot must stop for a reduced-motion viewer');
+// A chip whose panel has nothing to say shows a dash — never a number.
+ok('chip sub-status falls back to a dash',
+  /function sigChipStatus\(/.test(sigBlock) && /c\.txt\|\|'—'/.test(sigBlock) && !/txt:\s*['"]0['"]\s*,/.test(sigBlock),
+  'a sub-status with no data behind it is —, not a fabricated 0');
+
+}
+
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
 if (skips.length) {
