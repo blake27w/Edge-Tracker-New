@@ -445,3 +445,114 @@ test('the configured grace cannot be set below the floor, and 0 still means 0 to
   // function must still release at 0, or the boundary tests above could not run.
   assert.equal(run(keysOf('NBA'), {}, 0, 0).verdicts.MLB.in, false);
 });
+
+// ── The boundaries, as a table ─────────────────────────────────
+// Every edge of the rule in one place: each grace the floor and the tests care
+// about (0, 1, 7, 14) against a sport seen today, 14 days ago, 15, never, or in
+// the future; a `quiet` that is missing, 0, exactly graceDays, graceDays+1; an
+// `obs` that is today or yesterday either side of a UTC midnight; and the rows a
+// truncated jsonb write can leave behind. The expectation is the spec's
+// sentence — "release after graceDays consecutive OBSERVED quiet days" — so a
+// sport seen N days ago and observed quiet every day since is in iff N <= grace.
+//
+// `seen(N)`: last active N days ago, every day since observed quiet (quiet N-1
+// as of yesterday). `never(N)`: seeded N days ago, never active, observed quiet
+// every day since (the seeding day counts).
+const seen = (n, extra = {}) => ({ first: day(-200), last: day(-n), in: true, quiet: n - 1, obs: day(-1), ...extra });
+const never = (n, extra = {}) => ({ first: day(-n), last: null, in: true, quiet: n, obs: day(-1), ...extra });
+const MIDNIGHT = (days, hhmm) => new Date(Date.parse(`${day(days)}T${hhmm}:00Z`));
+const DAY_OK = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+test('the boundary table: grace x age x quiet x obs, each resolved exactly as the sentence says', () => {
+  const cases = [
+    // ── grace 14, the default ──
+    { name: 'seen today, active now', g: 14, active: true, st: seen(0, { quiet: 0, obs: day(0) }), want: { in: true, reason: 'active-now', quiet: 0, last: day(0) } },
+    { name: 'seen earlier today, absent this run', g: 14, st: seen(0, { quiet: 0, obs: day(0) }), want: { in: true, reason: 'grace (0d ago)', quiet: 0 } },
+    { name: 'seen 1 day ago', g: 14, st: seen(1), want: { in: true, reason: 'grace (1d ago)', quiet: 1 } },
+    { name: 'seen 13 days ago', g: 14, st: seen(13), want: { in: true, reason: 'grace (13d ago)', quiet: 13 } },
+    { name: 'seen 14 days ago — the last day inside the window', g: 14, st: seen(14), want: { in: true, reason: 'grace (14d ago)', quiet: 14 } },
+    { name: 'seen 15 days ago — the first day outside it', g: 14, st: seen(15), want: { in: false, reason: 'released (15d idle)', quiet: 15 } },
+    { name: 'seen 100 days ago', g: 14, st: seen(100), want: { in: false, reason: 'released (100d idle)', quiet: 100 } },
+    { name: 'never seen, seeded today', g: 14, st: undefined, want: { in: true, reason: 'seeding (14d left)', quiet: 1, last: null, first: day(0) } },
+    { name: 'never seen, seeded 13 days ago', g: 14, st: never(13), want: { in: true, reason: 'seeding (1d left)', quiet: 14 } },
+    { name: 'never seen, seeded 14 days ago — the 15th observation', g: 14, st: never(14), want: { in: false, reason: 'released (14d idle)', quiet: 15 } },
+    { name: 'seen in the future (clock skew)', g: 14, st: seen(-3, { quiet: 50 }), want: { in: true, reason: 'grace (0d ago)', quiet: 51 } },
+    { name: 'seeded in the future, never seen', g: 14, st: never(-3, { quiet: 50 }), want: { in: true, reason: 'seeding (0d left)', quiet: 51 } },
+    // ── grace 7, the production floor ──
+    { name: 'grace 7: seen 7 days ago', g: 7, st: seen(7), want: { in: true, reason: 'grace (7d ago)', quiet: 7 } },
+    { name: 'grace 7: seen 8 days ago', g: 7, st: seen(8), want: { in: false, reason: 'released (8d idle)', quiet: 8 } },
+    { name: 'grace 7: seen 14 days ago', g: 7, st: seen(14), want: { in: false, reason: 'released (14d idle)', quiet: 14 } },
+    { name: 'grace 7: never seen, seeded 7 days ago', g: 7, st: never(7), want: { in: false, reason: 'released (7d idle)', quiet: 8 } },
+    { name: 'grace 7: never seen, seeded 6 days ago', g: 7, st: never(6), want: { in: true, reason: 'seeding (1d left)', quiet: 7 } },
+    // ── grace 1 ──
+    { name: 'grace 1: seen yesterday', g: 1, st: seen(1), want: { in: true, reason: 'grace (1d ago)', quiet: 1 } },
+    { name: 'grace 1: seen 2 days ago', g: 1, st: seen(2), want: { in: false, reason: 'released (2d idle)', quiet: 2 } },
+    { name: 'grace 1: never seen, seeded today', g: 1, st: undefined, want: { in: true, reason: 'seeding (1d left)', quiet: 1 } },
+    { name: 'grace 1: never seen, seeded yesterday', g: 1, st: never(1), want: { in: false, reason: 'released (1d idle)', quiet: 2 } },
+    // ── grace 0, the boundary on demand ──
+    { name: 'grace 0: active now', g: 0, active: true, st: seen(5), want: { in: true, reason: 'active-now', quiet: 0 } },
+    { name: 'grace 0: seen earlier today is still in', g: 0, st: seen(0, { quiet: 0, obs: day(0) }), want: { in: true, reason: 'grace (0d ago)', quiet: 0 } },
+    { name: 'grace 0: seen yesterday is out', g: 0, st: seen(1), want: { in: false, reason: 'released (1d idle)', quiet: 1 } },
+    { name: 'grace 0: never seen is out on the seeding run', g: 0, st: undefined, want: { in: false, reason: 'released (0d idle)', quiet: 1 } },
+    // ── quiet: missing, 0, exactly grace, grace+1 ──
+    { name: 'quiet missing (a row from before the counter): starts at 0, not at calendar age', g: 14, st: { first: day(-200), last: day(-40), in: true }, want: { in: true, reason: 'grace (40d ago)', quiet: 0 } },
+    { name: 'quiet 0, obs yesterday: counts to 1', g: 14, st: seen(40, { quiet: 0 }), want: { in: true, reason: 'grace (40d ago)', quiet: 1 } },
+    { name: 'quiet exactly grace, obs yesterday, calendar agrees: released', g: 14, st: seen(14, { quiet: 14 }), want: { in: false, reason: 'released (14d idle)', quiet: 15 } },
+    { name: 'quiet exactly grace, obs TODAY: not counted again, held', g: 14, st: seen(14, { quiet: 14, obs: day(0) }), want: { in: true, reason: 'grace (14d ago)', quiet: 14 } },
+    { name: 'quiet exactly grace but seen 5 days ago (inconsistent row): the calendar half holds it', g: 14, st: seen(5, { quiet: 14 }), want: { in: true, reason: 'grace (5d ago)', quiet: 15 } },
+    { name: 'quiet grace+1, obs yesterday', g: 14, st: seen(16, { quiet: 15 }), want: { in: false, reason: 'released (16d idle)', quiet: 16 } },
+    { name: 'quiet grace+1, obs today, seen 13 days ago: calendar holds it', g: 14, st: seen(13, { quiet: 15, obs: day(0) }), want: { in: true, reason: 'grace (13d ago)', quiet: 15 } },
+    // ── half-written rows ──
+    { name: 'last truncated to a month: reseed', g: 14, st: { first: day(-200), last: '2026-11', in: false, quiet: 40, obs: day(-1) }, want: { in: true, reason: 'seeding (14d left)', quiet: 1, first: day(0), last: null } },
+    { name: 'first truncated: reseed', g: 14, st: { first: '2026-1', last: day(-40), in: false, quiet: 40, obs: day(-1) }, want: { in: true, reason: 'seeding (14d left)', quiet: 1, first: day(0), last: null } },
+    { name: 'last empty string: reseed', g: 14, st: { first: day(-200), last: '', in: false, quiet: 40, obs: day(-1) }, want: { in: true, reason: 'seeding (14d left)', quiet: 1 } },
+    { name: 'last absent (never active) is a legitimate row, not a half-written one', g: 14, st: { first: day(-20), in: true, quiet: 19, obs: day(-1) }, want: { in: false, reason: 'released (20d idle)', quiet: 20 } },
+    { name: 'quiet as a string: reads as 0', g: 14, st: seen(40, { quiet: '40' }), want: { in: true, reason: 'grace (40d ago)', quiet: 1 } },
+    { name: 'quiet negative: reads as 0', g: 14, st: seen(40, { quiet: -3 }), want: { in: true, reason: 'grace (40d ago)', quiet: 1 } },
+    { name: 'quiet fractional: reads as 0', g: 14, st: seen(40, { quiet: 14.5 }), want: { in: true, reason: 'grace (40d ago)', quiet: 1 } },
+    { name: 'obs unparseable: today is treated as already counted', g: 14, st: seen(40, { quiet: 10, obs: 'garbage' }), want: { in: true, reason: 'grace (40d ago)', quiet: 10 } },
+    { name: 'obs absent: today is treated as already counted', g: 14, st: seen(40, { quiet: 10, obs: undefined }), want: { in: true, reason: 'grace (40d ago)', quiet: 10 } },
+    { name: 'the entry is not an object: reseed', g: 14, st: 'garbage', want: { in: true, reason: 'seeding (14d left)', quiet: 1 } },
+    { name: 'the entry is null: reseed', g: 14, st: null, want: { in: true, reason: 'seeding (14d left)', quiet: 1 } },
+  ];
+  for (const c of cases) {
+    const state = c.st === undefined ? {} : { MLB: c.st };
+    const { verdicts, nextState } = run(c.active ? keysOf('MLB') : keysOf('NBA'), state, 0, c.g);
+    const v = verdicts.MLB;
+    const e = nextState.MLB;
+    assert.equal(v.in, c.want.in, `${c.name}: in`);
+    assert.equal(v.reason, c.want.reason, `${c.name}: reason`);
+    assert.equal(e.quiet, c.want.quiet, `${c.name}: quiet`);
+    assert.equal(e.obs, day(0), `${c.name}: obs is always stamped today`);
+    if ('last' in c.want) assert.equal(e.last, c.want.last, `${c.name}: last`);
+    if ('first' in c.want) assert.equal(e.first, c.want.first, `${c.name}: first`);
+    assert.ok(REASON_OK(v.reason), `${c.name}: reason outside the closed set`);
+    assert.ok(Number.isInteger(e.quiet) && e.quiet >= 0 && DAY_OK(e.first) && (e.last === null || DAY_OK(e.last)),
+      `${c.name}: the rewritten row must always be clean`);
+  }
+});
+
+test('obs across a UTC midnight: 23:30 and 00:30 are two observations, 00:30 and 23:30 are one', () => {
+  const base = { first: day(-200), last: day(-5), in: true, quiet: 4, obs: day(-1) };
+  // Yesterday 23:30Z counted day -1 (already in the row as obs = day(-1)); today
+  // 00:30Z is a new calendar day and counts.
+  const a = seasonVerdicts(keysOf('NBA'), { MLB: base }, SPORTS, MIDNIGHT(0, '00:30'), 14, false);
+  assert.equal(a.nextState.MLB.quiet, 5);
+  assert.equal(a.nextState.MLB.obs, day(0));
+  // 23:30Z the same day: same calendar day, counted already.
+  const b = seasonVerdicts(keysOf('NBA'), a.nextState, SPORTS, MIDNIGHT(0, '23:30'), 14, false);
+  assert.equal(b.nextState.MLB.quiet, 5);
+  // 00:30Z the next day: counts again — two observations an hour apart, which
+  // is how a 14-day window is really 14 days plus a minute. The calendar half of
+  // the rule (`idle < graceDays`) is what stops that minute from mattering.
+  const c = seasonVerdicts(keysOf('NBA'), b.nextState, SPORTS, MIDNIGHT(1, '00:30'), 14, false);
+  assert.equal(c.nextState.MLB.quiet, 6);
+  assert.equal(c.verdicts.MLB.reason, 'grace (6d ago)');
+  // And the release itself, straddling midnight: quiet 14 at 23:59 is held,
+  // quiet 15 at 00:01 is released — only because the calendar also reads 15.
+  const held = seasonVerdicts(keysOf('NBA'), { MLB: { ...base, last: day(-14), quiet: 13, obs: day(-1) } }, SPORTS, MIDNIGHT(0, '23:59'), 14, false);
+  assert.equal(held.verdicts.MLB.reason, 'grace (14d ago)');
+  const rel = seasonVerdicts(keysOf('NBA'), held.nextState, SPORTS, MIDNIGHT(1, '00:01'), 14, false);
+  assert.equal(rel.verdicts.MLB.reason, 'released (15d idle)');
+  assert.equal(rel.nextState.MLB.quiet, 15);
+});

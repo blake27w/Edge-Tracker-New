@@ -352,6 +352,7 @@ ok('every KEYS entry has a landing frequency', kn.KEYS.every((x) => kn.LAND_PCT[
 // read is bounded and rides an index that exists, and a gap wider than the
 // bound reseeds instead of emitting a fabricated magnitude.
 const oddsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/odds/index.js'), 'utf8');
+const utilsSrc = await readFile(join(root, 'edge-tracker-agents/src/utils/index.js'), 'utf8').catch(() => '');
 const envExample = await readFile(join(root, 'edge-tracker-agents/.env.example'), 'utf8').catch(() => '');
 // The two consumers of odds' in-memory movement feeds — which one reads which
 // key is the invariant, not a detail (D74).
@@ -840,6 +841,47 @@ ok('the pool bound is pinned to computed ceilings, not to an identity',
   /every in-denominator ceiling equals its independently-computed share/.test(seasonTests)
   && !/and not vacuously small/.test(seasonTests),
   "`Sum floor(B x POOL x share_i / sumAlloc) <= B x POOL` is true of ANY denominator by construction — it would have passed unchanged under a mutation that released every sport, which is the one thing it was there to catch");
+
+// ── 15b. The season boundary, simulated — and the guards driven together ──
+// The spec concedes the live proof arrives months apart (MLB ~19 Nov, football
+// after the Super Bowl). The suite therefore carries a whole simulated season
+// through the real run() on a replaced clock, plus the three guards (observation
+// counter, denominator bounds, empty-board fail-safe) driven in SEQUENCE rather
+// than one at a time. These pin that the coverage exists and keeps its shape.
+const seasonSim = await readFile(join(root, 'edge-tracker-agents/test/odds-season-simulation.test.js'), 'utf8').catch(() => '');
+const seasonGuards = await readFile(join(root, 'edge-tracker-agents/test/odds-season-guards.test.js'), 'utf8').catch(() => '');
+ok('a full season is simulated through run() on a replaced clock',
+  /class FakeDate extends RealDate/.test(seasonSim) && /global\.Date = FakeDate/.test(seasonSim)
+  && /global\.Date = RealDate/.test(seasonSim) && /mod\.default\.run\(\)/.test(seasonSim),
+  'the agent reads `new Date()` itself, so the only deterministic season boundary is a clock the test owns — and one it restores');
+ok('the simulation covers the outage, the exhausted month, two rollovers and a restart',
+  /OUTAGE_FROM/.test(seasonSim) && /budget exhausted/.test(seasonSim) && /2027-01-01/.test(seasonSim)
+  && /\?restart=/.test(seasonSim) && /NOT aged out by the outage/.test(seasonSim),
+  'each of these is a way a calendar clock would have released the whole table on one observation (D6 by another road)');
+ok('the simulation is checked against an independent oracle, every sport every day',
+  /function oracleStep/.test(seasonSim) && /assert\.deepEqual\(s\.denom, s\.oracle/.test(seasonSim),
+  'hand-picked checkpoints only catch what was anticipated; the oracle is the spec sentence re-implemented without the row bookkeeping');
+ok('NFL is asserted in on every day of its season, by grace and never by the backstop',
+  /never by the backstop/.test(seasonSim) && /assert\.notEqual\(s\.season\.NFL\.reason, 'football-backstop'/.test(seasonSim),
+  'absent ~4 days in 7 is the exact shape the September bug released; grace alone must hold it or the backstop is load-bearing');
+ok('the guards are driven in sequence: partial board, empty board across a rollover, a mid-window blip, a corrupt row',
+  /partial board for eight days/i.test(seasonGuards) && /straddling Nov 1/.test(seasonGuards)
+  && /appears for one day mid-window/.test(seasonGuards) && /corrupted sentinel row/.test(seasonGuards),
+  'each guard landed in its own pass; only a sequence shows whether they wedge, flap or strand together');
+ok('flapping is asserted away: alternating presence, alternating readability, twenty runs a day',
+  /alternates day by day/.test(seasonGuards) && /alternates readable\/unreadable/.test(seasonGuards)
+  && /twenty runs a day/.test(seasonGuards) && /flipsOf/.test(seasonGuards),
+  'every flip moves every other ceiling, so the denominator must move only as often as a season does');
+ok('the released sport cannot spend, and spend accounting is pinned to 3 credits per call',
+  /never accrues spend/.test(seasonSim) && /callsToday\.length \* 3/.test(seasonSim)
+  && /used must equal the sum of bySport/.test(seasonSim),
+  'the billed gate is the whole fix; the accounting beneath it must be unchanged by it');
+ok('every api_usage read in the agents is provider-scoped',
+  (() => {
+    const reads = (oddsSrc + utilsSrc).match(/db\.select\('api_usage'[^\n]*/g) || [];
+    return reads.length >= 3 && reads.every((r) => /provider/.test(r) || /SEASON_ROW/.test(r));
+  })(),
+  'the sentinel shares the table with the odds month row and the claude row — an unscoped read would render whichever landed last');
 
 if (hasSignal) {
   ok('the PWA reads only the ODDS api_usage row',

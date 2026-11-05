@@ -29,8 +29,18 @@ const SPORTS = Object.fromEntries(Object.keys(ALLOC).map((s) => [s, { key: KEY(s
 SPORTS.TENNIS.oddsSkip = true;
 SPORTS.GOLF.oddsSkip = true;
 
-const today = new Date().toISOString().slice(0, 10);
-const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+// The clock is PINNED, not read: `today` here and `new Date()` inside the agent
+// must agree, and a test that imports at 23:59:59 and runs at 00:00:00 UTC
+// would otherwise count one quiet day more than its fixture says.
+const NOW = Date.parse('2026-11-05T15:00:00Z');
+const RealDate = Date;
+class FakeDate extends RealDate {
+  constructor(...a) { if (a.length) super(...a); else super(NOW); }
+  static now() { return NOW; }
+}
+global.Date = FakeDate;
+const today = new RealDate(NOW).toISOString().slice(0, 10);
+const daysAgo = (n) => new RealDate(NOW - n * 86_400_000).toISOString().slice(0, 10);
 // The state a mid-month exhaustion leaves behind: MLB already 10 observed quiet
 // days in, NBA seen active yesterday.
 const STATE = {
@@ -82,7 +92,7 @@ before(async () => {
   });
   mod = await import('../src/agents/odds/index.js');
 });
-after(() => { global.fetch = realFetch; mock.reset(); });
+after(() => { global.Date = RealDate; global.fetch = realFetch; mock.reset(); });
 
 test('an exhausted month still observes the season, and says so', async () => {
   const r = await mod.default.run();

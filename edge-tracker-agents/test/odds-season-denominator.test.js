@@ -52,6 +52,15 @@ const cfg = {
   SPORTS, BOOKS: ['draftkings'], BOOK_LABELS: { draftkings: 'DK' },
   rules: { oddsReserve: 1000, unitDollars: 100 }, dryRun: true,
 };
+// The clock is pinned so the month-row assertion cannot straddle a month
+// boundary between the run that wrote it and the line that reads it.
+const NOW = Date.parse('2026-11-05T15:00:00Z');
+const RealDate = Date;
+class FakeDate extends RealDate {
+  constructor(...a) { if (a.length) super(...a); else super(NOW); }
+  static now() { return NOW; }
+}
+global.Date = FakeDate;
 const upserts = [];
 let sportsReadable = true;
 let sentinelWritable = true;
@@ -105,7 +114,7 @@ before(async () => {
 
   mod = await import('../src/agents/odds/index.js');
 });
-after(() => { global.fetch = realFetch; mock.reset(); });
+after(() => { global.Date = RealDate; global.fetch = realFetch; mock.reset(); });
 
 // ── 1. Grace, with the football backstop OFF ────────────────────
 // The verifier's first question: with FOOTBALL_PRIORITY=false and /sports NOT
@@ -298,7 +307,7 @@ test('the season state lands in its own sentinel row and never clobbers the mont
   assert.equal(sentinel.at(-1).row.month, 'state',
     'month-independent: a month rollover must not reset a season clock');
   const last = month.at(-1).row;
-  assert.equal(last.month, new Date().toISOString().slice(0, 7));
+  assert.equal(last.month, '2026-11');
   assert.equal(last.by_sport.NBA >= SEEDED.NBA, true, 'the credit counter is untouched by the sentinel write');
   assert.equal(last.by_sport.first, undefined, 'season state must not leak into the month row');
   const state = sentinel.at(-1).row.by_sport;
