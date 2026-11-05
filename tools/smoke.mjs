@@ -637,6 +637,9 @@ if (!hasSignal) {
     'the episode card is not duplicated', 'the data-health labels are shared, not copied',
     '/plays serves sharp', '/budget publishes ceilings',
     'the ceilings payload is covered by a test',
+    'JetBrains Mono rides the existing fonts link', 'the Signal view paints under one root',
+    'HUD atmosphere and chamfers are scoped to the Signal root', 'every HUD rule is under the Signal root',
+    'prefers-reduced-motion guards the sweep', 'chip sub-status falls back to a dash',
   ], SIGNAL_SPEC);
 } else {
 
@@ -734,6 +737,37 @@ const ceilTestSrc = await readFile(join(root, 'edge-tracker-agents/test/odds-cei
 ok('the ceilings payload is covered by a test',
   /getOddsCeilings/.test(ceilTestSrc) && /POOL fraction/.test(ceilTestSrc) && /denom is null/.test(ceilTestSrc),
   "D61's crossover is the live hazard: sportCap() sums to the entire month, and `denom: null` is a different claim from \"every sport\" (D65)");
+
+// ── 14b. The mission-control skin ────────────────────────────────
+// Blake uses the rest of the PWA on his phone every day, so the HUD is a
+// property of the Signal view's root (.sighud), never of body: the grid, the
+// scanline overlay and the chamfered corners must all hang off that one class.
+const fontLinks = html.match(/<link[^>]*fonts\.googleapis\.com[^>]*>/g) || [];
+ok('JetBrains Mono rides the existing fonts link',
+  fontLinks.length === 1 && /JetBrains\+Mono/.test(fontLinks[0]) && /Courier\+Prime/.test(fontLinks[0]) && /Rajdhani/.test(fontLinks[0]),
+  'one stylesheet <link> carries all three faces — a second link is a second render-blocking request, and a <script> would trip the no-src rule');
+ok('the Signal view paints under one root', /class="sighud"/.test(sigBlock),
+  'every HUD rule is prefixed .sighud, so the markup has to open that root or nothing is styled');
+const css = ((html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1]).replace(/\/\*[\s\S]*?\*\//g, '');
+// Flat rule list; @media wrappers fall away because `[^{}]+` cannot cross a brace.
+const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
+const leaked = rules.filter(([sel, body]) =>
+  (/clip-path:/.test(body) || /background-size:\s*28px 28px/.test(body)) && !/^\.sighud\b/.test(sel));
+ok('HUD atmosphere and chamfers are scoped to the Signal root',
+  leaked.length === 0 && rules.some(([sel, body]) => sel === '.sighud::after' && /repeating-linear-gradient/.test(body))
+  && !rules.some(([sel, body]) => /^body\b/.test(sel) && /28px 28px/.test(body)),
+  leaked.length ? `leaked: ${leaked.map(([sel]) => sel).join(', ')}` : 'the scanline overlay must be .sighud::after, not body::after');
+const unscoped = rules.filter(([sel]) => /\.(sh-|sigep)/.test(sel) && !/^\.sighud\b/.test(sel));
+ok('every HUD rule is under the Signal root', unscoped.length === 0,
+  unscoped.length ? `unscoped: ${unscoped.map(([sel]) => sel).join(', ')}` : '');
+ok('prefers-reduced-motion guards the sweep',
+  /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.sighud \.sh-sweep[^}]*animation:\s*none/.test(css)
+  && /\.sighud \.sh-sweep\{[^}]*animation:/.test(css),
+  'the radar sweep and the pulse dot must stop for a reduced-motion viewer');
+// A chip whose panel has nothing to say shows a dash — never a number.
+ok('chip sub-status falls back to a dash',
+  /function sigChipStatus\(/.test(sigBlock) && /c\.txt\|\|'—'/.test(sigBlock) && !/txt:\s*['"]0['"]\s*,/.test(sigBlock),
+  'a sub-status with no data behind it is —, not a fabricated 0');
 
 }
 
