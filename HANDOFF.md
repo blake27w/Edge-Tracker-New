@@ -82,6 +82,18 @@ banner. Nothing to hand-run — no DDL, no schema change, no new localStorage ke
 6. **`docs/specs/web-app-revival.md` is abandoned.** It proposed a separate Next.js app; Blake chose
    the PWA. Delete it or mark it rejected so a future session does not build it.
 
+## OWED NOW — Railway env (both are Blake's, neither is code)
+
+```
+ANTHROPIC_API_KEY=<your key>          # revives public-splits + combat-weighin; REQUIRES A RESTART
+ODDS_ALLOC_NFL=0.26   ODDS_ALLOC_NCAAF=0.13   ODDS_ALLOC_MLB=0.02
+ODDS_ALLOC_NBA=0.22   ODDS_ALLOC_NCAAB=0.14   ODDS_ALLOC_NHL=0.14
+```
+
+The key needs a **restart** — the Anthropic client is built once at module load and `detectModel()`
+runs once at boot and is never retried. The allocation shares do **not**: `capOf()` reads them per
+call. See D81, D86.
+
 ## Next steps
 
 1. **Run the manual check recipe** in `docs/specs/signal-dashboard.md`. Steps 5 and 6 are the ones
