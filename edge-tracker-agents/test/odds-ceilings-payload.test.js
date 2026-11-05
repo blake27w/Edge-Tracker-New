@@ -37,6 +37,7 @@ before(async () => {
   mock.module(import.meta.resolve('../src/config/index.js'), {
     defaultExport: {
       oddsApi: { allocation: ALLOC, monthlyBudget: BUDGET, tier: 'starter', key: '',
+        seasonGraceDays: 14,
         footballSports: ['NFL', 'NCAAF'], footballPriority: 'auto', footballPriorityOn: () => true,
         base: 'https://api.the-odds-api.com/v4' },
       SPORTS: Object.fromEntries(Object.keys(ALLOC).map((s) => [s, { key: s.toLowerCase() }])),
@@ -109,4 +110,60 @@ test('ceilings are proportional to allocation share', () => {
   const { ceilings } = getOddsCeilings();
   assert.equal(Math.round(ceilings.NFL / ceilings.BOXING), 16);
   assert.equal(Math.round(ceilings.NCAAF / ceilings.NFL * 100) / 100, 0.5);
+});
+
+// ── The season block: who is in the denominator, and WHY ────────
+// The denominator was previously unknowable from /budget — only its membership
+// was published, and only once a run had published one — so November's budget
+// analysis had to be MODELLED rather than read (D86/D88). These three fields are
+// what make the decision legible, including before the first run.
+const REASON_OK = (r) => r === 'active-now' || r === 'football-backstop' || r === 'feed-unreadable'
+  || r === 'billed (event-only sport)' || r === 'skip (ODDS_SKIP_SPORTS)'
+  || /^grace \(\d+d ago\)$/.test(r) || /^seeding \(\d+d left\)$/.test(r)
+  || /^released \(\d+d idle\)$/.test(r);
+
+test('there is one season entry per allocation sport', () => {
+  const { season } = getOddsCeilings();
+  assert.deepEqual(Object.keys(season).sort(), Object.keys(ALLOC).sort());
+});
+
+test('every sport carries a membership and a reason, in as well as out', () => {
+  const { season } = getOddsCeilings();
+  for (const [sport, v] of Object.entries(season)) {
+    assert.equal(typeof v.in, 'boolean', `${sport} publishes no membership`);
+    assert.equal(REASON_OK(v.reason), true, `${sport}: ${v.reason} is not in the closed set`);
+  }
+});
+
+// Before any run, there is no feed reading to report — and the fail-safe
+// direction is to hold everything in, which is the same claim the ceilings above
+// are priced against (the full table). An un-run process reporting sports as
+// RELEASED would be the dangerous direction: it would read as a denominator
+// nothing has measured.
+test('nothing is released before a run has read the feed', () => {
+  const { season } = getOddsCeilings();
+  for (const [sport, v] of Object.entries(season)) {
+    if (sport === 'TENNIS' || sport === 'GOLF') continue;   // oddsSkip: in only via spend
+    assert.equal(v.in, true, `${sport} must not be released before anything has been measured`);
+    assert.equal(v.reason, 'feed-unreadable');
+  }
+});
+
+test('sumAlloc is the sum over the set the ceilings were priced against', () => {
+  // With no published denominator that set is the full table — currentCeiling's
+  // own fallback, and the tightest reading available (D65). Published so a
+  // reader can check the ceiling arithmetic instead of reconstructing it.
+  const p = getOddsCeilings();
+  const priced = (p.denom && p.denom.length) ? p.denom : Object.keys(ALLOC);
+  const want = Math.round(priced.reduce((t, s) => t + ALLOC[s], 0) * 1000) / 1000;
+  assert.equal(p.sumAlloc, want);
+  assert.equal(p.sumAlloc, 1, 'the full table sums to 1.0 — the denominator is what makes it smaller');
+});
+
+test('graceDays is published as an integer', () => {
+  // A float or a string here is how a "14-day grace" quietly becomes something
+  // else; the knob is read through intEnv so 0 survives as 0.
+  const { graceDays } = getOddsCeilings();
+  assert.equal(Number.isInteger(graceDays), true, `graceDays is ${graceDays}`);
+  assert.equal(graceDays >= 0, true);
 });

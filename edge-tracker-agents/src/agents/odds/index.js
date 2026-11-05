@@ -8,6 +8,41 @@
 // sport (MLB 40%, NBA/NHL 20% each, the rest split 20%), and skip
 // sports that are out of season or have no games today.
 //
+// SEASONALITY IS DERIVED, NOT CONFIGURED. A ceiling is
+// `budget x POOL x share / sumAlloc`, where sumAlloc sums the shares of the
+// sports in the DENOMINATOR — so membership of that set is worth as much as the
+// shares themselves, and it used to be decided by today's board plus a
+// hand-coded football month range. Every season change therefore needed a human
+// to notice and retune (D86: MLB held 0.14 of the pool through its offseason on
+// the strength of ONE credit, because `billed` put any sport with spend into the
+// denominator and never took it out).
+//
+// The signal is the free `/sports` active flag we ALREADY fetch every run
+// (inSeasonKeys) — zero new credits by construction, there is no `fetch(`
+// anywhere in the season path. The flag itself flaps, which is what D6 is about,
+// so what we act on is a persisted per-sport "last seen active" date with an
+// ASYMMETRIC release grace:
+//
+//   entry   — immediate, on a single active observation;
+//   release — only after ODDS_SEASON_GRACE_DAYS (14) CONSECUTIVE quiet days.
+//
+// The asymmetry is the whole design. Entry only ever tightens other sports'
+// ceilings, which is harmless; release loosens them, which is the September
+// failure (D6) where football left the denominator on a Tuesday and soccer's cap
+// went ~700 -> ~2040. Rate-limiting release to one transition per sport per
+// grace window is what makes a slate-derived denominator safe at all.
+//
+// FAIL-SAFE DIRECTION, STATED: every unknown resolves to IN the denominator —
+// an unreadable feed, an un-seeded sport, an oddsSkip sport with spend. Holding a
+// dead sport too long makes everyone's ceiling slightly too tight and strands a
+// few thousand recoverable credits; releasing a live sport early lets the wrong
+// sports eat the month and takes the live one dark. Stranding is cheaper, so be
+// wrong on the tight side (7c6571d, D65).
+//
+// State lives in a sentinel `api_usage` row (`provider: 'odds-season'`,
+// `month: 'state'`) in the existing `by_sport jsonb` — no DDL to hand-run, which
+// in this repo has a history of shipping unapplied (D69/D70).
+//
 // Movement baselines are REHYDRATED, not persisted. `lastLines` is
 // process-local, so before this every redeploy wiped it and the next
 // fetch of each key detected nothing (D71). The baseline is instead
@@ -99,7 +134,35 @@ export function getOddsCeilings() {
   const sports = Object.keys(oddsApi.allocation);
   const ceilings = {};
   for (const s of sports) ceilings[s] = currentCeiling(s);
-  return { pool: POOL, denom: lastDenom, allocation: { ...oddsApi.allocation }, ceilings };
+  // Who is in the denominator AND WHY each sport is in or out. The membership
+  // alone leaves the next reader inferring the decision from a share table,
+  // which is exactly how D86 had to be diagnosed — so the reason ships with it.
+  //
+  // Before any run has published one, this is recomputed with no feed, which is
+  // the same claim the ceilings above are priced against: every non-skip sport
+  // held in, reason `feed-unreadable`.
+  const season = lastSeason
+    || seasonDenominator(
+      seasonVerdicts(null, seasonState, SPORTS, new Date(), graceDays(), oddsApi.footballPriorityOn()).verdicts,
+      budget.bySport,
+    ).season;
+  // An allocation sport missing from SPORTS still gets an entry, so the panel
+  // never renders a share with no reason beside it.
+  for (const s of sports) {
+    if (!season[s]) season[s] = { in: true, reason: 'feed-unreadable', last: null, first: null };
+  }
+  // The set the ceilings above were actually priced against — `lastDenom` when a
+  // run has published one, otherwise the full table (currentCeiling's own
+  // fallback, and the tightest reading available). Published so a reader can
+  // check the arithmetic instead of reconstructing it.
+  const priced = (lastDenom && lastDenom.length) ? lastDenom : sports;
+  const sumAlloc = priced.reduce((t, s) => t + (oddsApi.allocation[s] ?? 0.05), 0);
+  return {
+    pool: POOL, denom: lastDenom, allocation: { ...oddsApi.allocation }, ceilings,
+    sumAlloc: Math.round(sumAlloc * 1000) / 1000,
+    graceDays: graceDays(),
+    season,
+  };
 }
 
 // Budget guard for discretionary Odds-API consumers (props, tennis,
@@ -129,11 +192,6 @@ export function recordOddsSpend(sport, res) {
     used: h.get('x-requests-used'),
     last: h.get('x-requests-last'),
   } : null);
-}
-
-function sportCap(sport) {
-  const alloc = oddsApi.allocation[sport] ?? 0.05;
-  return Math.floor(oddsApi.monthlyBudget * alloc);
 }
 
 // Share of the month allocatable to per-sport ceilings. The remaining 15% is
@@ -181,9 +239,9 @@ export function currentCeiling(sport) {
   // Which denominator to price against, in order of preference:
   //
   //  1. what the core loop last used — the number it is itself billing against;
-  //  2. that set plus this sport, when the sport is not in it. `isActive()`
-  //     returns false for every `oddsSkip` sport, so TENNIS and GOLF can only
-  //     enter via `billed`, i.e. after they have already spent this month. On
+  //  2. that set plus this sport, when the sport is not in it. The season
+  //     verdict for an `oddsSkip` sport is neither in nor out, so TENNIS and
+  //     GOLF can still only enter via spend. On
   //     the first tennis call of a month `lastDenom` therefore excludes it —
   //     and three of the five discretionary consumers are tennis. Adding the
   //     sport normalises it properly instead;
@@ -191,8 +249,10 @@ export function currentCeiling(sport) {
   //     maximises sumAlloc and so minimises the ceiling, which is the right
   //     way to be wrong before we know what is in season.
   //
-  // What this must NOT do is fall back to `sportCap()` — the unnormalised
-  // `budget x share` that #134 exists to remove from this path. Nor to
+  // What this must NOT do is fall back to the unnormalised `budget x share`
+  // that #134 exists to remove from this path — `sportCap()` is now DELETED
+  // outright, since this and the core loop were its only callers, which closes
+  // the D61/D64 reintroduction surface permanently. Nor to
   // `[sport]` alone: a single-element denominator makes sumAlloc that sport's
   // own share, so TENNIS would be priced at the ENTIRE 17000 pool instead of
   // ~510. The degenerate case is 28x looser than the bug.
@@ -209,6 +269,151 @@ export function currentCeiling(sport) {
   return Math.max(budget.bySport[sport] || 0, nominalCap(sport, denom));
 }
 
+// ── Derived seasonality ─────────────────────────────────────────
+// `seasonState` mirrors the sentinel api_usage row: sport -> { first, last, in }.
+//   first — the day this sport was first observed by this mechanism (the seeding
+//           day; the clock starts at deploy, not at the sport's real death —
+//           no per-sport activity date is persisted anywhere today);
+//   last  — the last day /sports reported it active, or null if never;
+//   in    — the membership we last published, kept only so a CHANGE can be
+//           logged once instead of every run.
+let seasonState = {};
+// Sentinel row, not a new table: `unique (provider, month)` already exists in
+// the live DB (the odds budget upserts on it and persists across restarts), so
+// there is nothing to hand-run — the D70/D73 failure mode.
+const SEASON_ROW = { provider: 'odds-season', month: 'state' };
+// Read per call, not frozen at boot — same reason footballPriorityOn is a
+// function: the grace is config, and a test (or a long-running process) must be
+// able to see the configured value rather than whichever one was live at import.
+// `?? 14` only covers a config object that predates the knob; config itself
+// reads it through intEnv, so 0 arrives here as 0.
+const graceDays = () => oddsApi.seasonGraceDays ?? 14;
+// The last published season block, for /budget. Null until a run publishes one.
+let lastSeason = null;
+
+const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Whole UTC calendar days between two YYYY-MM-DD strings. Never negative: a
+// future stamp (clock skew, a hand-edited row) reads as "today", which is the
+// tight direction — it keeps the sport in.
+function ageDays(from, today) {
+  if (!DAY_RE.test(from || '') || !DAY_RE.test(today || '')) return null;
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${today}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.max(0, Math.round((b - a) / 86_400_000));
+}
+
+// The season rules, as a PURE function so the behaviour can be driven without
+// run(): `now` and `activeKeys` are both parameters, so a season boundary is
+// simulated deterministically rather than waited for.
+//
+// `activeKeys === null` means the /sports read FAILED (non-200, throw, DNS). We
+// then write NOTHING and hold every sport in. Not writing is the load-bearing
+// half: refreshing `last` on an unreadable feed would silently extend a dead
+// sport's season by another full grace window, forever, on a flaky network.
+//
+// `reason` is drawn from a closed set of authored strings and is never
+// interpolated from env or from an API payload (D80):
+//   active-now · grace (Nd ago) · seeding (Nd left) · released (Nd idle) ·
+//   football-backstop · feed-unreadable · billed (event-only sport) ·
+//   skip (ODDS_SKIP_SPORTS)
+export function seasonVerdicts(activeKeys, state, sports, now, graceDays, footballOn) {
+  const today = dayKey(now);
+  const verdicts = {};
+  const nextState = { ...(state || {}) };
+  const transitions = [];
+  const football = oddsApi.footballSports || [];
+  for (const [sport, meta] of Object.entries(sports)) {
+    // oddsSkip sports (TENNIS, GOLF) have no bare Odds API key, never appear in
+    // `active`, and are deliberately outside the sweep (D64/D65). They are
+    // neither `in` nor `out` here: they can still enter the denominator via
+    // spend, exactly as they do today, and `out` is what would block that.
+    if (meta.oddsSkip) {
+      verdicts[sport] = { in: false, out: false, reason: 'skip (ODDS_SKIP_SPORTS)', last: null, first: null };
+      continue;
+    }
+    const prev = (state || {})[sport];
+    if (!activeKeys) {
+      verdicts[sport] = {
+        in: true, out: false, reason: 'feed-unreadable',
+        last: (prev && prev.last) || null, first: (prev && prev.first) || null,
+      };
+      continue;
+    }
+    const activeNow = (meta.leagues || [meta.key]).some((k) => activeKeys.has(k));
+    // A malformed or missing stamp reseeds rather than being parsed loosely —
+    // seeding holds the sport in for a full grace window, which is tight.
+    const seeded = prev && DAY_RE.test(prev.first || '');
+    const entry = seeded
+      ? { first: prev.first, last: activeNow ? today : (DAY_RE.test(prev.last || '') ? prev.last : null) }
+      : { first: today, last: activeNow ? today : null };
+
+    let inSeason;
+    let reason;
+    if (activeNow) {
+      inSeason = true;
+      reason = 'active-now';
+    } else {
+      // `idle` is days since the last POSITIVE signal (or since seeding, when
+      // there has never been one). `quiet` is how many quiet days that actually
+      // represents: the seeding day is itself a quiet day for a sport we have
+      // never seen active, so it counts, which is what makes graceDays=0
+      // release such a sport on its first run.
+      const idle = ageDays(entry.last || entry.first, today) ?? 0;
+      const quiet = idle + (entry.last ? 0 : 1);
+      if (quiet <= graceDays) {
+        inSeason = true;
+        reason = entry.last ? `grace (${idle}d ago)` : `seeding (${graceDays - idle}d left)`;
+      } else {
+        inSeason = false;
+        reason = `released (${idle}d idle)`;
+      }
+    }
+    // D6's football priority, generalised but not dropped. The grace window now
+    // gives every sport the protection football was given by hand, so this term
+    // is redundant — and it stays anyway, demoted to a labelled backstop. It
+    // costs nothing (it only ever holds a sport IN, the tight direction), and if
+    // /sports ever reports football inactive for a whole grace window it is the
+    // only thing between us and D6's measured failure.
+    if (!inSeason && footballOn && football.includes(sport)) {
+      inSeason = true;
+      reason = 'football-backstop';
+    }
+    entry.in = inSeason;
+    nextState[sport] = entry;
+    verdicts[sport] = { in: inSeason, out: !inSeason, reason, last: entry.last, first: entry.first };
+    // Only a CHANGE is a transition. A fresh entry is not one: seeding is this
+    // mechanism meeting the sport, not the sport's season moving.
+    if (prev && typeof prev.in === 'boolean' && prev.in !== inSeason) {
+      transitions.push({ sport, in: inSeason, reason, share: oddsApi.allocation[sport] ?? 0.05 });
+    }
+  }
+  return { verdicts, nextState, transitions };
+}
+
+// Denominator = { in-season } ∪ { has spent this month AND not released }.
+//
+// The second term is what keeps oddsSkip sports entering exactly as they do
+// today, and `&& !out` is the whole fix: `billed` alone put any sport with a
+// single credit into the denominator for the rest of the month and never took it
+// out, which is what held MLB's 0.14 through November (D86).
+export function seasonDenominator(verdicts, bySport) {
+  const season = {};
+  const denom = [];
+  for (const [sport, v] of Object.entries(verdicts)) {
+    let inDenom = v.in;
+    let reason = v.reason;
+    if (!inDenom && !v.out && (bySport || {})[sport] > 0) {
+      inDenom = true;
+      reason = 'billed (event-only sport)';
+    }
+    season[sport] = { in: inDenom, reason, last: v.last || null, first: v.first || null };
+    if (inDenom) denom.push(sport);
+  }
+  return { denom, season };
+}
+
 async function loadBudget() {
   const m = monthKey();
   if (budget.loaded && budget.month === m) return;
@@ -222,6 +427,13 @@ async function loadBudget() {
       budget.bySport = rows[0].by_sport || {};
     }
   } catch (e) { /* DB optional */ }
+  // The season sentinel is month-independent (`month: 'state'`) — a month
+  // rollover must not reset a sport's season clock. A failed read leaves it
+  // `{}`, which reseeds every sport and so holds every sport in: tight.
+  try {
+    const rows = await db.select('api_usage', '*', { match: SEASON_ROW });
+    if (rows[0] && rows[0].by_sport && typeof rows[0].by_sport === 'object') seasonState = rows[0].by_sport;
+  } catch (e) { /* DB optional */ }
   budget.remaining = Math.max(0, oddsApi.monthlyBudget - budget.used);
   budget.loaded = true;
 }
@@ -231,6 +443,14 @@ async function persistBudget() {
     await db.upsert('api_usage', {
       provider: 'odds', month: budget.month, used: budget.used,
       budget: oddsApi.monthlyBudget, by_sport: budget.bySport,
+      updated_at: new Date().toISOString(),
+    }, 'provider,month');
+  } catch (e) { /* ignore */ }
+  // Separate try/catch and written second: a sentinel failure must never cost
+  // us the month's credit counter, which is the row that matters.
+  try {
+    await db.upsert('api_usage', {
+      ...SEASON_ROW, used: 0, budget: 0, by_sport: seasonState,
       updated_at: new Date().toISOString(),
     }, 'provider,month');
   } catch (e) { /* ignore */ }
@@ -759,22 +979,17 @@ async function run() {
   // shares sum to 1.0 across all 12 sports, which starves in-season ones while
   // out-of-season budget sits idle. POOL (85%) is allocatable; the rest is
   // margin, not a second pool — see POOL above.
-  const isActive = (sport, meta) => {
-    if (meta.oddsSkip) return false;
-    if (!active) return true;
-    return (meta.leagues || [meta.key]).some((k) => active.has(k));
-  };
   const footballOn = oddsApi.footballPriorityOn();
   const isFootball = (sport) => oddsApi.footballSports.includes(sport);
-  // Football stays in the denominator for the whole of its season, even on days
-  // the API lists no slate yet. Otherwise its 0.48 share drops out in early
-  // September and every other ceiling inflates to fill the gap: soccer's cap was
-  // ~2040 rather than ~700, so its 1704 never tripped a limit. Nothing was
-  // overspending — the ceilings were just being recomputed loose.
-  const actives = Object.entries(SPORTS)
-    .filter(([s, m]) => isActive(s, m) || (footballOn && isFootball(s) && !m.oddsSkip))
-    .map(([s]) => s);
-  // Two ways a ceiling moves wrongly, both from `actives` changing mid-month:
+  // Membership is DERIVED — see the header. Today's flag no longer decides it
+  // on its own: entry is immediate, release takes graceDays() consecutive
+  // quiet days, and the football month range survives inside seasonVerdicts as
+  // a labelled backstop rather than as the only such protection.
+  const { verdicts, nextState, transitions } = seasonVerdicts(
+    active, seasonState, SPORTS, new Date(), graceDays(), footballOn,
+  );
+  seasonState = nextState;
+  // Two ways a ceiling moves wrongly, both from the denominator changing mid-month:
   //   - a season ENDING drops out, sumAlloc falls, every other ceiling inflates
   //     (the September failure, in its other direction);
   //   - a season STARTING adds its share and shrinks every ceiling retroactively
@@ -787,13 +1002,30 @@ async function run() {
   // stops granting further headroom, which is honest.
   // NOT `spent + share × headroom`: that ratchets, because spending raises your
   // own ceiling. One sport hits 94% of the pool in 8 runs that way.
-  const billed = Object.keys(budget.bySport || {}).filter((s) => SPORTS[s] && (budget.bySport[s] || 0) > 0);
-  const denom = [...new Set([...actives, ...billed])];
+  //
+  // What CHANGED: the denominator is no longer monotonic within a month. It is
+  // monotonic within a GRACE WINDOW instead — `billed` can still only add a
+  // sport, but a sport the season signal has RELEASED leaves even if it has
+  // spent, which is the only thing that ever returns a dead share to the pool.
+  // Departures are therefore possible again, and are rate-limited to one per
+  // sport per grace window by construction (any active observation rewrites
+  // `last`), which is what distinguishes this from the September bug.
+  const { denom, season } = seasonDenominator(verdicts, budget.bySport);
   lastDenom = denom;                       // so hasOddsBudget sees the same ceiling
-  const nominal = (sport) => nominalCap(sport, denom);   // sumAlloc lives in nominalCap now
-  const capOf = (sport) => (denom.includes(sport)
-    ? Math.max(budget.bySport[sport] || 0, nominal(sport))
-    : sportCap(sport));
+  lastSeason = season;                     // so /budget can report WHY, not just who
+  for (const t of transitions) {
+    const share = Math.round(t.share * 100) / 100;
+    logger.info('odds', t.in
+      ? `season: ${t.sport} back in the denominator (${t.reason}) — share ${share} now priced in`
+      : `season: ${t.sport} released (${t.reason}) — share ${share} returned to the pool`);
+  }
+  // A sport outside the denominator is priced as if it were in it, which is the
+  // D65 branch-2 shape. It must NOT fall back to an unnormalised `budget × share`
+  // — that handed a RELEASED sport a LOOSER ceiling for being out of season.
+  const capOf = (sport) => Math.max(
+    budget.bySport[sport] || 0,
+    nominalCap(sport, denom.includes(sport) ? denom : [...denom, sport]),
+  );
 
   const mult = paceMult();
 
@@ -960,10 +1192,14 @@ async function run() {
   // feature's likeliest failure, so "0/0 games" (nothing was due), "0/12 games"
   // with read failures (every read failed) and "12/12 games → 0 keys"
   // (hydration ran and the window held nothing) have to be different lines.
+  // Sports the season signal has released. Reported every run, not only on the
+  // transition: the denominator was previously unknowable from anywhere but a
+  // model of it (D88), which is why November's analysis had to be inferred.
+  const released = Object.entries(verdicts).filter(([, v]) => v.out).map(([s]) => s);
   const baselineBit = `baseline ${hydr.games}/${hydr.attempted} games → ${hydr.keys} keys rehydrated${hydr.failures ? `, ${hydr.failures} read failures` : ''}, ${stats.staleBaseline} stale-baseline${hydrateFailRuns >= HYDRATE_FAIL_RUNS ? `, reads circuit-broken after ${hydrateFailRuns} failed runs` : ''}${steamDropped ? `, ${steamDropped} too wide for steam` : ''}`;
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · denom ${denom.length}/${Object.keys(SPORTS).length} (${denom.join(', ') || 'none'})${released.length ? `; released ${released.join(', ')}` : ''}`,
     gamesMonitored: allGames.length,
     data: {
       games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls,

@@ -735,6 +735,85 @@ ok('the ceilings payload is covered by a test',
 
 }
 
+// ── 15. Derived seasonality for the ceiling denominator ──────────
+// A per-sport ceiling is `budget x POOL x share / sumAlloc`, summed over the
+// sports IN THE DENOMINATOR — so membership is worth as much as the shares, and
+// it used to be decided by today's board plus a hand-coded football month range.
+// Four properties are load-bearing and none of them shows up in a passing run:
+// the signal costs NOTHING, release is asymmetric with entry, spend no longer
+// holds a dead share, and the decision is observable.
+const seasonFns = (oddsSrc.match(/export function seasonVerdicts[\s\S]*?\n\}\n/) || [''])[0]
+  + (oddsSrc.match(/export function seasonDenominator[\s\S]*?\n\}\n/) || [''])[0];
+
+ok('the season rules are exported as pure functions',
+  /export function seasonVerdicts\(activeKeys, state, sports, now, graceDays, footballOn\)/.test(oddsSrc)
+  && /export function seasonDenominator\(/.test(oddsSrc),
+  'a season boundary cannot be summoned live, so `now` and the feed must both be parameters');
+ok('the season path spends nothing — no fetch in it', seasonFns.length > 0 && !/fetch\(/.test(seasonFns),
+  'the signal is the /sports call inSeasonKeys ALREADY makes every run (free, unbilled); zero-spend is structural, not a promise');
+ok('the only season input is the free /sports read',
+  /seasonVerdicts\(\s*\n?\s*active,/.test(oddsSrc) && /const active = await inSeasonKeys\(\)/.test(oddsSrc)
+  && (codeOnly(oddsSrc).match(/\/sports\/\$\{sportKey\}\/odds|\/sports\?apiKey/g) || []).length === 2,
+  'a new per-sport endpoint per run is the alternative this deliberately did not take');
+ok('entry is immediate and release is graced — the asymmetry is explicit',
+  /quiet <= graceDays/.test(oddsSrc) && /reason = 'active-now'/.test(oddsSrc)
+  && /const graceDays = \(\) => oddsApi\.seasonGraceDays \?\? 14;/.test(oddsSrc),
+  'symmetric membership IS the September bug (D6): football leaves on a Tuesday and every other ceiling inflates');
+ok('an unreadable feed writes no stamp',
+  /if \(!activeKeys\) \{[\s\S]{0,400}?continue;/.test(oddsSrc)
+  && !/if \(!activeKeys\)[\s\S]{0,400}?nextState\[sport\]/.test(oddsSrc),
+  'refreshing `last` on a dead feed would extend a dead season by another window, forever, on a flaky network');
+ok('spend no longer holds a released share', /!inDenom && !v\.out && \(bySport \|\| \{\}\)\[sport\] > 0/.test(oddsSrc),
+  '`billed` alone put any sport with ONE credit into the denominator for the rest of the month and never took it out (D86)');
+ok('the football month range survives as a backstop',
+  /if \(!inSeason && footballOn && football\.includes\(sport\)\) \{/.test(oddsSrc)
+  && /reason = 'football-backstop'/.test(oddsSrc),
+  "D6's mechanism 1 is generalised, not dropped — it only ever holds a sport IN, which is the tight direction");
+ok('the football spend FLOOR is untouched',
+  /const footballFloor = footballOn/.test(oddsSrc) && /capOf\(s\) - \(budget\.bySport\[s\] \|\| 0\)/.test(oddsSrc),
+  'mechanism 2 is a separately measured protection (D6) and a share-shape question, not a seasonality one');
+ok('sportCap is deleted, not merely unused', !/function sportCap/.test(oddsSrc),
+  'it handed a RELEASED sport a LOOSER ceiling for being out of season; deleting it closes the D61/D64 reintroduction surface');
+ok('a sport outside the denominator is still normalised',
+  /nominalCap\(sport, denom\.includes\(sport\) \? denom : \[\.\.\.denom, sport\]\)/.test(oddsSrc),
+  'the D65 branch-2 shape — the only remaining fallback');
+ok('the season state rides a sentinel api_usage row, with no DDL',
+  /provider: 'odds-season', month: 'state'/.test(oddsSrc) && /\.\.\.SEASON_ROW/.test(oddsSrc),
+  'hand-applied DDL in this repo has a history of shipping unapplied (D69/D70)');
+ok('the sentinel write cannot cost us the month row',
+  /}, 'provider,month'\);\s*\} catch \(e\) \{ \/\* ignore \*\/ \}\s*(\/\/[^\n]*\n\s*)*try \{/.test(oddsSrc),
+  'one upsert per row, separate try/catch, credit counter first');
+ok('/budget publishes the denominator decision, not just its membership',
+  /sumAlloc:/.test(oddsSrc) && /graceDays: graceDays\(\)/.test(oddsSrc) && /\n    season,\n/.test(oddsSrc),
+  'the live denominator was unknowable from /budget, which is why November had to be modelled (D88)');
+ok('the grace is read so that 0 is honoured',
+  /ODDS_SEASON_GRACE_DAYS, 14\)/.test(cfgSrc) && /intEnv\(env\.ODDS_SEASON_GRACE_DAYS/.test(cfgSrc),
+  "`Number(x) || 14` turns the operator's 0 back into 14 (D80) — and 0 is how a boundary is summoned on demand");
+const seasonTests = await Promise.all([
+  readFile(join(root, 'edge-tracker-agents/test/odds-season-state.test.js'), 'utf8').catch(() => ''),
+  readFile(join(root, 'edge-tracker-agents/test/odds-season-denominator.test.js'), 'utf8').catch(() => ''),
+]).then((a) => a.join('\n'));
+ok('both directions of the asymmetry are tested, through run() as well as pure',
+  /graceDays = 0 releases/.test(seasonTests) && /release lands at exactly graceDays \+ 1/.test(seasonTests)
+  && /mod\.default\.run\(\)/.test(seasonTests) && /unreadable/.test(seasonTests),
+  'entry, release, the boundary itself and the fail-safe each have to be driven, not asserted in prose');
+
+if (hasSignal) {
+  ok('the PWA reads only the ODDS api_usage row',
+    /api_usage\?select=\*&provider=eq\.odds/.test(html),
+    'the same table carries provider: claude rows, and now odds-season too — an unfiltered order-by-updated_at read renders whichever landed last as odds usage');
+  ok('the Budget panel names WHY each sport is in or out',
+    /season=b\.season\|\|null/.test(html) && /sn\?sn\.reason:/.test(html) && /released \('\+esc\(rel\.join/.test(html),
+    'membership alone leaves the reader inferring the decision from a share table — exactly how D86 had to be diagnosed');
+  ok('the pre-deploy off banner still works',
+    /if\(!cl\)tb\+=sigBanner\('off',\{text:'Ceilings unavailable/.test(html),
+    'a backend that publishes neither ceilings nor season must still render');
+} else {
+  skipAll(['the PWA reads only the ODDS api_usage row',
+    'the Budget panel names WHY each sport is in or out',
+    'the pre-deploy off banner still works'], SIGNAL_SPEC);
+}
+
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
 if (skips.length) {
