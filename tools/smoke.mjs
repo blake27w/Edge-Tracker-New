@@ -31,6 +31,12 @@ const ok = (name, cond, detail = '') => {
 // instead would silently drop its coverage.
 const skip = (name, why) => { skips.push(`${name} — ${why}`); };
 const skipAll = (names, why) => { for (const n of names) skip(n, why); };
+// Strip comments before asserting that source does NOT contain a construct.
+// A bare `!/x/.test(src)` over the whole file also forbids PROSE about x, so
+// documenting the very decision the assertion pins fails the build for a
+// non-defect. Crude but adequate: block comments and line comments, with a
+// guard so the `//` in a URL survives.
+const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 // ── 1. Every inline script parses ────────────────────────────────
 // The whole app is inside <script> blocks; one typo takes the page down.
@@ -449,6 +455,160 @@ ok('schema.sql records what a null gap_min means', /gap_min is null/.test(schema
 // absent from data-health.js" (data-health has counted it by detected_at since
 // 2026-10-17), and a second copy of section 10's `book-move reads snapshots,
 // not line_movements` — which stands there, undisturbed, rather than twice.
+
+// ── 13. Blocked-agent reporting ─────────────────────────────────
+// `public-splits` returned `skipped — no Claude` with error: null and
+// consecutiveFailures: 0 for as long as the deployment had no key, wrote 0 rows
+// against 671 total, and read HEALTHY on the watchdog, /data-health and the
+// degraded channel alike — because a skip is not a failure. These assertions
+// pin the opt-in, the clears, and the one thing that must never happen: a
+// credential in a log or a payload.
+const weighinSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/combat-weighin/index.js'), 'utf8');
+const wdSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/watchdog/index.js'), 'utf8');
+const blockedTestSrc = await readFile(join(root, 'edge-tracker-agents/test/agent-blocked.test.js'), 'utf8');
+
+ok('public-splits marks its Claude gate as blocked',
+  /if \(!hasClaude\(\)\) return \{[^}]*\bblocked:/.test(splitsSrc),
+  'without the field the skip is indistinguishable from an empty slate and nothing reports it — exactly the state that went unnoticed until a /plays payload was read by hand');
+ok('combat-weighin marks its Claude gate as blocked',
+  /if \(!hasClaude\(\)\) return \{[^}]*\bblocked:/.test(weighinSrc),
+  'the only other hasClaude()-gated agent; prop-engine is code-only and nfl-win-totals falls back to a posted table, so these two are the whole opt-in set');
+
+ok('the orchestrator normalises blocked to a string or null',
+  /out\.blocked === true \? summary/.test(orchSrc)
+  && /typeof out\.blocked === 'string' && out\.blocked\.trim\(\)/.test(orchSrc),
+  "`blocked: 1` or `blocked: {}` from a half-written return would otherwise alert with a reason of '1' or '[object Object]'");
+ok('the threshold comparison is >=, so blockedRunsMin is the run that REPORTS',
+  /r\.consecutiveBlocked >= config\.rules\.blockedRunsMin/.test(orchSrc),
+  '`>` makes the default 2 mean "report on the third run" and makes 0 behave exactly like 1 — the off-by-one is invisible in production because nobody counts the runs before the first alert');
+ok('blockedSince latches the first run of the streak',
+  /if \(!r\.blockedSince\) r\.blockedSince = r\.lastRunAt;/.test(orchSrc),
+  'without the guard the detail reads "(7 consecutive runs since <the most recent run>)" — always "now" — destroying the one number a human reads to judge how long the agent has been down');
+ok('a change of reason restarts the streak, the clock and the store entry',
+  /if \(r\.blockedReason && r\.blockedReason !== blocked\) \{\s*\n\s*r\.consecutiveBlocked = 0;\s*\n\s*r\.blockedSince = null;\s*\n\s*clearDegraded\(blockedKey\);/.test(orchSrc),
+  'otherwise an agent blocked once by A then once by B reports "B (2 consecutive runs since <A\'s first run>)" — a count and a start time belonging to a fault that is no longer the problem, which is the opposite of what the temporal filter advertises');
+ok('the orchestrator resets AND clearDegradeds on the non-blocked branch',
+  /r\.consecutiveBlocked = 0;\s*\n\s*r\.blockedReason = null;\s*\n\s*r\.blockedSince = null;\s*\n\s*clearDegraded\(blockedKey\);/.test(orchSrc),
+  'an unretracted reportDegraded latches for the full 90-min TTL and goes on re-alerting an obsolete reason (D73)');
+ok('the orchestrator also clears in the catch path',
+  /clearDegraded\(`\$\{agent\.name\}\|blocked`\);/.test(orchSrc),
+  'the error path owns the reporting from there; a surviving blocked entry double-reports the same agent with a reason that is no longer the problem');
+ok('the default threshold is 1 — the first blocked run reports',
+  /blockedRunsMin: intEnv\(env\.AGENT_BLOCKED_RUNS_MIN, 1\)/.test(cfgSrc),
+  'a blocked return is the agent ASSERTING the condition, and for both opt-ins it is a missing env var that is immutable for the life of the process (hasClaude() ANDs a client built once at module load with a detectModel() called once and never retried) — so a confirming run buys 4h of latency on public-splits and no signal at all');
+ok('the threshold is read with intEnv, not num or ||',
+  /blockedRunsMin: intEnv\(env\.AGENT_BLOCKED_RUNS_MIN, 1\)/.test(cfgSrc)
+  && !/blockedRunsMin: num\(/.test(cfgSrc)
+  && !/AGENT_BLOCKED_RUNS_MIN[^)]*\)\s*\|\|/.test(cfgSrc),
+  "Number('') is a finite 0, so `num(env.X, 1)` reads an UNSET variable as 0 and `intEnv(env.X, 1) || 1` reads an explicit 0 as 1 — AGENT_BLOCKED_RUNS_MIN=0 is silently ignored either way (D79). The behavioural guard is test/agent-blocked.test.js's child-process read, which this only backs up");
+ok('intEnv rejects blank before coercing, and keeps 0',
+  /function intEnv\(v, dflt\) \{\s*\n\s*const s = clean\(v\);[\s\S]{0,160}?if \(s === ''\) return dflt;/.test(cfgSrc)
+  && /Number\.isInteger\(n\) && n >= 0 \? n : dflt/.test(cfgSrc),
+  'the order is the fix: blank-check first, coerce second');
+ok('num() itself is untouched', /function num\(v, dflt\) \{\s*\n\s*const n = Number\(v\);\s*\n\s*return Number\.isFinite\(n\) \? n : dflt;/.test(cfgSrc),
+  '40+ call sites depend on its current behaviour; intEnv is a sibling, not a replacement');
+
+ok('the degraded key is `${agent.name}|blocked`', /`\$\{agent\.name\}\|blocked`/.test(orchSrc)
+  && !/`blocked\|\$\{agent\.name\}`/.test(orchSrc),
+  "the watchdog derives the agent from key.split('|')[0], so a `blocked|<agent>` key reports an agent called 'blocked'");
+ok('the watchdog gives blocked entries their own type and label',
+  /d\.key\.endsWith\('\|blocked'\)/.test(wdSrc) && /type: isBlocked \? 'blocked' : 'data'/.test(wdSrc)
+  && /Agent blocked \(\$\{agent\}\)/.test(wdSrc),
+  'the shelved signal dashboard filters on type and renders label; "Data integrity (public-splits|blocked)" is the wrong sentence for a missing env var');
+ok('the watchdog keeps the data| key prefix for blocked issues', /key: `data\|\$\{d\.key\}`/.test(wdSrc),
+  'that string keys the per-day dedup set — renaming it re-alerts every blocked agent once more');
+
+ok('/health carries the durable blocked fields', /blockedRuns: r\.consecutiveBlocked/.test(orchSrc)
+  && /blockedReason: r\.blockedReason/.test(orchSrc) && /blockedSince: r\.blockedSince/.test(orchSrc),
+  'DEGRADED_TTL_MS is 90 min and public-splits runs every 4h, so the degraded entry flickers out between runs — blockedRuns is the number that never expires');
+
+// The hard constraint of this spec. These are source-text checks over CODE
+// ONLY (comments stripped), so documenting the constraint cannot fail the
+// build. What they do not cover: a credential arriving through an import, e.g.
+// config.anthropic.apiKey, which would pass both greps. That case is pinned
+// behaviourally in test/agent-blocked.test.js, which asserts the published
+// detail EQUALS a closed template over the agent-authored reason plus two
+// numbers — nothing else can be in it — with a sentinel in the environment.
+ok('the published reason is a closed template, asserted behaviourally',
+  /assert\.equal\(d\.detail,/.test(blockedTestSrc) && /SENTINEL/.test(blockedTestSrc),
+  'a source grep cannot see a credential that arrives via an import; the exact-equality assertion on the published detail can');
+ok('the reason is authored, never read — no env in the orchestrator',
+  !/process\.env\b/.test(codeOnly(orchSrc)),
+  'the guarantee that no key value, or prefix of one, can reach a log or a payload is structural: the orchestrator cannot see the variable');
+ok('and no credential by any name', !/apiKey/i.test(codeOnly(orchSrc)));
+ok('neither opted-in agent interpolates the env value',
+  !/process\.env\.ANTHROPIC/.test(codeOnly(splitsSrc)) && !/process\.env\.ANTHROPIC/.test(codeOnly(weighinSrc))
+  && /blocked: claudeBlockReason\(\)/.test(splitsSrc)
+  && /blocked: claudeBlockReason\(\)/.test(weighinSrc),
+  'the reason comes from the shared helper, not an inline string — so there is one place to audit');
+// The helper is the single place a credential could enter the reason, so pin its
+// shape rather than its wording: exactly two string literals, no template, no
+// concatenation, no env or config read. `hasClaude()` ANDs a client against a
+// detected model and those fail for different reasons; reporting "not set" for a
+// key that IS set sends an operator to `env | grep` and costs them the alert's
+// credibility. Wording may change; "cannot carry a value" may not.
+{
+  const utilsSrc = await readFile(join(root, 'edge-tracker-agents/src/utils/index.js'), 'utf8');
+  const body = (utilsSrc.match(/export const claudeBlockReason[\s\S]*?;\n/) || [''])[0];
+  ok('claudeBlockReason exists and distinguishes the two causes', body.length > 0
+    && /no model was detected/.test(body) && /is not set/.test(body),
+    'a key that is set but unusable must not be reported as missing');
+  ok('claudeBlockReason cannot carry a value',
+    body.length > 0 && !/\$\{/.test(body) && !/\+/.test(body)
+    && !/process\.env/.test(body) && !/apiKey/i.test(body),
+    'two constant literals only — no template, concatenation, env or config read');
+}
+
+// VERIFICATION PASS. The behavioural claim above — "a source grep cannot see a
+// credential that arrives via an import, the exact-equality assertion can" —
+// was NOT TRUE as first written, and this assertion is what stops it reverting
+// to untrue. config.anthropic.apiKey is clean(env.ANTHROPIC_API_KEY) evaluated
+// once at config module load, and the test's before() imports config before the
+// test body sets its sentinel — so a sentinel written only to process.env
+// arrives too late to reach the config object, and a detail built from
+// `config.anthropic['api'+'Key']` interpolated the empty string and passed the
+// test, both greps here, and the whole suite. Verified by mutation. The fix is
+// to seed the LOADED CONFIG's credential fields too; without that line the
+// import path — the likeliest one in this codebase, and the only one the greps
+// above admit they cannot see — is unguarded.
+ok('the credential sentinel is seeded into the loaded config, not just process.env',
+  /\[cfg\.anthropic, 'apiKey'\]/.test(blockedTestSrc) && /o\[k\] = SENTINEL/.test(blockedTestSrc),
+  "config.anthropic.apiKey is snapshotted at module load, so a process.env-only sentinel is already stale by the time the test runs and a leak through the import reads '' — making the one assertion that covers the import path silently vacuous");
+ok('every sink the reason reaches is swept for the sentinel, not just the detail',
+  /getWatchdog\(\)/.test(blockedTestSrc) && /orch\.getHealth\(\)\)\.includes\(SENTINEL\)/.test(blockedTestSrc),
+  'the detail is one of five sinks — /health, the watchdog issue, reportDegraded, the warn log and blockedReason; asserting only the detail leaves the other four to inference');
+
+// The TTL is the store's, not this feature's, and the two directions of
+// wrongness it can produce are a false alarm that outlives the fix and a live
+// condition that goes quiet. Both are pinned in their own file because
+// DEGRADED_TTL_MS is read once at store load, so a short TTL cannot share a
+// process with the timing-insensitive tests.
+// Read tolerantly: a bare `await readFile` turns a deleted or renamed test
+// file into an ENOENT stack trace that exits before the summary line, which
+// reads as "the smoke harness is broken" rather than "this coverage is gone".
+// An empty string makes the assertion below fail by name instead.
+const ttlTestSrc = await readFile(join(root, 'edge-tracker-agents/test/agent-blocked-ttl.test.js'), 'utf8')
+  .catch(() => '');
+ok('the blocked × TTL interaction is covered',
+  /DEGRADED_TTL_MS/.test(ttlTestSrc) && /re-publishes/.test(ttlTestSrc)
+  && /retracts the entry instead of waiting it out/.test(ttlTestSrc),
+  'a standing block outlives the 90-min TTL on a 4h agent, so the entry must re-publish on the next run (or the condition goes permanently silent) and must be retracted on recovery rather than left to age out (D73)');
+ok('both opted-in agents are driven on BOTH sides of their gate',
+  /with no key, both opted-in agents produce the blocked condition end to end/.test(blockedTestSrc)
+  && /with the key present, both agents stop reporting and the entry is retracted/.test(blockedTestSrc),
+  'the rest of the suite runs stub agents; without these two the only coverage of the real opt-ins is the source grep above, which cannot tell whether the field is reachable or whether it disappears once the key is present');
+ok('the opt-in set is asserted against the wired fleet, not just the two files',
+  /exactly the two agents the spec opted in/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; a third opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb');
+
+// Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
+// equally true on an offseason morning and during a budget pause, so a
+// table-level probe cannot tell "broken" from "nothing to do" without the
+// per-agent knowledge `blocked` already carries.
+// Comments stripped: forbidding the substring in prose would mean a comment in
+// data-health.js EXPLAINING why no probe was added there fails the build.
+ok('/data-health gained no blocked-agent probe', !/blocked/i.test(codeOnly(dataHealth)),
+  'the table count belongs in the diagnosis step after an alert, not in detection — a fourth mechanism was deliberately not built');
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);

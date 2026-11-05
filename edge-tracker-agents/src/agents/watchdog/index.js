@@ -118,10 +118,18 @@ async function run() {
   // swallowed count error, a work queue where nothing matches, a CLV run where
   // every record is junk — report themselves onto this channel instead, and
   // this is where they become visible and alertable.
+  //
+  // A `<agent>|blocked` key is the same channel carrying the adjacent fault:
+  // not bad output but NO output, because absent configuration prevented the
+  // run (the orchestrator posts these). It gets its own type/label so the
+  // dashboard can separate "the data is wrong" from "the agent is off".
   for (const d of getDegraded()) {
+    const agent = d.key.split('|')[0];
+    const isBlocked = d.key.endsWith('|blocked');
     issues.push({
-      key: `data|${d.key}`, type: 'data', agent: d.key.split('|')[0],
-      label: `Data integrity (${d.key})`,
+      // The `data|` prefix stays either way — it keys the per-day dedup set.
+      key: `data|${d.key}`, type: isBlocked ? 'blocked' : 'data', agent,
+      label: isBlocked ? `Agent blocked (${agent})` : `Data integrity (${d.key})`,
       detail: `${d.detail}${d.count > 1 ? ` — seen ${d.count}× since ${d.since}` : ''}`,
     });
   }
