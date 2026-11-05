@@ -6164,7 +6164,7 @@ function loadAgentsData(){
     tasks.push(SB.api('/scan_runs?select=*&order=started_at.desc&limit=120','GET').then(function(r){return {scan:r}}).catch(function(){return {scan:null}}));
     tasks.push(SB.api('/monitor_scores?select=*&qualified=eq.true&status=eq.pending&order=score.desc&limit=60','GET').then(function(r){return {plays:r}}).catch(function(){return {plays:null}}));
     tasks.push(SB.api('/alert_log?select=*&order=sent_at.desc&limit=60','GET').then(function(r){return {alerts:r}}).catch(function(){return {alerts:null}}));
-    tasks.push(SB.api('/api_usage?select=*&order=updated_at.desc&limit=1','GET').then(function(r){return {usage:r}}).catch(function(){return {usage:null}}));
+    tasks.push(SB.api('/api_usage?select=*&provider=eq.odds&order=updated_at.desc&limit=1','GET').then(function(r){return {usage:r}}).catch(function(){return {usage:null}}));
     var _d0=new Date();_d0.setHours(0,0,0,0);
     tasks.push(SB.api('/monitor_scores?select=status&qualified=eq.true&scored_at=gte.'+encodeURIComponent(_d0.toISOString()),'GET').then(function(r){return {today:r}}).catch(function(){return {today:null}}));
   }
@@ -7310,7 +7310,7 @@ function renderSigBudget(){
   h+=sigCard(head);
 
   // Per-sport allocation vs ceiling vs spend.
-  var bs=b.bySport||{},cl=b.ceilings||null,al=b.allocation||{},denom=b.denom||null;
+  var bs=b.bySport||{},cl=b.ceilings||null,al=b.allocation||{},denom=b.denom||null,season=b.season||null;
   var tb=sigHdr('BY SPORT','alloc · ceiling · spend');
   if(!cl)tb+=sigBanner('off',{text:'Ceilings unavailable — this backend build does not publish them.'});
   var sports=Object.keys(cl||al||{});
@@ -7318,21 +7318,33 @@ function renderSigBudget(){
   sports.sort(function(x,y){return (bs[y]||0)-(bs[x]||0)});
   if(!sports.length)tb+=sigBanner('nodata',{things:'sports with credit activity',at:sigAt(state.agentsLastLoad)});
   else {
-    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th>'+(cl?'<th>alloc</th><th>ceiling</th>':'')+'<th>spent</th>'+(cl?'<th class="l">used</th><th>% of ceil</th>':'')+'</tr></thead><tbody>';
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th>'+(cl?'<th>alloc</th><th>ceiling</th>':'')+'<th>spent</th>'+(cl?'<th class="l">used</th><th>% of ceil</th>':'')+(season?'<th class="l">why</th>':'')+'</tr></thead><tbody>';
     sports.forEach(function(s){
       var spent=bs[s]||0,ceil=cl?cl[s]:null;
       // denom === null is "nothing has published a denominator yet" (D65), not
       // "every sport" — so no sport gets flagged in that case.
       var outside=denom?denom.indexOf(s)<0:false;
+      // The REASON, for the sports that are in as much as the ones that are
+      // out. Membership alone leaves the reader inferring the decision from a
+      // share table, which is how D86 had to be diagnosed. A backend that does
+      // not publish `season` keeps the old binary tag and the column vanishes.
+      var sn=season?season[s]:null;
       var ofCeil=(ceil!=null&&ceil>0)?Math.round(spent/ceil*1000)/10:null;
-      tb+='<tr><td class="l" style="color:var(--cream)">'+esc(s)+(outside?' <span style="font-size:7px;color:var(--muted)">not in denominator</span>':'')+'</td>';
+      tb+='<tr><td class="l" style="color:var(--cream)">'+esc(s)+((outside&&!season)?' <span style="font-size:7px;color:var(--muted)">not in denominator</span>':'')+'</td>';
       if(cl)tb+='<td style="color:var(--muted)">'+(al[s]!=null?Math.round(al[s]*1000)/10+'%':'—')+'</td><td style="color:var(--dim)">'+sigNum(ceil)+'</td>';
       tb+='<td style="color:var(--cream)">'+spent+'</td>';
       if(cl)tb+='<td class="l">'+(ofCeil==null?'<span style="color:var(--muted)">—</span>':sigBar(ofCeil,ofCeil>=90?'over':ofCeil>=70?'hot':''))+'</td><td style="color:'+(ofCeil==null?'var(--muted)':ofCeil>=90?'var(--wine)':ofCeil>=70?'var(--brass)':'var(--dim)')+'">'+sigNum(ofCeil,'%')+'</td>';
+      if(season)tb+='<td class="l" style="font-size:7.5px;color:'+((sn&&sn.in===false)?'var(--wine)':'var(--muted)')+'">'+esc(sn?sn.reason:'—')+'</td>';
       tb+='</tr>';
     });
     tb+='</tbody></table></div>';
-    if(cl)tb+='<div class="sh-cap">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+'</div>';
+    if(cl){
+      // Released sports, named with their reason: a share that has gone back to
+      // the pool is the one change here that moves every other ceiling, so it
+      // is stated rather than left to be read off the table.
+      var rel=[];if(season)Object.keys(season).forEach(function(k){if(season[k]&&season[k].in===false)rel.push(k+': '+season[k].reason)});
+      tb+='<div class="sh-cap">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.sumAlloc!=null?' · sumAlloc '+b.sumAlloc+' (the denominator\'s; a released sport is priced against it plus its own share — see each row\'s pricedSum)':'')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+(b.graceDays!=null?' · release grace '+b.graceDays+'d':'')+(rel.length?' · '+rel.length+' released ('+esc(rel.join('; '))+')':'')+'</div>';
+    }
   }
   h+=sigCard(tb);
 

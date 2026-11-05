@@ -103,14 +103,21 @@ test('with no published denominator, the ceiling is the tightest reading, not th
   const { currentCeiling, nominalCap } = await import('../src/agents/odds/index.js');
 
   // The two traps, quantified:
-  //   sportCap(TENNIS)               = 600    unnormalised share
-  //   nominalCap(TENNIS, ['TENNIS'])  = 17000  sumAlloc is its own share
+  //   sportCap(TENNIS)               = 600   unnormalised share
+  //   nominalCap(TENNIS, ['TENNIS'])  = 3400  sumAlloc is floored at 0.15 (0.03/0.15 = 0.2 of the pool)
+  //
+  // That second number USED to be 17000 — the whole pool — because sumAlloc was
+  // the sport's own 0.03. The degenerate case became reachable when `billed` was
+  // gated by the season verdict, so sumAlloc now carries a floor and no single
+  // sport may be priced above 0.6 of the pool. It is still the LOOSEST reading,
+  // which is why this branch must not choose it.
   const raw = Math.floor(BUDGET * ALLOC.TENNIS);
   const degenerate = nominalCap('TENNIS', ['TENNIS']);
-  assert.equal(degenerate, 17000, 'the single-element denominator really is the whole pool');
+  assert.equal(degenerate, 3400, 'the single-element denominator is bounded, not the whole pool');
+  assert.ok(degenerate < Math.floor(BUDGET * 0.85), 'and strictly inside the pool');
 
   const c = currentCeiling('TENNIS');
   assert.equal(c, nominalCap('TENNIS', Object.keys(ALLOC)), 'falls back to the full table');
   assert.ok(c < raw, `${c} tighter than the raw share ${raw}`);
-  assert.ok(c < degenerate / 30, 'and nowhere near the degenerate case');
+  assert.ok(c * 4 <= degenerate, `${c} is still 4x tighter than the bounded degenerate case ${degenerate}`);
 });

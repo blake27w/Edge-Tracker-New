@@ -43,8 +43,13 @@ const ODDS_TIER_BUDGETS = { free: 500, starter: 20000, pro: 5000000 };
 const ODDS_API_TIER = (env.ODDS_API_TIER || 'free').toLowerCase();
 const ODDS_MONTHLY_BUDGET = ODDS_TIER_BUDGETS[ODDS_API_TIER] ?? ODDS_TIER_BUDGETS.free;
 
-// Budget allocation across sports (relative caps; out-of-season sports are
-// skipped automatically, so in-season ones effectively get more). Sums to 1.0.
+// Budget allocation across sports. These are SHAPE ONLY: how the allocatable
+// pool is divided among the sports that are in the denominator. WHO is in that
+// denominator is no longer decided here — it is derived per run from the free
+// /sports active flag with a release grace (see the odds agent's header and
+// ODDS_SEASON_GRACE_DAYS below), so a season ending releases its share without
+// anyone editing this table. The shares still sum to 1.0, but the sum that
+// prices a ceiling is the sum over the live denominator, not this one.
 // Football-season defaults (Sep–Jan). Override any share with
 // ODDS_ALLOC_<SPORT>=0.xx (e.g. ODDS_ALLOC_SOCCER=0.02); skip a sport entirely
 // with ODDS_SKIP_SPORTS=SOCCER,WNBA (comma-separated).
@@ -66,6 +71,27 @@ for (const k of Object.keys(BUDGET_ALLOCATION)) {
   const v = Number(env[`ODDS_ALLOC_${k}`]);
   if (Number.isFinite(v) && v >= 0) BUDGET_ALLOCATION[k] = v;
 }
+// Release grace for the derived denominator: a sport stays in it for this many
+// consecutive OBSERVED quiet days after the last day /sports reported it active
+// (observed, not elapsed — see the odds agent header). Entry is immediate (one
+// active observation), release takes the full window — the asymmetry is the
+// point. Read through intEnv so an explicit 0 arrives as 0 rather than being
+// coerced back to the default: `num()` and `Number(x) || 14` both turn that 0
+// back into 14 (D80).
+//
+// FLOORED AT 7 IN PRODUCTION. Without a floor this single env integer is the
+// only thing between the feature and the shape it exists to prevent:
+// ODDS_SEASON_GRACE_DAYS=0 or =1 releases every quiet sport on the next run or
+// two, which is D6 — football leaves the denominator on a Tuesday and every
+// other ceiling inflates to fill the gap. Seven days is the shortest window
+// that still covers an NFL/NCAAF week plus a slipped observation, so a value
+// below it is never a configuration we would want honoured. The floor lives
+// HERE and not in `seasonVerdicts`, whose `graceDays` argument stays free: the
+// pure rules must still be drivable at 0 and 1 so the boundary itself can be
+// tested, and a test owns its own clock either way.
+const SEASON_GRACE_FLOOR = 7;
+const ODDS_SEASON_GRACE_DAYS = Math.max(SEASON_GRACE_FLOOR, intEnv(env.ODDS_SEASON_GRACE_DAYS, 14));
+
 const ODDS_SKIP_SPORTS = new Set(String(env.ODDS_SKIP_SPORTS || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 
 // ── Football priority (Sep–Jan) ─────────────────────────────────
@@ -284,6 +310,7 @@ const config = {
     tier: ODDS_API_TIER,
     monthlyBudget: ODDS_MONTHLY_BUDGET,
     allocation: BUDGET_ALLOCATION,
+    seasonGraceDays: ODDS_SEASON_GRACE_DAYS,
     footballSports: FOOTBALL_SPORTS,
     footballPriority: FOOTBALL_PRIORITY,
     footballPriorityOn,
