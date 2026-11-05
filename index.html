@@ -7077,7 +7077,7 @@ function renderSigBudget(){
       // the pool is the one change here that moves every other ceiling, so it
       // is stated rather than left to be read off the table.
       var rel=[];if(season)Object.keys(season).forEach(function(k){if(season[k]&&season[k].in===false)rel.push(k+': '+season[k].reason)});
-      tb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.sumAlloc!=null?' · sumAlloc '+b.sumAlloc:'')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+(b.graceDays!=null?' · release grace '+b.graceDays+'d':'')+(rel.length?' · '+rel.length+' released ('+esc(rel.join('; '))+')':'')+'</div>';
+      tb+='<div style="font-size:7.5px;color:var(--muted);margin-top:5px">'+((denom&&denom.length)?('ceilings priced against '+denom.length+' published sport'+(denom.length===1?'':'s')+': '+esc(denom.join(', '))):'no denominator published yet — ceilings are priced against the full allocation table, which is the tightest reading available')+(b.sumAlloc!=null?' · sumAlloc '+b.sumAlloc+' (the denominator\'s; a released sport is priced against it plus its own share — see each row\'s pricedSum)':'')+(b.pool!=null?' · pool '+Math.round(b.pool*100)+'% of the month':'')+(b.graceDays!=null?' · release grace '+b.graceDays+'d':'')+(rel.length?' · '+rel.length+' released ('+esc(rel.join('; '))+')':'')+'</div>';
     }
   }
   h+=sigCard(tb);

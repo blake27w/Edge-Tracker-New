@@ -264,7 +264,7 @@ including the ones that are *in*? Also: `grep -n 'sportCap' edge-tracker-agents/
    assertions and the whole suite, including the simulated season boundary. **This is the decisive
    step** — see 6.
 3. `cd edge-tracker-agents && node --test test/odds-season-denominator.test.js` with
-   `ODDS_SEASON_GRACE_DAYS=0` in the environment. Proves the release path end-to-end through the
+   `ODDS_SEASON_GRACE_DAYS=0  # NOTE: floored to 7 in production; the test drives grace 0 through the pure function, not the env` in the environment. Proves the release path end-to-end through the
    real `run()` — grace 0 is a season boundary summoned on demand, since every sport absent from the
    stubbed `/sports` response is released on its first run.
 4. `npx serve .` from the repo root (read the port it actually prints — it silently falls back to a

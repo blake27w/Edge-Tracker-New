@@ -352,6 +352,7 @@ ok('every KEYS entry has a landing frequency', kn.KEYS.every((x) => kn.LAND_PCT[
 // read is bounded and rides an index that exists, and a gap wider than the
 // bound reseeds instead of emitting a fabricated magnitude.
 const oddsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/odds/index.js'), 'utf8');
+const envExample = await readFile(join(root, 'edge-tracker-agents/.env.example'), 'utf8').catch(() => '');
 // The two consumers of odds' in-memory movement feeds — which one reads which
 // key is the invariant, not a detail (D74).
 const splitsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-splits/index.js'), 'utf8');
@@ -756,13 +757,37 @@ ok('the only season input is the free /sports read',
   && (codeOnly(oddsSrc).match(/\/sports\/\$\{sportKey\}\/odds|\/sports\?apiKey/g) || []).length === 2,
   'a new per-sport endpoint per run is the alternative this deliberately did not take');
 ok('entry is immediate and release is graced — the asymmetry is explicit',
-  /quiet <= graceDays/.test(oddsSrc) && /reason = 'active-now'/.test(oddsSrc)
+  /entry\.quiet <= graceDays/.test(oddsSrc) && /reason = 'active-now'/.test(oddsSrc)
   && /const graceDays = \(\) => oddsApi\.seasonGraceDays \?\? 14;/.test(oddsSrc),
   'symmetric membership IS the September bug (D6): football leaves on a Tuesday and every other ceiling inflates');
-ok('an unreadable feed writes no stamp',
-  /if \(!activeKeys\) \{[\s\S]{0,400}?continue;/.test(oddsSrc)
-  && !/if \(!activeKeys\)[\s\S]{0,400}?nextState\[sport\]/.test(oddsSrc),
-  'refreshing `last` on a dead feed would extend a dead season by another window, forever, on a flaky network');
+ok('the release clock counts OBSERVATIONS, not calendar days',
+  /quiet: countedToday \? prevQuiet : prevQuiet \+ 1/.test(seasonFns)
+  && /quiet: 0, obs: today/.test(seasonFns)
+  && /entry\.quiet <= graceDays \|\| idle < graceDays/.test(seasonFns),
+  'a calendar clock cannot tell an outage from a season ending: the month exhausts around day 13 at measured demand (D87), so ~17 unwatched days would age every sport out and release the table on ONE observation — D6 by another road');
+ok('the season is observed BEFORE the budget-exhausted return',
+  /const active = await inSeasonKeys\(\)[\s\S]*?if \(budget\.remaining <= 0\) \{/.test(oddsSrc)
+  && /if \(budget\.remaining <= 0\) \{[\s\S]{0,400}?await persistBudget\(\);/.test(oddsSrc),
+  '/sports is free, so an exhausted month is no reason to stop watching — and the observation is persisted or it never happened');
+ok('an unreadable OR EMPTY feed writes no stamp',
+  /const readable = !!activeKeys && activeKeys\.size > 0;/.test(seasonFns)
+  && /if \(!readable\) \{[\s\S]{0,400}?continue;/.test(seasonFns)
+  && !/if \(!readable\)[\s\S]{0,400}?nextState\[sport\]/.test(seasonFns)
+  && /return keys\.size \? keys : null;/.test(oddsSrc),
+  'refreshing `last` on a dead feed extends a dead season forever on a flaky network — and an empty Set is TRUTHY, so a 200 carrying [] used to walk past the fail-safe as proof that nothing is in season');
+ok('both stamps are judged before the row is trusted',
+  /const lastOk = !!prev && \(prev\.last == null \|\| DAY_RE\.test\(prev\.last\)\);/.test(seasonFns)
+  && /const seeded = firstOk && lastOk;/.test(seasonFns),
+  "a half-written row ({first: '2026-09-06', last: '2026-11'}) took the seeded branch, dropped the unparseable `last`, and dated the release clock from `first` — releasing every quiet sport in one run");
+ok('the denominator cannot collapse',
+  /const MIN_SUM_ALLOC = 0\.25;/.test(oddsSrc) && /const MAX_SPORT_POOL = 0\.6;/.test(oddsSrc)
+  && /Math\.max\(MIN_SUM_ALLOC, raw \|\| 1\)/.test(oddsSrc)
+  && /Math\.min\(share, MAX_SPORT_POOL\)/.test(oddsSrc),
+  "gating `billed` by the season verdict made the degenerate case currentCeiling's own comment forbids REACHABLE: a thin /sports board listing one league would price it at the entire pool and, being active, let it spend it");
+ok('a failing sentinel write becomes loud',
+  /seasonWriteFailRuns\+\+/.test(oddsSrc) && /reportDegraded\(SEASON_WRITE_KEY, detail\)/.test(oddsSrc)
+  && /clearDegraded\(SEASON_WRITE_KEY\)/.test(oddsSrc),
+  'the only symptom of a dead sentinel row is /budget reading `seeding (Nd left)` — which manual check 5 tells the operator to EXPECT on day 1, so an RLS change would disable the feature and look like a clean deploy (#137 shape)');
 ok('spend no longer holds a released share', /!inDenom && !v\.out && \(bySport \|\| \{\}\)\[sport\] > 0/.test(oddsSrc),
   '`billed` alone put any sport with ONE credit into the denominator for the rest of the month and never took it out (D86)');
 ok('the football month range survives as a backstop',
@@ -789,6 +814,14 @@ ok('/budget publishes the denominator decision, not just its membership',
 ok('the grace is read so that 0 is honoured',
   /ODDS_SEASON_GRACE_DAYS, 14\)/.test(cfgSrc) && /intEnv\(env\.ODDS_SEASON_GRACE_DAYS/.test(cfgSrc),
   "`Number(x) || 14` turns the operator's 0 back into 14 (D80) — and 0 is how a boundary is summoned on demand");
+ok('the grace has a production FLOOR, and the pure rules do not',
+  /const SEASON_GRACE_FLOOR = 7;/.test(cfgSrc)
+  && /Math\.max\(SEASON_GRACE_FLOOR, intEnv\(env\.ODDS_SEASON_GRACE_DAYS, 14\)\)/.test(cfgSrc)
+  && !/SEASON_GRACE_FLOOR/.test(oddsSrc),
+  'one unbounded env integer was the whole distance between this feature and the September shape: ODDS_SEASON_GRACE_DAYS=1 releases every quiet sport on the next run. The floor belongs in config, not in seasonVerdicts, whose graceDays argument must stay drivable at 0 for the boundary tests');
+ok('ODDS_SEASON_GRACE_DAYS is documented where the operator looks',
+  /ODDS_SEASON_GRACE_DAYS/.test(envExample) && /ODDS_ALLOC_/.test(envExample),
+  'it lived only in code comments and DECISIONS.md, so the one knob that can recreate D6 was invisible to whoever sets the env');
 const seasonTests = await Promise.all([
   readFile(join(root, 'edge-tracker-agents/test/odds-season-state.test.js'), 'utf8').catch(() => ''),
   readFile(join(root, 'edge-tracker-agents/test/odds-season-denominator.test.js'), 'utf8').catch(() => ''),
@@ -797,6 +830,16 @@ ok('both directions of the asymmetry are tested, through run() as well as pure',
   /graceDays = 0 releases/.test(seasonTests) && /release lands at exactly graceDays \+ 1/.test(seasonTests)
   && /mod\.default\.run\(\)/.test(seasonTests) && /unreadable/.test(seasonTests),
   'entry, release, the boundary itself and the fail-safe each have to be driven, not asserted in prose');
+ok('the outage, the empty board and the collapse are tested too',
+  /an unobserved stretch cannot age a sport out/.test(seasonTests)
+  && /an EMPTY active set is not a board/.test(seasonTests)
+  && /a one-sport denominator cannot be priced at the whole pool/.test(seasonTests)
+  && /a half-written row reseeds/.test(seasonTests),
+  'each of these four was a path to the September shape, so each needs a test that FAILS when the guard is reverted (D21)');
+ok('the pool bound is pinned to computed ceilings, not to an identity',
+  /every in-denominator ceiling equals its independently-computed share/.test(seasonTests)
+  && !/and not vacuously small/.test(seasonTests),
+  "`Sum floor(B x POOL x share_i / sumAlloc) <= B x POOL` is true of ANY denominator by construction — it would have passed unchanged under a mutation that released every sport, which is the one thing it was there to catch");
 
 if (hasSignal) {
   ok('the PWA reads only the ODDS api_usage row',

@@ -54,6 +54,7 @@ const cfg = {
 };
 const upserts = [];
 let sportsReadable = true;
+let sentinelWritable = true;
 let mod;
 
 // The only input the season signal has. Stubbed at module scope, not in a hook:
@@ -87,7 +88,13 @@ before(async () => {
         if (m.provider === 'odds') return [{ used: SEEDED_USED, by_sport: { ...SEEDED } }];
         return [];                              // no persisted season state yet
       },
-      upsert: async (tbl, row) => { upserts.push({ tbl, row }); return { count: 1 }; },
+      upsert: async (tbl, row) => {
+        if (!sentinelWritable && row && row.provider === 'odds-season') {
+          throw new Error('permission denied for table api_usage');
+        }
+        upserts.push({ tbl, row });
+        return { count: 1 };
+      },
       insert: async () => ({ count: 1 }),
     },
     namedExports: { isMissingRelation: () => false },
@@ -147,29 +154,92 @@ test('MLB is released despite having spent, and its share returns to the pool', 
   }
 });
 
-test('the ceilings of the sports in the denominator still sum within the pool', async () => {
-  // Nothing may overspend the pool in EITHER membership state (D85). The bound
-  // is over the DENOMINATOR, which is what nominalCap normalises and what can
-  // actually spend: a RELEASED sport is priced against `denom + itself`, so with
-  // a small denominator its individual number is generous, and the sum over all
-  // twelve exceeds the pool for that reason alone. It cannot be spent — a
-  // released sport is absent from /sports and so every one of its keys is
-  // season-skipped in the loop below, which the next assertion pins.
+test('every in-denominator ceiling equals its independently-computed share of the pool', async () => {
+  // NOT `sum(ceilings) <= pool`. That bound is an algebraic identity of
+  // nominalCap — `sum floor(B x POOL x share_i / sumAlloc)` is at most
+  // `B x POOL` for ANY denominator, because sumAlloc is the sum of exactly those
+  // shares — so it holds just as well for a denominator that has released the
+  // whole table, and its `> 0.9 x pool` companion holds for any denominator of
+  // fewer than ~1700 members. Both would have passed unchanged under the
+  // collapse this file is here to rule out. So the ceilings are checked against
+  // numbers computed here from the fixture instead, sport by sport.
   const p = mod.getOddsCeilings();
-  const total = p.denom.reduce((t, s) => t + p.ceilings[s], 0);
-  assert.ok(total <= Math.floor(BUDGET * POOL),
-    `the denominator's ceilings sum to ${total}, over the ${BUDGET * POOL} pool`);
-  assert.ok(total > Math.floor(BUDGET * POOL) * 0.9,
-    `and not vacuously small: ${total} of a ${Math.floor(BUDGET * POOL)} pool`);
+  assert.deepEqual(p.denom.slice().sort(), ['NBA', 'NCAAB', 'NHL', 'TENNIS'],
+    'the fixture this is pinned against');
+  const sum = 0.10 + 0.06 + 0.06 + 0.03;          // NBA + NCAAB + NHL + TENNIS = 0.25
+  assert.equal(p.sumAlloc, sum);
+  const want = { NBA: 6800, NCAAB: 4080, NHL: 4080, TENNIS: 2040 };
+  for (const [s, n] of Object.entries(want)) {
+    assert.equal(nominal(s, p.denom), n, `the arithmetic itself: ${s}`);
+    assert.equal(p.ceilings[s], n, `${s} must be priced at ${n}, not ${p.ceilings[s]}`);
+  }
+  // Which, being a partition of the pool among those four, exhausts it — the
+  // identity above, now anchored to a known membership rather than standing in
+  // for one.
+  const total = Object.values(want).reduce((a, b) => a + b, 0);
+  assert.equal(total, 17000);
+  assert.ok(total <= Math.floor(BUDGET * POOL), `${total} is within the ${BUDGET * POOL} pool`);
+});
+
+// ── 2b. The denominator cannot collapse ─────────────────────────
+test('a one-sport denominator cannot be priced at the whole pool', async () => {
+  // Gating `billed` with `&& !v.out` removed the guarantee that every sport with
+  // spend stays in the denominator — which is what kept sumAlloc large and made
+  // the degenerate case currentCeiling's own comment forbids unreachable. It is
+  // reachable now: a thin or partially-recovered /sports board listing one
+  // league would hand that league the entire month and, being active, it could
+  // spend it. So sumAlloc carries a floor, and the INVARIANT is that no
+  // denominator — not even a single sport — can be priced at the pool.
+  const pool = Math.floor(BUDGET * POOL);
+  const alone = mod.nominalCap('MLB', ['MLB']);
+  assert.ok(alone < pool, `a lone MLB must not be priced at the whole ${pool} pool (got ${alone})`);
+  assert.equal(alone, Math.floor(BUDGET * POOL * (ALLOC.MLB / 0.25)), 'floored at MIN_SUM_ALLOC');
+  assert.equal(mod.sumAllocOf(['MLB']), 0.25, 'the floor, not MLB\'s own 0.14');
+  // Every single-sport denominator, and the smallest two-sport one.
+  for (const s of Object.keys(ALLOC)) {
+    assert.ok(mod.nominalCap(s, [s]) <= Math.floor(pool * 0.6), `${s} alone is bounded by MAX_SPORT_POOL`);
+    assert.ok(mod.nominalCap(s, [s]) < pool, `${s} alone must not be the whole pool`);
+  }
+  // A big share is bounded by the per-sport cap, not by the sum floor: dividing
+  // 0.32 by a 0.25 floor is still the whole pool, which is why there are two.
+  assert.equal(mod.nominalCap('NFL', ['NFL']), Math.floor(pool * 0.6));
+  assert.ok(mod.nominalCap('BOXING', ['BOXING', 'GOLF']) < pool / 4,
+    'nor may a 0.04 denominator hand a 0.02 sport half the month');
+  // And the floor must not bind on a real board, or it would quietly undo the
+  // feature by refusing to return a released share to the pool.
+  assert.equal(mod.sumAllocOf(['NBA', 'NCAAB', 'NHL', 'SOCCER', 'UFC', 'BOXING']), 0.31,
+    'deep winter after football is above the floor — the floor is a guard, not a share table');
+});
+
+test('the published season block is a copy, not a window into agent state', async () => {
+  // getOddsCeilings is a READ path that used to alias `lastSeason` and then write
+  // through it, permanently marking any allocation sport absent from SPORTS as
+  // `in: true` while leaving it out of `denom` — a contradiction published every
+  // run thereafter, to a /budget handler holding a live reference to agent state.
+  const a = mod.getOddsCeilings();
+  a.season.MLB.in = true;
+  a.season.MLB.reason = 'tampered';
+  a.season.INVENTED = { in: true, reason: 'tampered' };
+  const b = mod.getOddsCeilings();
+  assert.equal(b.season.MLB.in, false, 'a caller cannot reach in and change a verdict');
+  assert.match(b.season.MLB.reason, /^released \(\d+d idle\)$/);
+  assert.equal(b.season.INVENTED, undefined, 'nor add a sport');
+  assert.notEqual(b.season, a.season);
+  // Each sport also carries the sumAlloc ITS OWN ceiling was priced against: one
+  // top-level number cannot describe a released sport, which is normalised
+  // against `denom + itself`.
+  assert.equal(b.season.NBA.pricedSum, b.sumAlloc, 'a member is priced against the denominator');
+  assert.equal(b.season.MLB.pricedSum, Math.round((b.sumAlloc + ALLOC.MLB) * 1000) / 1000,
+    'a released sport is priced against the denominator plus its own share');
 });
 
 test('a released sport cannot spend — its keys are season-skipped', async () => {
   // The ceiling of a released sport is generous by construction (see above), so
   // what keeps it at zero is the per-key season skip, not its cap. If that ever
   // stopped holding, the loose ceiling would become spendable.
-  const before = mod.getOddsBudget().bySport.MLB || 0;
+  const spentBefore = mod.getOddsBudget().bySport.MLB || 0;
   const r = await mod.default.run();
-  assert.equal(mod.getOddsBudget().bySport.MLB || 0, before,
+  assert.equal(mod.getOddsBudget().bySport.MLB || 0, spentBefore,
     'MLB is absent from /sports and must not be fetched at all');
   assert.match(r.summary, /denom \d+\/12/);
 });
@@ -262,4 +332,65 @@ test('the run summary names the denominator and what was released', async () => 
   const r = await mod.default.run();
   assert.match(r.summary, /denom \d+\/12 \(/);
   assert.match(r.summary, /released .*MLB/);
+});
+
+// ── 6. A failing sentinel write is loud ────────────────────────
+test('a persistently failing sentinel write announces itself instead of looking like day 1', async () => {
+  // The signature failure of this repo, in its worst form: with no sentinel row
+  // the state resets every process, every sport reseeds forever, and the ONLY
+  // symptom is /budget reading `seeding (Nd left)` — which the manual check
+  // recipe tells the operator to EXPECT on day 1. An RLS change on api_usage
+  // would disable the feature while looking exactly like a successful deploy.
+  const { getDegraded, clearDegraded } = await import('../src/store/index.js');
+  clearDegraded('odds|season-state');
+  sentinelWritable = false;
+  await mod.default.run();
+  assert.equal(getDegraded().some((d) => d.key === 'odds|season-state'), false,
+    'one failed write is a transient the next run fixes — an alert that fires on those is one nobody reads');
+  await mod.default.run();
+  await mod.default.run();
+  const d = getDegraded().find((x) => x.key === 'odds|season-state');
+  assert.ok(d, 'three consecutive failures is a condition, and conditions are reported');
+  assert.match(d.detail, /3 consecutive runs/);
+  assert.match(d.detail, /permission denied/, 'the error itself, not a shrug');
+  assert.match(d.detail, /reads as a healthy day 1/, 'and why the symptom is deceptive');
+
+  // The month row is still written throughout — a sentinel failure may never
+  // cost us the credit counter.
+  assert.ok(upserts.filter((u) => u.row.provider === 'odds').length > 0);
+
+  // And one success retracts it: an unretracted reportDegraded latches for its
+  // full TTL and goes on repeating an obsolete reason (D73).
+  sentinelWritable = true;
+  await mod.default.run();
+  assert.equal(getDegraded().some((x) => x.key === 'odds|season-state'), false,
+    'the condition clears on the first run that persists again');
+});
+
+// ── 7. An empty board is a broken read, not an empty world ─────
+test('a 200 carrying an empty board is treated exactly like an unreadable one', async () => {
+  // `new Set()` is truthy, so an empty active set walked past the `!activeKeys`
+  // fail-safe and was accepted as "nothing is in season" — the premise that
+  // releases the entire table one window later. It is folded into the unknown
+  // path in BOTH places it could be believed: inSeasonKeys returns null for it,
+  // and seasonVerdicts refuses it too (an exported pure function cannot rely on
+  // its caller). The observable difference from the old behaviour is here: an
+  // empty Set season-skipped every key, so the agent went silent and called it a
+  // board; `null` means unknown, and unknown fetches.
+  sportsReadable = true;
+  cfg.oddsApi.seasonGraceDays = 14;
+  feed = [];
+  const r = await mod.default.run();
+  const p = mod.getOddsCeilings();
+  for (const s of ['MLB', 'NFL', 'NBA']) {
+    assert.equal(p.season[s].reason, 'feed-unreadable', `${s} is an unknown, and unknowns are held IN`);
+    assert.equal(p.denom.includes(s), true);
+  }
+  // And the sweep does not silently stop: every key is still DUE (paced, since
+  // earlier runs in this process already fetched them) rather than skipped as
+  // out of season, which is what an empty Set handed on as a board would do.
+  assert.match(r.summary, /\d+ paced/,
+    'an unknown board means `null = fetch anyway`, as before this feature — not "every key is out of season"');
+  assert.match(r.summary, /denom \d+\/12/);
+  feed = ['NBA', 'NHL', 'NCAAB'];
 });

@@ -15,13 +15,28 @@
 // `now` and `activeKeys` are parameters, so a season boundary is simulated
 // deterministically rather than waited for. No clock, no network.
 //
+// The release clock counts OBSERVATIONS, not calendar days — days we actually
+// looked and saw the sport absent. That is not a detail: a calendar clock makes
+// an outage indistinguishable from a season ending, and since the month's
+// credits exhaust around day 13 at measured demand (D87), it would meet the next
+// month with every sport ~18 days idle and release the whole table on a single
+// observation. D6 again, by a different road.
+//
 // Mutation-verified per D21: `quiet <= graceDays` -> `quiet <= 0` fails the
-// grace tests; writing `last` on an unreadable feed fails 'an unreadable feed
-// writes nothing'; dropping `&& !v.out` from seasonDenominator fails 'a released
-// sport leaves the denominator even though it has spent'.
+// grace tests; reverting the counter to calendar age (`entry.quiet` -> `idle`)
+// fails 'an unobserved stretch cannot age a sport out'; writing `last` on an
+// unreadable feed fails 'an unreadable feed writes nothing'; treating an empty
+// active set as a readable board fails 'an EMPTY active set is not a board';
+// judging only `first` for malformedness fails 'a half-written row reseeds';
+// dropping `&& !v.out` from seasonDenominator fails 'a released sport leaves the
+// denominator even though it has spent'.
 // ══════════════════════════════════════════════════════════════
 import { test, mock, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const exec = promisify(execFile);
 
 const ALLOC = { NFL: 0.32, NCAAF: 0.16, MLB: 0.14, NBA: 0.10, NCAAB: 0.06, NHL: 0.06,
   SOCCER: 0.03, UFC: 0.04, BOXING: 0.02, WNBA: 0.02, TENNIS: 0.03, GOLF: 0.02 };
@@ -75,6 +90,21 @@ after(() => mock.reset());
 const run = (active, state, days = 0, grace = 14, footballOn = false) =>
   seasonVerdicts(active, state, SPORTS, at(days), grace, footballOn);
 
+// A state carrying an OBSERVED quiet history, which is the only thing that can
+// release a sport. `quiet` is the release clock — days we actually looked and saw
+// the sport absent — and `obs` is the day it last counted, so a run today adds
+// one: quietFor(15) plus today's observation IS 15 quiet days.
+//
+// Calendar age ALONE releases nothing, deliberately. Every fixture below that
+// wants a released sport has to say how many days it was OBSERVED quiet, because
+// an old `last` with no observations is exactly what an outage looks like, and
+// the outage must not release anything (see 'an unobserved stretch...').
+const quietFor = (days, lastActiveDaysAgo = days) => ({
+  first: day(-200),
+  last: lastActiveDaysAgo == null ? null : day(-lastActiveDaysAgo),
+  in: true, quiet: days - 1, obs: day(-1),
+});
+
 test('the seeding run holds every sport in — nothing is released for lack of history', () => {
   // The clock starts at deploy, not at the sport's real death: no per-sport
   // activity date is persisted anywhere today. An un-seeded sport is an UNKNOWN,
@@ -107,7 +137,7 @@ test('a quiet sport is held by grace, and the reason says how long it has been q
 });
 
 test('release lands at exactly graceDays + 1 quiet days, not before', () => {
-  const quiet = (n) => run(keysOf('NHL'), { MLB: { first: day(-120), last: day(-n), in: true } }).verdicts.MLB;
+  const quiet = (n) => run(keysOf('NHL'), { MLB: quietFor(n) }).verdicts.MLB;
   assert.equal(quiet(13).in, true, '13 quiet days is inside a 14-day grace');
   assert.equal(quiet(14).in, true, 'the boundary day itself is still in');
   assert.equal(quiet(14).reason, 'grace (14d ago)');
@@ -168,7 +198,7 @@ test('a sport cannot flap in and out inside one grace window', () => {
 });
 
 test('a transition fires only on a CHANGE, never on every run', () => {
-  const state = { MLB: { first: day(-120), last: day(-40), in: false } };
+  const state = { MLB: { ...quietFor(40), in: false } };
   const { transitions } = run(keysOf('NBA'), state);
   assert.equal(transitions.length, 0, 'MLB was already out; staying out is not an event');
 });
@@ -194,7 +224,7 @@ test('SOCCER is in when ANY of its seven leagues is active', () => {
     assert.equal(verdicts.SOCCER.in, true, `${league} alone must hold SOCCER in`);
     assert.equal(verdicts.SOCCER.reason, 'active-now');
   }
-  const none = run(new Set(['soccer_brazil_serie_a']), { SOCCER: { first: day(-200), last: day(-40), in: true } });
+  const none = run(new Set(['soccer_brazil_serie_a']), { SOCCER: quietFor(40) });
   assert.equal(none.verdicts.SOCCER.in, false, 'a league we do not track is not our signal');
 });
 
@@ -203,11 +233,7 @@ test('the football backstop holds football in after its grace has expired', () =
   // football was given by hand — so this term is redundant and stays anyway,
   // because it only ever holds a sport IN and it is the last line against D6's
   // measured failure if /sports ever reports football inactive for a fortnight.
-  const dead = {
-    NFL: { first: day(-200), last: day(-40), in: true },
-    NCAAF: { first: day(-200), last: day(-40), in: true },
-    MLB: { first: day(-200), last: day(-40), in: true },
-  };
+  const dead = { NFL: quietFor(40), NCAAF: quietFor(40), MLB: quietFor(40) };
   const off = run(keysOf('NBA'), dead, 0, 14, false);
   assert.equal(off.verdicts.NFL.in, false, 'with the backstop off, an expired grace releases football');
   const on = run(keysOf('NBA'), dead, 0, 14, true);
@@ -226,8 +252,13 @@ test('every reason comes from the closed set', () => {
   const states = [
     run(keysOf('NBA'), {}),
     run(null, {}),
-    run(keysOf('NBA'), { MLB: { first: day(-120), last: day(-40), in: false }, NHL: { first: day(-9), last: day(-9), in: true } }, 0, 14, true),
+    run(new Set(), {}),
+    run(keysOf('NBA'), { MLB: { ...quietFor(40), in: false }, NHL: quietFor(9) }, 0, 14, true),
     run(keysOf('NBA'), {}, 0, 0),
+    // An inconsistent row: more observed quiet days than the calendar allows.
+    // The secondary calendar condition holds it in, and the reason it reports
+    // still has to be one of the authored shapes.
+    run(keysOf('NBA'), { MLB: { first: day(-3), last: null, quiet: 40, obs: day(-1) } }),
   ];
   for (const { verdicts } of states) {
     for (const [s, v] of Object.entries(verdicts)) {
@@ -250,12 +281,111 @@ test('a future stamp reads as today, not as negative age', () => {
   assert.equal(verdicts.MLB.reason, 'grace (0d ago)');
 });
 
+// ── The release clock is OBSERVED, not elapsed ──────────────────
+test('an unobserved stretch cannot age a sport out — the outage case', () => {
+  // THE finding. The budget exhausts around day 13 of a 2.3x-oversubscribed
+  // month (D87), and the agent used to return before this code ran — so ~17 days
+  // a month passed with nothing watching. On a calendar clock the next
+  // observation would find every sport ~18 days idle and release the lot at
+  // once, which is D6's measured failure arriving on a schedule.
+  //
+  // Here: a sport last seen active 60 days ago, with only ONE quiet day ever
+  // observed. It stays in, and the 59 unwatched days buy nothing.
+  const state = { MLB: { first: day(-200), last: day(-60), in: true, quiet: 1, obs: day(-59) } };
+  const { verdicts, nextState } = run(keysOf('NBA'), state);
+  assert.equal(verdicts.MLB.in, true, 'an outage must not release a sport on resume');
+  assert.equal(verdicts.MLB.reason, 'grace (60d ago)', 'the calendar age is REPORTED, just not acted on');
+  assert.equal(nextState.MLB.quiet, 2, 'one run, one observed quiet day');
+  // And it takes a full window of real observations to get there from here.
+  let st = nextState;                                // 2 observed quiet days
+  for (let d = 1; d <= 11; d++) st = run(keysOf('NBA'), st, d).nextState;
+  assert.equal(st.MLB.quiet, 13);
+  const d12 = run(keysOf('NBA'), st, 12);
+  assert.equal(d12.verdicts.MLB.in, true, '14 observed quiet days is still inside the window');
+  assert.equal(d12.nextState.MLB.quiet, 14);
+  assert.equal(run(keysOf('NBA'), d12.nextState, 13).verdicts.MLB.in, false,
+    'the 15th observed quiet day is the release — 72 calendar days after the last slate');
+});
+
+test('the quiet counter counts a DAY once, not a run — 20 runs an hour do not release anything', () => {
+  // The agent runs every ~3 minutes. A counter that ticked per run would turn a
+  // 14-day window into 42 minutes, which is a worse D6 than the one we started
+  // with. `obs` is what pins the count to the calendar day.
+  let st = { MLB: quietFor(5) };
+  const first = run(keysOf('NBA'), st).nextState;
+  assert.equal(first.MLB.quiet, 5, "today's first quiet observation counts");
+  st = first;
+  for (let i = 0; i < 20; i++) st = run(keysOf('NBA'), st).nextState;
+  assert.equal(st.MLB.quiet, 5, 'and the next twenty runs the same day do not');
+  assert.equal(st.MLB.obs, day(0));
+  assert.equal(run(keysOf('NBA'), st, 1).nextState.MLB.quiet, 6, 'tomorrow counts once more');
+});
+
+test('one active observation zeroes the clock, not just the date', () => {
+  const st = run(keysOf('MLB'), { MLB: quietFor(14) }).nextState;
+  assert.equal(st.MLB.quiet, 0, 'presence resets the counter — that is the hysteresis');
+  assert.equal(st.MLB.last, day(0));
+  assert.equal(run(keysOf('NBA'), st, 1).verdicts.MLB.in, true, 'and the window starts over');
+});
+
+test('a state with no quiet counter starts the clock at zero, not at its calendar age', () => {
+  // The upgrade path: rows written before the counter existed. Reading a missing
+  // counter as "however old `last` is" would release every quiet sport on the
+  // first run after deploy — the same shape as the outage above.
+  const { verdicts, nextState } = run(keysOf('NBA'), { MLB: { first: day(-200), last: day(-90), in: true } });
+  assert.equal(verdicts.MLB.in, true, 'a pre-upgrade row holds its sport in');
+  assert.equal(nextState.MLB.quiet, 0, 'and cannot be counted as already past the window');
+});
+
+test('an EMPTY active set is not a board — it is folded into the unreadable path', () => {
+  // `new Set()` is truthy, so a 200 carrying `[]` (or an upstream rename of the
+  // `active` field) walked straight past the `!activeKeys` fail-safe and was
+  // accepted as "nothing on earth is in season" — which releases the whole table
+  // one window later. Zero active leagues across twelve sports is a broken read.
+  const state = { MLB: quietFor(40), NBA: { first: day(-30), last: day(-1), in: true, quiet: 1, obs: day(-1) } };
+  const snapshot = JSON.stringify(state);
+  const { verdicts, nextState } = run(new Set(), state);
+  assert.deepEqual(nextState, JSON.parse(snapshot), 'no stamp and no counter may move on an empty board');
+  for (const s of NON_SKIP) {
+    assert.equal(verdicts[s].in, true, `${s} must be held in when the board is empty`);
+    assert.equal(verdicts[s].reason, 'feed-unreadable');
+  }
+});
+
+test('a half-written row reseeds — a valid first with a malformed last is not half-trusted', () => {
+  // A truncated by_sport jsonb: `{first: '2026-09-06', last: '2026-11'}`. Judging
+  // only `first` took the seeded branch, threw the unparseable `last` away as
+  // null, and then dated the release clock from `first` — 60 days, released on
+  // the spot, every quiet sport in the table in one run.
+  const { verdicts, nextState } = run(keysOf('NBA'), {
+    MLB: { first: day(-60), last: '2026-11', in: true, quiet: 40, obs: day(-1) },
+  }, 0, 14);
+  assert.equal(verdicts.MLB.in, true, 'an unreadable row is an unknown, and unknowns are held IN');
+  assert.equal(verdicts.MLB.reason, 'seeding (14d left)');
+  assert.equal(nextState.MLB.first, day(0), 'the clock restarts rather than being read loosely');
+  assert.equal(nextState.MLB.last, null);
+  assert.equal(nextState.MLB.quiet, 1, 'and the quiet counter restarts with it');
+  // An ABSENT last is legitimate — never seen active — and must NOT reseed.
+  const kept = run(keysOf('NBA'), { MLB: { first: day(-9), last: null, in: true, quiet: 9, obs: day(-1) } });
+  assert.equal(kept.nextState.MLB.first, day(-9), 'a sport we have simply never seen active keeps its clock');
+  assert.equal(kept.nextState.MLB.quiet, 10);
+});
+
+test('a corrupted quiet counter cannot release a sport that was active yesterday', () => {
+  // The secondary calendar condition, and the only thing it is for: the counter
+  // is a number in a jsonb blob, and a hand-edited or half-written one must not
+  // be able to retire a live sport.
+  const { verdicts } = run(keysOf('NBA'), { MLB: { first: day(-200), last: day(-1), in: true, quiet: 9999, obs: day(-1) } });
+  assert.equal(verdicts.MLB.in, true, 'last seen active yesterday — no counter may override that');
+  assert.equal(verdicts.MLB.reason, 'grace (1d ago)');
+});
+
 // ── seasonDenominator: who the ceilings are priced against ──────
 test('a released sport leaves the denominator even though it has spent', () => {
   // THE fix. `billed` alone put any sport with a single credit into the
   // denominator and never took it out — which is how MLB's 0.14 of the pool
   // survived its whole offseason on one credit (D86).
-  const verdicts = run(keysOf('NBA'), { MLB: { first: day(-120), last: day(-40), in: true } }).verdicts;
+  const verdicts = run(keysOf('NBA'), { MLB: quietFor(40) }).verdicts;
   const { denom, season } = seasonDenominator(verdicts, { MLB: 1, NBA: 900 });
   assert.equal(denom.includes('MLB'), false, 'one credit must not buy a dead sport a share');
   assert.equal(season.MLB.in, false);
@@ -275,11 +405,43 @@ test('the denominator reports a reason for every sport, in as well as out', () =
   // The D88 gap: the live denominator was unknowable from /budget, so November's
   // analysis had to be modelled. Membership without a reason leaves the next
   // reader inferring the decision from a share table.
-  const verdicts = run(keysOf('NBA', 'NHL'), { MLB: { first: day(-120), last: day(-40), in: true } }).verdicts;
+  const verdicts = run(keysOf('NBA', 'NHL'), { MLB: quietFor(40) }).verdicts;
   const { season } = seasonDenominator(verdicts, { MLB: 1 });
   assert.deepEqual(Object.keys(season).sort(), Object.keys(SPORTS).sort());
   for (const [s, v] of Object.entries(season)) {
     assert.equal(typeof v.in, 'boolean', `${s} has no membership`);
     assert.equal(REASON_OK(v.reason), true, `${s}: ${v.reason} is not in the closed set`);
   }
+});
+
+// ── The configured grace has a production floor ─────────────────
+test('the configured grace cannot be set below the floor, and 0 still means 0 to the rules', async () => {
+  // This one env integer was the whole distance between the feature and the
+  // shape it exists to prevent: ODDS_SEASON_GRACE_DAYS=0 or =1 releases every
+  // quiet sport on the next run or two, which is D6. The floor is in config, not
+  // in seasonVerdicts — the pure rules above are driven at 0 and 1 on purpose,
+  // because the boundary itself has to be testable.
+  //
+  // A child process is the only way to vary the environment (the agent-blocked
+  // precedent): config is read once per process.
+  const read = async (value) => {
+    const env = { ...process.env };
+    if (value === undefined) delete env.ODDS_SEASON_GRACE_DAYS;
+    else env.ODDS_SEASON_GRACE_DAYS = value;
+    const { stdout } = await exec(process.execPath, ['-e',
+      "import('./src/config/index.js').then((m) => console.log(JSON.stringify(m.default.oddsApi.seasonGraceDays)))"],
+    { cwd: new URL('..', import.meta.url), env });
+    return JSON.parse(stdout.trim());
+  };
+
+  assert.equal(await read(undefined), 14, 'unset is the documented default');
+  assert.equal(await read(''), 14, "Number('') is a finite 0, so a blank variable is not a boundary (D80)");
+  assert.equal(await read('21'), 21, 'a value above the floor is honoured as given');
+  assert.equal(await read('7'), 7, 'the floor itself is a legal setting');
+  assert.equal(await read('0'), 7, 'and 0 — the September shape, summoned by env — is not');
+  assert.equal(await read('1'), 7);
+  assert.equal(await read('3'), 7);
+  // The floor is a production guard, not a rule of the mechanism: the pure
+  // function must still release at 0, or the boundary tests above could not run.
+  assert.equal(run(keysOf('NBA'), {}, 0, 0).verdicts.MLB.in, false);
 });
