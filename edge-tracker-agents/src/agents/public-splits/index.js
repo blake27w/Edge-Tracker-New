@@ -45,7 +45,7 @@ function moveIndexes(moves) {
 // names (surname included) — the old check only matched the word "home" or a
 // "-" in the string, so team-named sides fell through and RLM under-fired.
 const sur = (t) => String(t || '').toLowerCase().split(' ').pop();
-function resolveSide(g, market, side) {
+export function resolveSide(g, market, side) {
   const s = String(side || '').toLowerCase();
   if (market === 'total') return s.includes('over') ? 'over' : s.includes('under') ? 'under' : null;
   if (s.includes('home')) return 'home';

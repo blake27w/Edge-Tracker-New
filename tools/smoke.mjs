@@ -732,6 +732,7 @@ if (!hasSignal) {
     'JetBrains Mono rides the existing fonts link', 'the Signal view paints under one root',
     'HUD atmosphere and chamfers are scoped to the Signal root', 'every HUD rule is under the Signal root',
     'prefers-reduced-motion guards the sweep', 'chip sub-status falls back to a dash',
+    'render() stops the poll before the home dispatch (signal)', 'renderSignalView restarts the poll',
   ], SIGNAL_SPEC);
 } else {
 
@@ -746,6 +747,17 @@ ok('loadAgentsData onView includes signal', /onView\s*=[\s\S]{0,300}?homeTab===[
   'without it the live refresh never repaints the dashboard, so it shows the cached bag forever');
 ok('loadAgentsData rerender includes signal', /rerender\s*=[\s\S]{0,400}?homeTab===['"]signal['"]\s*\)\s*renderSignalContent\(\)/.test(html),
   "and it must come FIRST in the chain: 'signal' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
+// The unlisted eighth anchor: render() stops the agents poll unless homeTab is
+// agents|plays|rec, and the signal/splits view functions restart it AFTER that
+// stop. A reorder of render() that dispatched the tab before the stop would
+// kill the poll one line later, silently — the tab just stops being live.
+const renderFn = (html.match(/\nfunction render\(\)\{[\s\S]*?\n\}/) || [''])[0];
+const pollStopIdx = renderFn.search(/\)\s*stopAgentsPoll\(\);/), homeDispatchIdx = renderFn.indexOf('renderHomeScreen();');
+ok('render() stops the poll before the home dispatch (signal)', pollStopIdx >= 0 && homeDispatchIdx > pollStopIdx,
+  'stopAgentsPoll() must run BEFORE renderHomeScreen() in render(), or the view function\'s startAgentsPoll() is undone a line later');
+const sigViewFn = (html.match(/function renderSignalView\(\)\{[\s\S]*?\n\}/) || [''])[0];
+ok('renderSignalView restarts the poll', /startAgentsPoll\(\);/.test(sigViewFn),
+  'signal is not in render()\'s keep-list (agents|plays|rec), so renderSignalView must call startAgentsPoll() itself');
 
 const sigBlock = html.slice(html.indexOf('function renderSignalContent'), html.indexOf('function agentPlayKey'));
 
@@ -1121,6 +1133,178 @@ ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of t
   && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
   && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
   'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
+
+// ── 17. Splits tab (📊 Splits home tab) ──────────────────────────
+// A ninth home tab registered at the SAME seven anchors as Signal (§14): a
+// missed anchor is a tile that renders nothing, or a tab that stops being
+// live. The join is server-side (games/splits.js); the PWA reads the bag it
+// already has — zero fetches. Percentages are market-wide and NEVER keyed by
+// book: the switcher changes lines and movement chips only, and says so.
+const SPLITS_SPEC = 'awaiting the splits tab (docs/specs/splits-tab.md)';
+const hasSplitsTab = /function\s+renderSplitsContent\s*\(/.test(html);
+if (!hasSplitsTab) {
+  skipAll([
+    'HOME_TABS has a splits tile', 'renderHomeScreen dispatches splits', 'renderSplitsView is defined',
+    'pagedots _ord includes splits', 'swipe order includes splits', 'loadAgentsData onView includes splits',
+    'loadAgentsData rerender includes splits', 'splits block found', 'no fetch in the splits block',
+    'the splits board is not duplicated', 'off is read from the agent, not inferred', 'the off copy names the agent',
+    'the stale bound follows the 4-hour cadence', 'a null percentage is never 0',
+    'the complement is only derived from a reading', 'backward compatible field access (splits)',
+    'per-book table scrolls in its own box', 'no sideways page scroll', 'percentages are not keyed by book',
+    'the market-wide label is tied to a book selection', 'a per-book opener never falls back to consensus',
+    'book selection is stored without cloud sync', 'the book row scrolls in its own box',
+    'buildSplits lives in games/splits.js', 'the splits DB fallback is one bounded select', '/splits books carry a key',
+    'line-move publishes openers', 'book-move per-book openers are bounded', 'the route is covered by a test',
+    'render() stops the poll before the home dispatch (splits)', 'renderSplitsView restarts the poll',
+    'a failed DB fallback read is a FAILED state, not nodata', 'the strip says which path produced the rows',
+    'open details and the chip scroll survive the poll repaint', 'a card says when its own batch is older than the board',
+    'the off banner quotes blockedReason verbatim, escaped once', 'the market-wide label is escaped once',
+    'a departed book falls back to consensus for the paint', 'the book selection initialiser is guarded',
+    'the renderer and the day are covered by tests',
+  ], SPLITS_SPEC);
+} else {
+  // The seven anchors (§14's regexes with the id swapped).
+  ok('HOME_TABS has a splits tile', /HOME_TABS[\s\S]{0,1000}?id:\s*'splits'/.test(html));
+  ok('renderHomeScreen dispatches splits', /homeTab===['"]splits['"]\s*\)\s*renderSplitsView\(\)/.test(html));
+  ok('renderSplitsView is defined', /function\s+renderSplitsView\s*\(/.test(html));
+  ok('pagedots _ord includes splits', /_ord\s*=\s*\[[^\]]*'splits'/.test(html));
+  ok('swipe order includes splits', /\border\s*=\s*\[[^\]]*'splits'/.test(html));
+  ok('loadAgentsData onView includes splits', /onView\s*=[\s\S]{0,300}?homeTab===['"]splits['"]/.test(html),
+    'without it the live refresh never repaints the tab, so it shows the cached bag forever');
+  ok('loadAgentsData rerender includes splits',
+    /rerender\s*=[\s\S]{0,200}?homeTab===['"]signal['"]\s*\)\s*renderSignalContent\(\);else if\(state\.homeTab===['"]splits['"]\s*\)\s*renderSplitsContent\(\);else if\(state\.homeTab===['"]rec['"]/.test(html),
+    "the splits branch must sit AFTER signal and BEFORE rec: 'splits' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
+
+  // The eighth anchor (see §14): the poll-start site.
+  const spRenderFn = (html.match(/\nfunction render\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  const spStopIdx = spRenderFn.search(/\)\s*stopAgentsPoll\(\);/), spDispatchIdx = spRenderFn.indexOf('renderHomeScreen();');
+  ok('render() stops the poll before the home dispatch (splits)', spStopIdx >= 0 && spDispatchIdx > spStopIdx,
+    'stopAgentsPoll() must run BEFORE renderHomeScreen() in render(), or renderSplitsView\'s startAgentsPoll() is undone a line later');
+  const spViewFn = (html.match(/function renderSplitsView\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  ok('renderSplitsView restarts the poll', /startAgentsPoll\(\);/.test(spViewFn),
+    'splits is not in render()\'s keep-list (agents|plays|rec), so the view function must call startAgentsPoll() itself');
+
+  const spBlock = html.slice(html.indexOf('function renderSplitsView'), html.indexOf('function renderSplitsBoard'));
+  const spCode = codeOnly(spBlock);
+  ok('splits block found', spBlock.length > 2000, `${spBlock.length} chars`);
+  // House rule 2: the route publishing source:null + db_error is "I could not
+  // read it", and must never paint as "Feed answered. 0 rows".
+  // Run the real splitsFacts() (plus the sigState it calls) against a stubbed
+  // state rather than grep its text: a regex cannot tell `if(dbFail)` from
+  // `if(false&&dbFail)`, and this is the house rule the finding was about.
+  const factsFn = (spCode.match(/function splitsFacts\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  const sigStateFn = (codeOnly(html).match(/function sigState\([^)]*\)\{[\s\S]*?\n\}/) || [''])[0];
+  const runFacts = (meta, ok_ = true) => {
+    const state = {
+      agentsSplitsBoard: { games: [{ game_id: 'g1', sport: 'NBA', splits: [], books: [{ key: 'draftkings', book: 'DraftKings' }] }], splits_meta: meta },
+      sigSrc: { splits: { ok: ok_, at: Date.now(), okAt: Date.now() } }, agentsHealth: [], agentsSystem: null, splitsSport: 'all', splitsBook: 'consensus',
+    };
+    try {
+      return new Function('state', `var SPLITS_BOUND=28800000,SPLITS_CONSENSUS='consensus';${sigStateFn}\n${factsFn}\nreturn splitsFacts();`)(state);
+    } catch (e) { return { st: `threw: ${e.message}` }; }
+  };
+  const dbFailSt = runFacts({ source: null, at: null, rows: 0, offslate: 0, db_error: true }).st;
+  const dbOkSt = runFacts({ source: 'db', at: null, rows: 0, offslate: 0, db_error: false }).st;
+  const routeFailSt = runFacts({ source: null, at: null, rows: 0, offslate: 0, db_error: true }, false).st;
+  ok('a failed DB fallback read is a FAILED state, not nodata',
+    factsFn.length > 0 && sigStateFn.length > 0 && dbFailSt === 'failed' && dbOkSt === 'nodata' && routeFailSt === 'failed'
+    && /public_splits fallback read failed/.test(spCode),
+    `source:null + db_error → ${dbFailSt} (want failed); source:db + 0 rows → ${dbOkSt} (want nodata); banner names the DB read over whatever is cached`);
+  ok('the strip says which path produced the rows', /source <b[^>]*>'\+srcWord\+'<\/b>/.test(spCode) && /meta\.source==='memory'\|\|meta\.source==='db'/.test(spCode),
+    'memory / db / none — the spec promised it on the phone, not only in the JSON');
+  ok('open details and the chip scroll survive the poll repaint',
+    /data-game="'\+esc\(g\.game_id/.test(spCode) && /splitsDomSave\(host\);\s*host\.innerHTML=h;\s*splitsDomRestore\(host\);/.test(spCode)
+    && /\.open\b/.test(spCode) && /scrollLeft/.test(spCode),
+    'rerender() replaces innerHTML every 30 s: open <details> per game_id and .sp-books scrollLeft are read before the paint and put back after');
+  ok('a card says when its own batch is older than the board', /g\.splits_at&&boardAt/.test(spCode) && /AGENT_STALE_MS\['public-splits'\]/.test(spCode),
+    'the DB fallback keeps each game\'s newest batch across ~5 batches; a per-card age shows when it trails the board\'s `at` by more than one cadence');
+  ok('no fetch in the splits block', !/fetch\(/.test(spBlock),
+    'the tab reads state.agentsSplitsBoard / agentsBookMoves / agentsHealth from the bag loadAgentsData already fills');
+  ok('the splits board is not duplicated', /function renderSplitsBoard\(\)\{return '<div class="sighud">'\+renderSplitsBody\(\)/.test(html),
+    'the Plays → 📊 Splits chip delegates to the one renderer (sigEpisodeCard pattern, D83)');
+  ok('off is read from the agent, not inferred', /blockedReason/.test(spBlock) && /public-splits\|blocked/.test(spBlock),
+    'the durable /health field (D80) or the degraded key — never an empty array');
+  ok('the off copy names the agent', /NOT FIRING — public-splits is blocked/.test(spBlock));
+  ok('the stale bound follows the 4-hour cadence', /'public-splits':14400000/.test(html) && /8h \(2× the 4-hour/.test(spBlock),
+    'the banner copy must say the bound it uses');
+  ok('a null percentage is never 0',
+    !/(bets_pct|handle_pct)\s*\|\|\s*0/.test(spCode) && !/Number\((s|r|g)\.(bets_pct|handle_pct)/.test(spCode),
+    'a missing percentage renders — (D96/D97), never 0%');
+  const hundreds = spCode.match(/100-/g) || [];
+  ok('the complement is only derived from a reading', hundreds.length > 0 && /pct!=null\?100-/.test(spCode)
+    && (spCode.match(/!=null\?100-/g) || []).length === hundreds.length,
+    'the second side is 100 − the reported side, computed only when the reported side is non-null');
+  ok('backward compatible field access (splits)', !/state\.agents\w+\.(length|forEach|map|slice)\b/.test(spBlock),
+    'every state.agents* read must go through (x||[]) — an old cached bag has none of these fields');
+  ok('per-book table scrolls in its own box', /sigtbl-wrap/.test(spBlock) && /<details/.test(spBlock));
+  const spCss = (html.match(/\/\* 📊 Splits cards[\s\S]*?\.sighud \.sp-foot\{[^}]*\}/) || [''])[0];
+  const spOverflow = [...spCss.matchAll(/\.sighud ([^{]+)\{[^}]*overflow-x/g)].map((m) => m[1].trim());
+  ok('no sideways page scroll', spCss.length > 0 && spOverflow.length > 0 && spOverflow.every((sel) => /\.sp-books$|\.sigtbl-wrap$/.test(sel)),
+    `overflow-x only inside .sp-books / .sigtbl-wrap rules; found on: ${spOverflow.join(', ') || 'none'}`);
+
+  // The switcher: lines and movement switch by book; percentages never do.
+  const fnBody = (name) => (spCode.match(new RegExp(`function ${name}\\([^)]*\\)\\{[\\s\\S]*?\\n\\}`)) || [''])[0];
+  const linesFn = fnBody('splitsLines'), movesFn = fnBody('splitsMoves');
+  ok('percentages are not keyed by book',
+    /splitsPair\(/.test(spCode) && !/splitsPair\([^)]*,[^)]*,/.test(spCode)
+    && linesFn.length > 0 && movesFn.length > 0 && !/bets_pct|handle_pct/.test(linesFn) && !/bets_pct|handle_pct/.test(movesFn),
+    'splitsPair takes no book; splitsLines/splitsMoves never touch a percentage (D53/D22)');
+  ok('the market-wide label is tied to a book selection', /book!==SPLITS_CONSENSUS[^;]*splits are market-wide/.test(spCode),
+    "the label renders if and only if a book is selected: \"splits are market-wide — <Label>'s own counts are not captured\"");
+  const openIdx = linesFn.search(/book===SPLITS_CONSENSUS\?[^:]*g\.open/);
+  ok('a per-book opener never falls back to consensus',
+    openIdx >= 0 && !/g\.open/.test(linesFn.slice(openIdx + linesFn.slice(openIdx).indexOf('g.open') + 6)),
+    'inside splitsLines, g.open appears only in the consensus branch — a missing per-book opener is —, never the consensus value');
+  const bookStore = (spCode.match(/function splitsSetBook[\s\S]*?\n\}/) || [''])[0];
+  ok('book selection is stored without cloud sync',
+    /try\{localStorage\.setItem\('et_splitsBook'/.test(bookStore) && !/\bsave\(/.test(bookStore),
+    'raw localStorage in a try/catch — save() also queues a cloud sync');
+  ok('the book row scrolls in its own box', /\.sighud \.sp-books\{[^}]*overflow-x:auto/.test(html));
+
+  // Backend: the join lives in a testable module; the DB fallback is one bounded select.
+  const splitsRouteSrc = await readFile(join(root, 'edge-tracker-agents/src/games/splits.js'), 'utf8').catch(() => '');
+  const splitsRouteCode = codeOnly(splitsRouteSrc);
+  ok('buildSplits lives in games/splits.js', /import \{ buildSplits \} from '\.\/games\/splits\.js'/.test(server) && !/function buildSplits/.test(server),
+    'src/index.js runs main() on import, so the join must live where node:test can import it');
+  ok('the splits DB fallback is one bounded select',
+    (splitsRouteCode.match(/db\w*\.select\(/g) || []).length === 1 && /limit: SPLITS_DB_LIMIT/.test(splitsRouteCode)
+    && /ascending: false/.test(splitsRouteCode) && /SPLITS_DB_TTL_MS/.test(splitsRouteCode) && !/fetch\(/.test(splitsRouteCode),
+    'newest 300 by fetched_at desc behind a 10-min cache, used only when memory is empty; polled every 30 s');
+  ok('/splits books carry a key', /key:\s*bk/.test(splitsRouteCode), 'the PWA joins per-book lines to bookMoves by key; `book` stays the label');
+  ok('line-move publishes openers', /const openers = Object\.fromEntries\(games\.map/.test(lmCode) && /history_capped: historyCapped, openers,/.test(lmCode),
+    'the consensus opener comes from the line-move slot, never a per-request opening_lines read');
+  const openersFn = (codeOnly(bmSrc).match(/async function openersFor[\s\S]*?\n\}/) || [''])[0];
+  ok('book-move per-book openers are bounded',
+    /OPEN_BOOK_LIMIT = 60/.test(bmSrc) && openersFn.length > 0 && /ascending:\s*true/.test(openersFn)
+    && !/\bin:\s*\{/.test(openersFn) && !/\bgte:/.test(openersFn) && /openerMemo/.test(openersFn)
+    && !/fetched_at === rows\[0\]\.fetched_at/.test(openersFn) && /Object\.keys\(books\)\.length/.test(openersFn),
+    'one asc select per game × market on the index prefix, limit 60 (a chunk-split first run, D99), each book\'s OWN oldest row — never keyed on stamp equality — and only a non-empty result memoised; `book-move spends nothing` (§10) still holds');
+  // Escaping happens ONCE, inside sigBanner (esc(txt)) — the off text is built
+  // from the raw reason; an esc() in the block would double it, none would
+  // leave it raw if sigBanner ever stopped escaping.
+  const sigBannerFn = (codeOnly(html).match(/function sigBanner\([^)]*\)\{[\s\S]*?\n\}/) || [''])[0];
+  ok('the off banner quotes blockedReason verbatim, escaped once',
+    /sigBanner\('off',\{text:'NOT FIRING — public-splits is blocked: "'\+r\.reason\+'"/.test(spCode) && !/esc\(r\.reason\)/.test(spCode)
+    && /return '<div class="sh-banner '\+kind\+'">'\+esc\(txt\)\+'<\/div>'/.test(sigBannerFn),
+    'the reason is passed raw into sigBanner, which escapes the whole text once');
+  ok('the market-wide label is escaped once', /splits are market-wide — '\+esc\(bookLabel\)\+'/.test(spCode) && !/esc\(esc\(/.test(spCode));
+  ok('a departed book falls back to consensus for the paint', /var book=seen\[state\.splitsBook\]\?state\.splitsBook:SPLITS_CONSENSUS/.test(spCode),
+    'a selected book missing from the (sport-filtered) slate paints as Consensus; the stored preference is left alone');
+  ok('the book selection initialiser is guarded',
+    /splitsBook:\(function\(\)\{try\{return JSON\.parse\(localStorage\.getItem\('et_splitsBook'\)\)\|\|'consensus'\}catch\(e\)\{return 'consensus'\}\}\)\(\)/.test(html),
+    'private mode throws on getItem; a raw or empty value parses to consensus');
+  const renderTest = await readFile(join(root, 'edge-tracker-agents/test/splits-render.test.js'), 'utf8').catch(() => '');
+  const dayTest = await readFile(join(root, 'edge-tracker-agents/test/splits-day.test.js'), 'utf8').catch(() => '');
+  ok('the renderer and the day are covered by tests',
+    /byte-identical/.test(renderTest) && /escaped once/.test(renderTest) && /splitsDomSave\(null\)/.test(renderTest)
+    && /source, 'db'\)/.test(dayTest) && /snapshotsLost/.test(dayTest) && /mock\.timers\.enable/.test(dayTest),
+    'the honesty invariant runs through the real index.html functions in a vm; the day runs through the real agents and route on a pinned clock');
+  const routeTest = await readFile(join(root, 'edge-tracker-agents/test/splits-route.test.js'), 'utf8').catch(() => '');
+  const openersTest = await readFile(join(root, 'edge-tracker-agents/test/book-move-openers.test.js'), 'utf8').catch(() => '');
+  ok('the route is covered by a test',
+    /source==='db'/.test(routeTest) && /never 0/.test(routeTest) && /ascending===true/.test(openersTest) && /never 0/.test(openersTest),
+    'the DB path, the null-is-never-0 rule and the asc query shape each have a test');
+}
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
