@@ -6040,7 +6040,7 @@ var AGENTS_META=[
   {name:'nfl-totals',icon:'🏈',label:'NFL Scoring/Totals Model',cadence:'every 12h'},
   {name:'nfl-inactives',icon:'🚑',label:'NFL Inactives-Speed',cadence:'10m (game days)'},
   {name:'nfl-live',icon:'🔴',label:'NFL Live In-Game',cadence:'60s (live games)'},
-  {name:'nfl-line-move',icon:'📐',label:'NFL Opener→Close Lines',cadence:'30m (in-season)'},
+  {name:'nfl-line-move',icon:'📐',label:'Opener→Close Lines (all sports)',cadence:'30m (sports on the slate)'},
   {name:'nfl-derivatives',icon:'🧩',label:'NFL Derivatives (team totals)',cadence:'off unless enabled'},
   {name:'nfl-pace',icon:'⏱️',label:'NFL Coaching/Pace',cadence:'daily'},
   {name:'nfl-qb',icon:'🎯',label:'NFL QB Status Watch',cadence:'20m (Aug–Feb)'},
@@ -6126,7 +6126,7 @@ function applyAgentsBag(bag){
     if(bag.bePlays)state.agentsCombat=bag.bePlays.combat||[];
     if(bag.bePlays&&bag.bePlays.nflPrep){state.agentsNflWinTotals=bag.bePlays.nflPrep.winTotals||[];state.agentsNflSchedule=bag.bePlays.nflPrep.schedule||[];state.agentsNflProps=bag.bePlays.nflPrep.props||[];state.agentsNflTotals=bag.bePlays.nflPrep.totals||null;state.agentsNflInactives=bag.bePlays.nflPrep.inactives||[];state.agentsNflLineMove=bag.bePlays.nflPrep.lineMove||null;state.agentsNflDerivs=bag.bePlays.nflPrep.derivatives||[];state.agentsNflPace=bag.bePlays.nflPrep.pace||null;state.agentsNflStyle=bag.bePlays.nflPrep.style||[];}
     if(bag.bePlays)state.agentsSharp=bag.bePlays.sharp||[];
-    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsBookMoves=bag.bePlays.bookMoves||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];state.agentsNflLive=bag.bePlays.nflLive||[];}
+    if(bag.bePlays){state.agentsFade=bag.bePlays.fade||[];state.agentsCombatDerivs=bag.bePlays.combatDerivs||[];state.agentsClv=bag.bePlays.clv||null;state.agentsBookEdges=bag.bePlays.bookEdges||null;state.agentsBookMoves=bag.bePlays.bookMoves||null;state.agentsPredMarket=bag.bePlays.predMarket||null;state.agentsWeatherChange=bag.bePlays.weatherChanges||[];state.agentsNflLive=bag.bePlays.nflLive||[];state.agentsLineMove=bag.bePlays.lineMove||(bag.bePlays.nflPrep&&bag.bePlays.nflPrep.lineMove)||null;}
 
     // Plays produced today (qualified, any status). Falls back to the live queue.
     state.agentsTodayCount=bag.today?bag.today.length:(state.agentsPlays||[]).length;
@@ -6672,14 +6672,19 @@ function renderAgentsContent(){
     h+='<div style="height:8px"></div>';
   }
 
-  // Opener→close line movement (in-season; dormant otherwise).
-  var lm=state.agentsNflLineMove;
-  if(lm&&((lm.live&&lm.live.length)||(lm.agg&&lm.agg.n))){
+  // Opener→close line movement. The agent now covers every sport (D95) and the
+  // cross-sport view lives on Signal → Close; this is NFL Prep, so only NFL rows
+  // paint here. Legacy cached rows carry no `sport` and were NFL by construction.
+  var lm=state.agentsLineMove||state.agentsNflLineMove;
+  var lmLive=((lm&&lm.live)||[]).filter(function(g){return g&&(g.sport==='NFL'||g.sport==null)});
+  var lmAgg=null;((lm&&lm.bySport)||[]).forEach(function(b){if(b&&b.sport==='NFL'&&!lmAgg)lmAgg=b;});
+  if(!lmAgg&&lm&&!(lm.bySport&&lm.bySport.length))lmAgg=lm.agg||null;
+  if(lm&&(lmLive.length||(lmAgg&&lmAgg.n))){
     h+='<div style="font-family:var(--H);font-size:10px;letter-spacing:1.5px;color:var(--dim);margin:4px 0 6px">📐 LINE MOVEMENT — OPEN → CLOSE</div>';
-    if(lm.agg&&lm.agg.n){
-      h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;font-size:9px;color:var(--cream)">History ('+lm.agg.n+' games): totals close lower <b>'+(lm.agg.total_down_pct!=null?lm.agg.total_down_pct+'%':'—')+'</b> of the time · avg total move <b>'+(lm.agg.total_avg_abs!=null?lm.agg.total_avg_abs:'—')+'</b> · avg spread move <b>'+(lm.agg.spread_avg_abs!=null?lm.agg.spread_avg_abs:'—')+'</b></div>';
+    if(lmAgg&&lmAgg.n){
+      h+='<div class="card" style="padding:9px 12px;margin:0 0 6px;font-size:9px;color:var(--cream)">History ('+lmAgg.n+' games): totals close lower <b>'+(lmAgg.total_down_pct!=null?lmAgg.total_down_pct+'%':'—')+'</b> of the time · avg total move <b>'+(lmAgg.total_avg_abs!=null?lmAgg.total_avg_abs:'—')+'</b> · avg spread move <b>'+(lmAgg.spread_avg_abs!=null?lmAgg.spread_avg_abs:'—')+'</b></div>';
     }
-    (lm.live||[]).slice(0,16).forEach(function(g){
+    lmLive.slice(0,16).forEach(function(g){
       var tdir=g.total_move==null?'':(g.total_move<0?'↓':'↑');
       h+='<div class="card" style="padding:7px 12px;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center">';
       h+='<div><span style="font-size:10px;color:var(--txt)">'+esc(g.matchup||'')+'</span></div>';
@@ -6922,11 +6927,12 @@ function renderAgentsContent(){
 // user's last visit is simply absent — this repo has shipped bugs from exactly
 // that, and the panels must degrade to a banner rather than to `undefined`.
 // ══════════════════════════════════════
-var SIG_PANELS=[{id:'health',label:'Health'},{id:'budget',label:'Budget'},{id:'books',label:'Books'},{id:'steam',label:'Steam'}];
+var SIG_PANELS=[{id:'health',label:'Health'},{id:'budget',label:'Budget'},{id:'books',label:'Books'},{id:'steam',label:'Steam'},{id:'close',label:'Close'}];
 // Staleness bounds, each 2x the producing agent's cadence (AGENT_STALE_MS), so
 // one missed run is not an alarm and two is.
 var SIG_BOOKS_BOUND=(AGENT_STALE_MS['book-move']||1800000)*2;
 var SIG_STEAM_BOUND=(AGENT_STALE_MS.sharp||300000)*2;
+var SIG_CLOSE_BOUND=(AGENT_STALE_MS['nfl-line-move']||5400000)*2;
 var SIG_DH_BOUND=1800000;
 
 // The Steam panel's honest empty state for NOT FIRING: a sweep that finds
@@ -6984,6 +6990,7 @@ function renderSignalContent(){
   if(v==='budget')h+=renderSigBudget();
   else if(v==='books')h+=renderSigBooks();
   else if(v==='steam')h+=renderSigSteam();
+  else if(v==='close')h+=renderSigClose();
   else h+=renderSigHealth();
   h+='</div>';
   $('sport-selector').innerHTML=h;
@@ -7137,6 +7144,16 @@ function sigSteamFacts(){
   return {sg:sg,src:src,latest:latest,run:run,res:res,notFiring:/no recent line movement/.test(res),
     st:sigState(src,loaded?sg:null,sg.length,SIG_STEAM_BOUND,latest)};
 }
+function sigCloseFacts(){
+  // /plays carries `lineMove` at the top level (new) and under nflPrep (old);
+  // applyAgentsBag already picked whichever is present. An old cached payload
+  // has no `sport` on rows and no `bySport` — every read here is defaulted.
+  var lm=state.agentsLineMove||state.agentsNflLineMove||null;
+  var live=(lm&&lm.live)||[],by=(lm&&lm.bySport)||[];
+  var sports={};live.forEach(function(g){if(g&&g.sport)sports[g.sport]=1;});by.forEach(function(b){if(b&&b.sport)sports[b.sport]=1;});
+  return {lm:lm,live:live,by:by,nSports:Object.keys(sports).length,
+    st:sigState(state.sigSrc.plays,lm,live.length+by.length,SIG_CLOSE_BOUND,lm&&lm.updated)};
+}
 // One sub-status per chip. `off` tints the line wine, `warn` brass. When the
 // panel has nothing to say the chip says — and never a number.
 function sigChipStatus(){
@@ -7162,6 +7179,11 @@ function sigChipStatus(){
   else if(S.st==='loading')out.steam={txt:'—',cls:''};
   else if(S.st==='nodata')out.steam=S.notFiring?{txt:'not firing',cls:'off'}:{txt:'0 signals',cls:''};
   else out.steam={txt:S.sg.length+' signal'+(S.sg.length===1?'':'s'),cls:S.st==='stale'?'warn':''};
+
+  var C=sigCloseFacts();
+  if(C.st==='failed')out.close={txt:'read failed',cls:'off'};
+  else if(C.st==='loading'||C.st==='nodata')out.close={txt:'—',cls:''};
+  else out.close={txt:C.nSports+' sport'+(C.nSports===1?'':'s'),cls:C.st==='stale'?'warn':''};
   return out;
 }
 
@@ -7482,6 +7504,64 @@ function renderSigSteam(){
     h+=sigCard(tb);
   }
   return sigPanel('Steam',meta,h);
+}
+
+// ── Panel 5 · CLOSE ──────────────────────────────────────────────
+// Open→close for every sport on the slate (D95): the per-sport history table
+// then the live open→now rows. Source is the one /plays bag; the NFL-only
+// rendering stays on Plays → NFL Prep. `sgn` keeps a null move a dash — a 0
+// here would claim the number held when we never saw an opener.
+function sigSgn(v,suffix){return (v==null||v!==v)?'—':((v>0?'+':'')+v+(suffix||''));}
+function renderSigClose(){
+  var F=sigCloseFacts(),lm=F.lm,live=F.live,by=F.by,st=F.st;
+  var h='';
+  var meta='nfl-line-move'+(F.nSports?' · '+F.nSports+' sport'+(F.nSports===1?'':'s'):'')+(lm&&lm.updated?' · as of '+sigAt(lm.updated):'');
+  if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',state.sigSrc.plays));
+  if(st==='loading')return sigPanel('Close',meta,h+sigBanner('loading',{}));
+  if(st==='stale')h+=sigBanner('stale',{ago:(lm&&lm.updated)?sigDur(lm.updated):'—',bound:'3h (2× the line-move cadence)'});
+  if(st==='nodata')h+=sigBanner('nodata',{things:'open→close rows',at:sigAt(lm&&lm.updated)});
+
+  if(by.length){
+    var tot=(lm&&lm.agg)||{};
+    var tb=sigHdr('OPEN → CLOSE HISTORY',(tot.n!=null?tot.n+' games':'')+' · 180d');
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th>n</th><th>totals ↓</th><th>avg total</th><th>avg spread</th><th>avg ML pp</th></tr></thead><tbody>';
+    by.forEach(function(b){
+      if(!b)return;
+      tb+='<tr'+((b.n||0)<20?' style="opacity:.6"':'')+'><td class="l" style="color:var(--cream)">'+esc(b.sport||'')+((b.n||0)<20?' <span style="font-size:7px;color:var(--muted)">thin</span>':'')+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(b.n)+'</td>';
+      tb+='<td style="color:'+(b.total_down_pct==null?'var(--muted)':'var(--brass)')+'">'+sigNum(b.total_down_pct,'%')+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(b.total_avg_abs)+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(b.spread_avg_abs)+'</td>';
+      tb+='<td style="color:var(--dim)">'+sigNum(b.ml_avg_abs)+'</td></tr>';
+    });
+    tb+='</tbody></table></div>';
+    h+=sigCard(tb);
+  } else if(lm&&lm.agg&&lm.agg.n){
+    // Old payload: one aggregate, no per-sport split. Say which it is.
+    h+=sigCard(sigHdr('OPEN → CLOSE HISTORY',lm.agg.n+' games')+'<div class="sh-txt"><span style="color:var(--muted)">single aggregate (pre-D95 payload) · totals ↓ '+sigNum(lm.agg.total_down_pct,'%')+' · avg total '+sigNum(lm.agg.total_avg_abs)+' · avg spread '+sigNum(lm.agg.spread_avg_abs)+'</span></div>');
+  }
+
+  if(lm){
+    var lb=sigHdr('LIVE OPEN → NOW',live.length?String(live.length):'');
+    if(!live.length)lb+=sigBanner('nodata',{things:'upcoming games with an opener',at:sigAt(lm.updated)});
+    else {
+      lb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th class="l">game</th><th>O/U open→now</th><th>Δ</th><th>spr</th><th>ML pp</th></tr></thead><tbody>';
+      live.slice(0,80).forEach(function(g){
+        if(!g)return;
+        var tcol=g.total_move==null?'var(--muted)':g.total_move<0?'var(--sage)':g.total_move>0?'var(--leather)':'var(--dim)';
+        lb+='<tr><td class="l"><span class="sh-tag">'+esc(g.sport||'NFL')+'</span></td>';
+        lb+='<td class="l" style="color:var(--cream)">'+esc(g.matchup||'')+'</td>';
+        lb+='<td style="color:var(--dim)">'+(g.open_total!=null?esc(sigNum(g.open_total)+'→'+sigNum(g.close_total)):'—')+'</td>';
+        lb+='<td style="color:'+tcol+'">'+sigSgn(g.total_move)+'</td>';
+        lb+='<td style="color:var(--dim)">'+sigSgn(g.spread_move)+'</td>';
+        lb+='<td style="color:'+(g.ml_move==null?'var(--muted)':'var(--brass)')+'">'+sigSgn(g.ml_move)+'</td></tr>';
+      });
+      lb+='</tbody></table></div>';
+    }
+    lb+='<div class="sh-cap">ML pp = moneyline move in implied-probability points, home side, + = home shortened. Null = no opener seen, not a 0 move.</div>';
+    h+=sigCard(lb);
+  }
+  return sigPanel('Close',meta,h);
 }
 
 function agentPlayKey(p){return (p.game_id||'')+'|'+(p.market||'')+'|'+(p.side||'')}

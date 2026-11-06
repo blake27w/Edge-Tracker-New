@@ -36,7 +36,7 @@ const store = {
   nflProps: [],       // NFL prop workload baselines (offseason prep)
   nflTotals: null,    // NFL scoring-environment / totals model (offseason prep)
   nflInactives: [],   // NFL key inactives near kickoff (in-season; dormant offseason)
-  nflLineMove: null,  // NFL opener→close line-movement tracker (in-season; dormant offseason)
+  nflLineMove: null,  // opener→close line-movement tracker, every sport on the slate (name kept, D95)
   nflDerivs: [],      // NFL derivative edges (team totals; off unless enabled)
   nflPace: null,      // NFL coaching/pace tempo map + totals leans (reference)
   nflStyle: [],       // NFL measured style fingerprints + defensive funnels

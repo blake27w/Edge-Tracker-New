@@ -600,8 +600,8 @@ ok('both opted-in agents are driven on BOTH sides of their gate',
   && /with the key present, both agents stop reporting and the entry is retracted/.test(blockedTestSrc),
   'the rest of the suite runs stub agents; without these two the only coverage of the real opt-ins is the source grep above, which cannot tell whether the field is reachable or whether it disappears once the key is present');
 ok('the opt-in set is asserted against the wired fleet, not just the two files',
-  /exactly the two agents the spec opted in/.test(blockedTestSrc),
-  '~60 of the ~70 skip sites are benign and must stay silent; a third opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb');
+  /exactly the agents a spec opted in/.test(blockedTestSrc) && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a
@@ -931,6 +931,73 @@ if (hasSignal) {
   skipAll(['the PWA reads only the ODDS api_usage row',
     'the Budget panel names WHY each sport is in or out',
     'the pre-deploy off banner still works'], SIGNAL_SPEC);
+}
+
+// ── 16. Open→close for all sports (nfl-line-move, D95) ──────────
+// The agent kept its NFL name on purpose (run history, the durable blocked
+// fields on /health and INTERVAL_NFL_LINE_MOVE all key on it), so the name is
+// no longer evidence of scope. What is: no NFL gate, no fetch(, no read of a
+// movement table, and the two blocked reasons as constant literals. Feature-
+// detect on `bySport` in the agent so this stays green on a `main` without it.
+const LINE_MOVE_SPEC = 'awaiting open→close for all sports (docs/specs/line-move-all-sports.md)';
+const lmSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/nfl-line-move/index.js'), 'utf8').catch(() => '');
+const lmCode = codeOnly(lmSrc);
+const hasAllSports = /bySport/.test(lmSrc);
+if (!hasAllSports) {
+  skipAll([
+    'line-move spends nothing', 'line-move is not NFL-gated', 'line-move does not read movement tables',
+    'line-move does not import the odds agent', 'line-move blocked reasons are constant literals',
+    'line-move has no bare Number( on possibly-absent values', 'line-move name unchanged everywhere',
+    'line-move openers are chunked', 'line-move history read is bounded',
+    '/plays serves lineMove at top level', '/plays keeps nflPrep.lineMove',
+    'Signal has a close panel', 'the Close panel reads bySport defensively',
+    'NFL Prep filters line moves to NFL', 'line-move unit coverage exists', 'the schema block is in schema.sql',
+  ], LINE_MOVE_SPEC);
+} else {
+  ok('line-move spends nothing', !/\bfetch\s*\(/.test(lmCode), 'no Odds API call may appear in this agent');
+  ok('line-move is not NFL-gated', !/sport\s*===\s*['"]NFL['"]/.test(lmCode),
+    'the sports come from the slate; an NFL gate re-added here would silently darken 11 sports');
+  ok('line-move does not read movement tables', !/line_snapshots|line_movements|getIntel\(/.test(lmCode),
+    'open→close is openers vs consensus; the 7M-row snapshot table answers a different question');
+  ok('line-move does not import the odds agent', !/agents\/odds\/|espn-odds/.test(lmCode),
+    'the season table rides in agents/odds; importing it defeats the zero-spend guarantee');
+  ok('line-move blocked reasons are constant literals',
+    /const OPENERS_BLOCKED = '[^'$]+';/.test(lmCode) && /const SCHEMA_BLOCKED = '[^'$]+';/.test(lmCode)
+    && !/BLOCKED = `/.test(lmCode),
+    'an interpolated count in the reason makes blockedReason change every run (D80)');
+  ok('line-move has no bare Number( on possibly-absent values', !/Number\((o|h|g|r|m)\./.test(lmCode),
+    'Number(null) === 0 turns a missing line into a counted 0 move');
+  ok('line-move name unchanged everywhere',
+    /name: 'nfl-line-move'/.test(lmSrc) && /'nfl-line-move':\s*\{/.test(cfgSrc)
+    && /\{name:'nfl-line-move'/.test(html) && /'nfl-line-move':\d+/.test(html),
+    'renaming orphans scan_runs history, the blocked fields on /health, the PWA roster and INTERVAL_NFL_LINE_MOVE');
+  ok('line-move openers are chunked', /OPENERS_CHUNK = 100/.test(lmCode) && /ids\.slice\(i, i \+ OPENERS_CHUNK\)/.test(lmCode),
+    'a 300-game Saturday in one `in:` builds an over-long PostgREST URL');
+  ok('line-move history read is bounded',
+    /gte: \{ captured_at:/.test(lmCode) && /ascending: false/.test(lmCode) && /HISTORY_LIMIT = 4000/.test(lmCode),
+    'one bounded query grouped in JS, not one per sport');
+  ok('/plays serves lineMove at top level', /\}, lineMove: getNflLineMove\(\),/.test(server));
+  ok('/plays keeps nflPrep.lineMove', /nflPrep: \{[^}]*lineMove: getNflLineMove\(\)/.test(server),
+    'an old cached client still reads nflPrep.lineMove');
+  if (hasSignal) {
+    ok('Signal has a close panel',
+      /SIG_PANELS=\[[^\]]*\{id:'close',label:'Close'\}/.test(html) && /function renderSigClose\(/.test(html)
+      && /v==='close'\)h\+=renderSigClose\(\)/.test(html) && /function sigCloseFacts\(/.test(html) && /out\.close=/.test(html),
+      'panel, facts, chip and dispatch are four separate sites');
+    ok('the Close panel reads bySport defensively', /\(lm&&lm\.bySport\)\|\|\[\]/.test(html) && /SIG_CLOSE_BOUND/.test(html),
+      'an etBagCache replay has no bySport');
+  } else skipAll(['Signal has a close panel', 'the Close panel reads bySport defensively'], SIGNAL_SPEC);
+  ok('NFL Prep filters line moves to NFL', /g\.sport==='NFL'\|\|g\.sport==null/.test(html),
+    'the 📐 block is on the NFL Prep page; legacy cached rows have no sport');
+  const lmTest = await readFile(join(root, 'edge-tracker-agents/test/nfl-line-move.test.js'), 'utf8').catch(() => '');
+  ok('line-move unit coverage exists',
+    /OPENERS_BLOCKED/.test(lmTest) && /SCHEMA_BLOCKED/.test(lmTest) && /never 0/.test(lmTest) && /<= 100/.test(lmTest),
+    'the blocked constants, the null-move trap and the chunk size each have a test');
+  const schemaSql = await readFile(join(root, 'edge-tracker-agents/scripts/schema.sql'), 'utf8').catch(() => '');
+  ok('the schema block is in schema.sql',
+    ['sport', 'open_ml', 'close_ml', 'ml_move'].every((c) => new RegExp(`alter table nfl_line_moves add column if not exists ${c}`).test(schemaSql))
+    && /update nfl_line_moves set sport = 'NFL' where sport is null/.test(schemaSql),
+    'the DDL is hand-run; the file is the record of what to run');
 }
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';

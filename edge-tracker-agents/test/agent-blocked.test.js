@@ -748,6 +748,10 @@ test('a threshold of 0 and the shipped 1 are deliberately identical, and both re
 // ══════════════════════════════════════════════════════════════
 
 const OPTED_IN = ['public-splits', 'combat-weighin'];
+// Opted in by a LATER spec, for a condition that is not the Claude gate:
+// nfl-line-move (D95) reports `blocked` when opening_lines is unreadable or the
+// hand-run DDL is missing. Driven in test/nfl-line-move.test.js, counted here.
+const OPTED_IN_ELSEWHERE = ['nfl-line-move'];
 
 test('with no key, both opted-in agents produce the blocked condition end to end', async () => {
   // The production incident, reproduced: hasClaude() false is exactly what an
@@ -821,7 +825,7 @@ test('with the key present, both agents stop reporting and the entry is retracte
   }
 });
 
-test('no OTHER agent opts in by accident, so the alert surface is exactly two', async () => {
+test('no OTHER agent opts in by accident, so the alert surface is exactly the opted-in set', async () => {
   // The anti-noise property at the level of the whole fleet. ~60 of the ~70
   // skip sites are benign and must stay silent; if a future edit adds `blocked`
   // to one of them (a budget pause, an offseason, `no DB` in local dev) this is
@@ -848,6 +852,6 @@ test('no OTHER agent opts in by accident, so the alert surface is exactly two', 
     const code = codeOnly(await readFile(new URL(`../src/agents/${name}/index.js`, import.meta.url), 'utf8'));
     if (/(^|[^\w.])blocked:/.test(code)) optedIn.push(name);
   }
-  assert.deepEqual(optedIn.sort(), [...OPTED_IN].sort(),
-    'exactly the two agents the spec opted in — a third would be a new alert source');
+  assert.deepEqual(optedIn.sort(), [...OPTED_IN, ...OPTED_IN_ELSEWHERE].sort(),
+    'exactly the agents a spec opted in — one more would be a new alert source');
 });

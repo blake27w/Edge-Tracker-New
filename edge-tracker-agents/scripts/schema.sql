@@ -708,6 +708,14 @@ create table if not exists nfl_line_moves (
   captured_at  timestamptz not null default now()
 );
 create index if not exists nfl_line_moves_idx on nfl_line_moves (captured_at desc);
+-- All-sports columns (D95). HAND-RUN in the Supabase SQL editor — nothing applies
+-- this file. Until it runs, the agent still lands NFL rows on the legacy
+-- columns and reports `blocked` with the schema reason on /health.
+alter table nfl_line_moves add column if not exists sport    text;
+alter table nfl_line_moves add column if not exists open_ml  numeric;
+alter table nfl_line_moves add column if not exists close_ml numeric;
+alter table nfl_line_moves add column if not exists ml_move  numeric;  -- implied-prob pts, home side
+update nfl_line_moves set sport = 'NFL' where sport is null;            -- pre-existing rows are all NFL
 
 -- ── NFL derivative edges (team totals etc.; only when NFL_DERIVATIVES=true) ──
 create table if not exists nfl_derivatives (
