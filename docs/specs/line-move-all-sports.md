@@ -35,7 +35,7 @@ alter table nfl_line_moves add column if not exists open_ml  numeric;
 alter table nfl_line_moves add column if not exists close_ml numeric;
 alter table nfl_line_moves add column if not exists ml_move  numeric;  -- implied-prob pts, home side
 update nfl_line_moves set sport = 'NFL' where sport is null
-  and captured_at < '<deploy timestamp>';                                 -- pre-feature rows are all NFL
+  and captured_at < '<the time you RUN this block, UTC>';                 -- every sportless row at that moment is NFL
 ```
 The backfill is bounded to rows written **before** the all-sports build deployed (Blake sets the timestamp; the placeholder does not cast, so an unedited copy fails loudly). It can therefore never relabel a post-deploy row — and the agent's pre-DDL retry writes **only NFL** rows sportless, so nothing it writes could be mislabelled anyway (review fix 1).
 No new index: the table is NFL-only today (hundreds of rows) and at 12 sports grows ~150 rows/day, ~27k over the 180-day window — a sequential scan is free (D70 rule; the existing `nfl_line_moves_idx` may itself be unapplied and it does not matter). No endpoint added; `/plays` gains `lineMove`.
@@ -71,7 +71,7 @@ Do **not** touch `agents/odds/*`, `agents/sharp/*`, `agents/book-move/*`, `agent
 ## Risks & open questions
 
 - **Blake:** confirm keeping the name `nfl-line-move` (Decision 2). Flip = nine sites + a split history; the spec assumes keep.
-- **Blake:** the DDL is hand-run. Until it is, closes still persist (legacy columns) but `/health` shows `blockedRuns ≥ 1` with the schema reason — that is the feature, not a defect.
+- **Blake:** the DDL is hand-run. Until it is, NFL closes still persist on the legacy columns **with `sport` null — invisible to the per-sport history reads until the backfill labels them** — and `/health` shows `blockedRuns ≥ 1` with the schema reason — that is the feature, not a defect.
 - UFC/BOXING `game_id`s are per fight: many rows per card-day. Expected.
 - Early `bySport` buckets will be thin (n<20); render regardless, no min-n gate (reference data; clv-tracker shows thin buckets).
 - `impliedProb` has no null guard upstream; this spec guards at the call site rather than changing `shared/odds-math.js` (other callers unaudited).

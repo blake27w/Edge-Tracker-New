@@ -71,6 +71,12 @@ export const SCHEMA_BLOCKED = 'nfl_line_moves is missing the all-sports columns 
 //   openersFailRuns — a lone opening_lines read failure is a network blip, not
 //     a block; OPENERS_FAIL_RUNS consecutive ones are (D76's breaker shape).
 let schemaMissing = false;
+// Every exit carries the latch. The early returns (no DB, empty slate, a
+// transient openers blip) used to return without `blocked`, and the
+// orchestrator reads a run without `blocked` as recovery — zeroing the streak,
+// clearing the degraded key and re-firing the watchdog on the next run: the
+// 1→0→1 flicker the latch exists to stop, through a different door.
+const withLatch = (o) => (schemaMissing && !o.blocked ? { ...o, blocked: SCHEMA_BLOCKED } : o);
 let openersFailRuns = 0;
 
 // Test seam.
@@ -147,9 +153,9 @@ const LEGACY_SPORT = 'NFL';
 const pick = (r, cols) => Object.fromEntries(cols.map((c) => [c, r[c]]));
 
 async function run() {
-  if (!db.isConnected()) { setNflLineMove(null); return { summary: 'skipped — no DB' }; }
+  if (!db.isConnected()) { setNflLineMove(null); return withLatch({ summary: 'skipped — no DB' }); }
   const games = getGames().filter((g) => g.sport && g.commence_time);
-  if (!games.length) { setNflLineMove(null); return { summary: 'dormant — empty slate' }; }
+  if (!games.length) { setNflLineMove(null); return withLatch({ summary: 'dormant — empty slate' }); }
 
   // Openers for these games (chunked). Unreadable openers mean the agent can
   // do nothing this run; one failure is a blip and is said in the summary,
@@ -163,7 +169,7 @@ async function run() {
     logger.warn('nfl-line-move', `opening_lines: ${e.message} (${openersFailRuns} consecutive)`);
     setNflLineMove(null);
     const summary = `skipped — opening_lines unreadable (${openersFailRuns} consecutive)`;
-    return openersFailRuns >= OPENERS_FAIL_RUNS ? { summary, blocked: OPENERS_BLOCKED } : { summary };
+    return openersFailRuns >= OPENERS_FAIL_RUNS ? { summary, blocked: OPENERS_BLOCKED } : withLatch({ summary });
   }
   const openMap = new Map();
   for (const o of opens) openMap.set(`${o.game_id}|${o.market}`, fin(o.line));
@@ -270,7 +276,7 @@ async function run() {
     summary: `${live.length} games · ${sports.length} sports (${fresh.length - dropped.length} new closes${dropped.length ? `, ${dropped.length} dropped — schema` : ''}) · ${overall.n} in history`,
     data: { live: live.length, sports: sports.length, closed: fresh.length - dropped.length, dropped: dropped.length, history: overall.n, history_days: overall.days, history_capped: historyCapped },
   };
-  return schemaMissing ? { ...out, blocked: SCHEMA_BLOCKED } : out;
+  return withLatch(out);
 }
 
 export default { name: 'nfl-line-move', run };

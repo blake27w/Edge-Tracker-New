@@ -955,6 +955,9 @@ if (!hasAllSports) {
   ], LINE_MOVE_SPEC);
 } else {
   ok('line-move spends nothing', !/\bfetch\s*\(/.test(lmCode), 'no Odds API call may appear in this agent');
+ok('the schema latch rides every exit of nfl-line-move, not only the main return',
+  (lmSrc.match(/withLatch\(/g) || []).length >= 4 && !/return \{ summary: 'skipped — no DB' \}/.test(lmSrc) && !/return \{ summary: 'dormant — empty slate' \}/.test(lmSrc),
+  'an early return without `blocked` reads as recovery to the orchestrator and re-fires the watchdog next run');
   ok('line-move is not NFL-gated', !/sport\s*===\s*['"]NFL['"]/.test(lmCode),
     'the sports come from the slate; an NFL gate re-added here would silently darken 11 sports');
   ok('line-move does not read movement tables', !/line_snapshots|line_movements|getIntel\(/.test(lmCode),
