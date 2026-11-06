@@ -1034,7 +1034,16 @@ async function insertMovements(rows) {
 // contend for the same pool connections and the same hot index pages, which is
 // the load that produced the timeout in the first place. Env-overridable so a
 // test can drive the size-dependent failure with a small batch.
-const SNAPSHOT_CHUNK = Number(process.env.ODDS_SNAPSHOT_CHUNK) || 500;
+//
+// The knob is a loop STEP, so it is sanitized harder than the other `Number(env)
+// || default` knobs: a negative value (`-5`) is `i += -5` — the loop never
+// terminates, the odds agent hangs, and the orchestrator awaits odds before
+// every other agent; a fractional one (`0.5`) emits empty chunks and visits
+// rows twice. Anything that is not a whole number ≥ 1 collapses to the default.
+const SNAPSHOT_CHUNK = (() => {
+  const n = Math.floor(Number(process.env.ODDS_SNAPSHOT_CHUNK));
+  return Number.isFinite(n) && n >= 1 ? n : 500;
+})();
 const SNAPSHOT_WRITE_KEY = 'write|line_snapshots';
 const isStatementTimeout = (e) => e?.code === '57014';
 
@@ -1062,13 +1071,18 @@ async function insertSnapshots(rows) {
       await db.insert('line_snapshots', chunk, MINIMAL);
       out.written += chunk.length;
       out.retried++;
-      clearDegraded(SNAPSHOT_WRITE_KEY);
     } catch (e) {
       if (isStatementTimeout(e)) out.timeouts++;
       out.lost += chunk.length;
       out.error = e;
     }
   }
+  // The retraction is decided for the RUN, not per chunk: a chunk lost for
+  // good earns the alarm, and a later chunk landing on retry must not take it
+  // back. Clearing inside the loop did exactly that — chunk 3 lost twice, chunk
+  // 7 recovered, alarm gone, 500 rows missing with nothing standing for the
+  // watchdog. Only a run in which every row landed may call its alarm false.
+  if (out.retried && !out.lost) clearDegraded(SNAPSHOT_WRITE_KEY);
   return out;
 }
 
