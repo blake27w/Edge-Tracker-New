@@ -1,236 +1,110 @@
 # Line Movement (Open→Close) for All Sports
 
-Spec date: 2026-10-14 · Branch: `feat/line-move-all-sports` · Scope: audit item **5 only**.
+Spec date: 2026-10-17 · **Refreshed in place 2026-11-05** against `c075e70` (= `origin/main`) · Branch: `feat/line-move-all-sports-2` · Decision: **D95**.
+
+Refresh delta, in one breath: anchors re-verified (`index.html` is ~8,200 lines now); the rename is **reversed** (keep `nfl-line-move`); the cross-sport view moves to a **Signal-tab panel** and the NFL Prep block becomes NFL-only; `Number(null)===0` traps fixed (two are live in the current file); loud-skip via `blocked:` constants; test plan extends the 231/202 zero-fail suites with `fake-db` prior art; follow-ups updated.
 
 ## Problem
 
-`opening_lines` is written sport-agnostically by the odds agent (`odds/index.js:362-379`) and live
-consensus exists for every sport, but `nfl-line-move` self-gates to NFL at
-`agents/nfl-line-move/index.js:23` — raw material for 12 sports, used for 1. The result is that
-open→close market direction (the cheapest market-direction signal we have, already paid for) is
-invisible for NCAAF, MLB, NBA, NCAAB, NHL, WNBA, SOCCER, UFC, BOXING. Everything needed is already
-in memory and in Postgres, so the fix is pure plumbing.
-
-**Hard constraint: zero new Odds API calls.** Honored structurally — the agent's only inputs are
-`getGames()` (the in-memory slate the odds agent already published) and two Supabase reads
-(`opening_lines`, `nfl_line_moves`). The rewritten file must contain **no `fetch(`** and must not
-import from `agents/odds/index.js`, `shared/espn-odds.js`, or any event-endpoint helper. A smoke
-assertion below pins this.
+`opening_lines` is written for every sport (`odds/index.js:1335-1353` caps `total`/`spread`/`ml` from `computeMarkets`) and live consensus exists in `getGames()` for every sport, but `nfl-line-move` filters to `g.sport === 'NFL'` at `agents/nfl-line-move/index.js:23` — raw material for 12 sports, used for 1. Open→close direction is the cheapest already-paid-for market signal we have and it is dark for NCAAF/MLB/NBA/NCAAB/NHL/WNBA/SOCCER/UFC/BOXING. The fix is plumbing: **zero new Odds API calls**, structurally — the agent's inputs stay `getGames()` plus two reads of our own small tables, no `fetch(`, no import from `agents/odds/index.js`, `shared/espn-odds.js` or any event-endpoint helper, and a smoke assertion pins it (same technique as `book-move spends nothing`, `tools/smoke.mjs:167`).
 
 ## Approach
 
-Drop the NFL filter; group the slate by `g.sport`; carry `sport` on every row; publish one payload
-with an `overall` aggregate plus a `bySport` array. The sport list is **derived from the slate, not
-hardcoded** — `getGames()` only ever contains sports the odds agent fetched, and it only fetches
-in-season keys (`inSeasonKeys()` at `odds/index.js:197`, applied at `odds/index.js:318`). That is
-the house idiom (`weather/index.js:60`, `key-number/index.js:38`, `fair-line/index.js:37` all filter
-`getGames()` rather than consulting a sport list). It also means **in-season gating is free**: out of
-season a sport simply has no games, and an empty slate makes the whole agent a no-op.
+Drop the NFL filter, group the slate by `g.sport`, carry `sport` on every row, add a moneyline leg, publish `overall` + `bySport[]` in the one existing store slot. Sports are **derived from the slate, never from a list**: `getGames()` holds only what the odds agent fetched this run. Out of season a sport simply has no games; an empty slate is the existing `dormant` early return.
 
-Moneyline is included so combat/soccer are not dark: `SPORTS.UFC`/`BOXING` have `hasTotals: false`
-and no spreads, but `odds/index.js:375` already captures an `ml` opener. ML move is recorded in
-**implied-probability points** (`impliedProb` from `shared/odds-math.js`), not raw American points,
-because -105 → +105 is a 210-point "move" and a ~2.5pt real one.
+**Why not `getOddsCeilings().season` (D89–D91).** That signal answers a budget question — "is this sport in the ceiling denominator?" — with a deliberate 14-day release grace and a forced football backstop, so a sport reads `in` for two weeks after its last game and NFL reads `in` on a Tuesday in a backstop month with nothing on the board. This agent needs "which games are on the board right now", which is exactly `getGames()`. Consulting the season table would also require importing from `agents/odds/index.js`, which the zero-spend assertion forbids. Stated in the file header so nobody "fixes" it.
 
-Rejected alternatives:
-- *A map keyed by sport in the store* (`{NFL:{...},MLB:{...}}`) — rejected, see store shape below.
-- *A per-sport cadence table / per-sport in-season calendar* — rejected; duplicates the season
-  knowledge `inSeasonKeys()` already provides for free and would drift from it.
-- *Hardcoding `Object.keys(SPORTS)`* — rejected; it would make the agent iterate 12 sports with no
-  games and emit empty `bySport` buckets.
+**Baseline/movement tables are untouched.** Open→close is `opening_lines` (first sight, immutable via `ignoreDuplicates`) vs in-memory consensus. It has no reason to read `line_movements`, `getIntel('movements')`/`'movementsAll'` (D77) or `line_snapshots` — those answer *when/who moved*, this answers *net from open*. A smoke assertion pins that none of the three names appear in the agent's code.
 
-### Decision 1 — Store shape: one slot, `bySport` array (NOT a map keyed by sport)
+**Moneyline leg** so UFC/BOXING (`hasTotals: false`, no spreads) and SOCCER are not dark: `ml_move` is in **implied-probability points, home side, positive = home shortened**, because -105→+105 is a 210-point "move" and a ~2.5-pt real one. Soccer draws ignored (we store home ML only).
 
-Keep a single store slot holding:
+### Decision 1 (unchanged) — one store slot, `bySport` array, not a keyed map
+`{ updated, live:[{sport, game_id, matchup, commence_time, open_total, close_total, total_move, open_spread, close_spread, spread_move, open_ml, close_ml, ml_move}], agg:{n,total_down_pct,total_avg_abs,spread_avg_abs,ml_avg_abs}, bySport:[{sport, …same as agg}] }`. Mirrors `clv-tracker/index.js:238-243`; an old service-worker-cached client still finds `lm.live`/`lm.agg` where it expects them. `sw.js` is network-first with `skipWaiting` (`sw.js:5,9`), no `CACHE` bump. `/plays` keeps `nflPrep.lineMove` and gains top-level `lineMove` (same object).
 
-```js
-{ updated, live: [ {sport, game_id, matchup, commence_time, open_total, close_total, total_move,
-                    open_spread, close_spread, spread_move, open_ml, close_ml, ml_move} ],
-  agg: {n, total_down_pct, total_avg_abs, spread_avg_abs},          // overall, unchanged shape
-  bySport: [ {sport, n, total_down_pct, total_avg_abs, spread_avg_abs, ml_avg_abs} ] }
-```
+### Decision 2 (REVERSED) — keep the name `nfl-line-move`; generalize the behaviour
+October's spec renamed to `line-move` because "an agent name is a label, not a key". That is less true now: `/health` carries durable per-agent `blockedRuns`/`blockedReason`/`blockedSince` (D80, `orchestrator/index.js:159-161`) keyed by `agent.name`; `scan_runs.agent` is the only durable run history and the PWA's Supabase-only health fallback derives status from it (`index.html:6092-6096`); `AGENTS_META`/`AGENT_STALE_MS` (`index.html:6043,6055`) and `sigHealthFacts` (`:7101`) key on it; and `INTERVAL_NFL_LINE_MOVE` (`config/index.js:254-264`) would stop applying **silently** if set on Railway — a D80-shaped config loss. The trade: a misleading name (mitigated by the header comment, the label "Opener→Close Lines (all sports)", and a smoke assertion that fails if an NFL gate is re-added) versus a split run history, a "No data" roster row until the first post-deploy run, nine rename sites, and one silent env break. **Keep the name.** Same asymmetry for the table: `nfl_line_moves` stays, additive columns only. Store accessors `setNflLineMove/getNflLineMove` also stay (internal; renaming them buys nothing durable). If Blake wants the rename anyway, the full site list is in git history of this file at `c075e70`.
 
-Why, not a keyed map:
-1. **It mirrors the existing house idiom** for multi-sport aggregates — `clv-tracker/index.js:118-123`
-   publishes exactly `overall` + `bySport: Object.entries(...).map(([sport,rows]) => ({sport, ...}))`
-   sorted by `n`, and the PWA already renders that pattern in `renderClvDashboard` (`index.html:5972`).
-2. **It is backward compatible across the deploy seam**, which a keyed map is not. The PWA reads
-   `state.agentsNflLineMove` (set at `index.html:5899`) and renders `lm.agg` + `lm.live` at
-   `index.html:6415-6430`. With this shape an old service-worker-cached client keeps working: it
-   finds `lm.live` and `lm.agg` exactly where it expects them and renders all sports' rows under the
-   existing 📐 header (extra fields ignored). With a keyed map, `lm.live` would be `undefined` and
-   the section would silently vanish for that client.
-3. **The reverse seam matters too**: `loadAgentsData` persists the whole payload to
-   `localStorage.etBagCache` (`index.html:5958`) and `hydrateAgentsCache` (`index.html:5917`) replays
-   it on first paint — so a *new* `index.html` will paint an *old* payload with no `sport` and no
-   `bySport`. The new render must therefore treat both as optional (`lm.bySport||[]`,
-   `g.sport?esc(g.sport)+' · ':''`). Required, not nice-to-have.
-
-`sw.js` is network-first for the shell (`sw.js:23-27`), so the stale-client window is one load; the
-cache fallback only bites offline. No `CACHE` bump needed.
-
-**API surface:** `/plays` keeps `nflPrep.lineMove` (`src/index.js:432`) **and** gains a top-level
-`lineMove` key with the same object. The PWA reads `bag.bePlays.lineMove||bag.bePlays.nflPrep.lineMove`.
-`nflPrep.lineMove` stays indefinitely — it costs one property on a payload that already has ~25, and
-removing it is the one change that can blank a cached client's view.
-
-### Decision 2 — Rename the agent: `nfl-line-move` → `line-move`. Yes.
-
-The agent becomes genuinely cross-sport; leaving `nfl-` on it misleads every future reader and
-invites someone to re-add an NFL filter "to match the name". The cost is bounded: the agent name is a
-*scheduler key + display label*, not a foreign key — nothing joins on it. Renaming orphans this
-agent's rows in `scan_runs.agent` (the PWA's per-agent "last run / stale" dot, `agentStatus` at
-`index.html:5843`, and the live feed at `index.html:5909`), so the agent shows "never ran" until its
-first post-deploy run, and old `nfl-line-move` feed lines keep their old name. Accepted: display-only,
-self-healing within 30 minutes.
-
-Every site to change (all of them — a half-rename shows a permanently red dot):
-| File | Location | Change |
-|---|---|---|
-| `edge-tracker-agents/src/agents/nfl-line-move/index.js` | whole dir | `git mv` to `agents/line-move/index.js`; `name: 'line-move'` at :82; `logger.warn('line-move', …)` at :62 |
-| `edge-tracker-agents/src/config/index.js` | :192 | key `'nfl-line-move'` → `'line-move'`, label `'Opener→Close Lines'`, `min: 30`; update the :191 comment |
-| `edge-tracker-agents/src/orchestrator/index.js` | :55, :75 | import path `../agents/line-move/index.js`, registry entry `lineMove` |
-| `edge-tracker-agents/src/store/index.js` | :39, :91-92 | field `nflLineMove` → `lineMove`; `setNflLineMove`/`getNflLineMove` → `setLineMove`/`getLineMove` |
-| `edge-tracker-agents/src/index.js` | :12, :432 | import `getLineMove`; `nflPrep.lineMove: getLineMove()` **and** new top-level `lineMove: getLineMove()` |
-| `index.html` | :5815 | `{name:'line-move',icon:'📐',label:'Opener→Close Lines',cadence:'30m (sports in season)'}` |
-| `index.html` | :5827 | `AGENT_STALE_MS`: `'nfl-line-move':5400000` → `'line-move':5400000` |
-| `index.html` | :5899, :6414 | `state.agentsNflLineMove` → `state.agentsLineMove`, sourced per "API surface" above |
-| `docs/nfl-model-scope.md` | :25 | note it generalized to all sports (one-line edit) |
-
-Env override note: cadence overrides are derived as `INTERVAL_<NAME>` with dashes→underscores
-(`config/index.js:117-123`), so `INTERVAL_NFL_LINE_MOVE` becomes `INTERVAL_LINE_MOVE`. There is no
-`NFL_LINE_MOVE` feature flag to carry over (unlike `NFL_DERIVATIVES`). Mention in `DECISIONS.md`.
-
-**The DB table keeps the name `nfl_line_moves`.** Deliberate asymmetry: an agent name is a label, a
-live table name is data. `scripts/schema.sql` is apply-anytime idempotent DDL (`create table if not
-exists` + `alter table … add column if not exists`, e.g. :116, :257-267) and cannot express a rename
-safely; renaming would also split NFL history from new rows. See Risks for the optional later view.
-
-### Decision 3 — Season/cadence gating
-
-Unchanged wake cadence: `min: 30`. The agent spends nothing per wake (no HTTP; two Supabase selects,
-one conditional insert), so a per-sport cadence would add config surface for no saving. Gating is
-inherent: `getGames()` is empty-for-that-sport out of season, and if the whole slate is empty the
-agent returns `dormant` early exactly as it does today (:24). PWA cadence label becomes
-`30m (sports in season)`.
+Rejected: a map keyed by sport (breaks cached clients); a per-sport calendar (duplicates `inSeasonKeys()`); `Object.keys(SPORTS)` (emits 12 empty buckets).
 
 ## Data model / API changes
 
-`scripts/schema.sql` — additive, after `nfl_line_moves_idx` (:679):
+`scripts/schema.sql`, after `:710` — **must be hand-run** (D69/D70 history; nothing applies this file):
 ```sql
-alter table nfl_line_moves add column if not exists sport     text;
-alter table nfl_line_moves add column if not exists open_ml   numeric;
-alter table nfl_line_moves add column if not exists close_ml  numeric;
-alter table nfl_line_moves add column if not exists ml_move   numeric;  -- implied-prob points, home
-update nfl_line_moves set sport = 'NFL' where sport is null;            -- pre-existing rows are all NFL
-create index if not exists nfl_line_moves_sport_idx on nfl_line_moves (sport, captured_at desc);
+alter table nfl_line_moves add column if not exists sport    text;
+alter table nfl_line_moves add column if not exists open_ml  numeric;
+alter table nfl_line_moves add column if not exists close_ml numeric;
+alter table nfl_line_moves add column if not exists ml_move  numeric;  -- implied-prob pts, home side
+update nfl_line_moves set sport = 'NFL' where sport is null
+  and captured_at < '<the time you RUN this block, UTC>';                 -- every sportless row at that moment is NFL
 ```
-No endpoint added. `/plays` gains top-level `lineMove` (identical object to `nflPrep.lineMove`).
+The backfill is bounded to rows written **before** the all-sports build deployed (Blake sets the timestamp; the placeholder does not cast, so an unedited copy fails loudly). It can therefore never relabel a post-deploy row — and the agent's pre-DDL retry writes **only NFL** rows sportless, so nothing it writes could be mislabelled anyway (review fix 1).
+No new index: the table is NFL-only today (hundreds of rows) and at 12 sports grows ~150 rows/day, ~27k over the 180-day window — a sequential scan is free (D70 rule; the existing `nfl_line_moves_idx` may itself be unapplied and it does not matter). No endpoint added; `/plays` gains `lineMove`.
+
+**Query cost, bounded.** (1) `opening_lines` (3,427 rows): `in: { game_id }` over the slate, chunked 100 ids per call so a 300-game Saturday never builds an over-long PostgREST URL; served by `unique (game_id, market)`. (2) `nfl_line_moves` dedup: `gte captured_at` **now−36h (the slate horizon, not the UTC day** — a 23:50Z close that drops off the slate for a cycle and is back after midnight must not be re-inserted; review fix 7), `select game_id`. (3) history: **one bounded query per sport** — the config roster ∪ the slate's sports, `match: { sport }`, `gte: { captured_at: now-180d }`, `order captured_at desc`, `limit floor(4000 / nSports)` (≈333) — so the aggregate stays ≤4000 rows while a sport whose season ended weeks ago still appears with its real `n` and the `thin` marker; a single newest-4000 query held ~27 days at 12-sport volume and silently evicted dormant sports (review fix 4). 180d is an upper bound, not the span: every aggregate carries `from`/`days` from its oldest row, and the store publishes `history_from`/`history_days`, which is what the PWA header shows. A `limit > 1000` answered by exactly 1000 rows is flagged (`history_capped`, one `logger.warn`) as a likely PostgREST `max-rows` clamp (review fix 6; the ~12 `limit: 8000`/`20000` reads elsewhere have the same exposure and are left alone). **`line_snapshots` (7M rows) is never read.** Nothing else to hand-run.
 
 ## File-by-file plan
 
-1. **`edge-tracker-agents/src/agents/line-move/index.js`** (moved from `nfl-line-move/`) — rewrite of
-   the header comment (drop "NFL", keep the "$0 / dormant offseason" claim) and:
-   - :13 import `{ getGames, setLineMove }`; add `import { impliedProb } from '../shared/odds-math.js'`.
-   - :23 `const games = getGames().filter((g) => g.sport && g.commence_time);` (no sport filter).
-   - :24 dormant message → `'dormant — empty slate'`.
-   - :41-45 row gains `sport: g.sport`, plus `open_ml`/`close_ml` from `openMap.get(…|ml)` /
-     `m.ml.consensusHome`, and `ml_move` = `r1((impliedProb(close_ml) - impliedProb(open_ml)) * 100)`
-     guarded for nulls (combat/soccer only have these; `computeMarkets` returns `null` medians for
-     absent markets — `games/lines.js:33-37` — so totals/spreads stay `null` harmlessly).
-   - :57 `fresh` filter also accepts `r.ml_move != null`.
-   - :61 insert adds `sport`, `open_ml`, `close_ml`, `ml_move`.
-   - :67 history select → `'sport,total_move,spread_move,ml_move'` with
-     `gte: { captured_at: <180 days ago ISO> }`, `limit: 4000`. One query, not per-sport — no N+1.
-   - :70-75 extract the aggregate into `const agg = (rows) => ({…})` (add `ml_avg_abs`), call it once
-     for `overall` and once per sport group built the `clv-tracker:118-119` way.
-   - :77 sort `live` by `commence_time`; keep `.slice(0, 32)` **after** a sport-interleave is *not*
-     needed — instead raise to `.slice(0, 60)` so a 12-sport Saturday is not truncated to one sport.
-   - :78 `setLineMove({ updated, live, agg: overall, bySport })`.
-   - :79 summary → `` `${live.length} games · ${sports.length} sports (${fresh.length} new closes) · ${overall.n} in history` ``.
-2. **`edge-tracker-agents/src/store/index.js`** — :39 field + :91-92 accessor rename (table above).
-3. **`edge-tracker-agents/src/config/index.js`** — :191-192 key/label/comment.
-4. **`edge-tracker-agents/src/orchestrator/index.js`** — :55 import, :75 registry.
-5. **`edge-tracker-agents/src/index.js`** — :12 import, :432 both payload keys.
-6. **`edge-tracker-agents/scripts/schema.sql`** — the DDL block above, after :679.
-7. **`index.html`** — :5815 list entry, :5827 stale map, :5899 state assignment (with the
-   `lineMove||nflPrep.lineMove` fallback), :6413-6430 render: rename the header to
-   `📐 LINE MOVEMENT — OPEN → CLOSE`, print the overall `agg` card as today, then (if `lm.bySport`
-   has ≥2 entries) a compact per-sport line per entry in the existing `.card` style, then the live
-   rows with a `sport` prefix chip (`gbChip` at :6660 is the existing helper) and an ML leg rendered
-   only when `g.ml_move != null`. Every new field access must be optional-chained/defaulted (old
-   cached payload). No new CSS, no new `<script src=>`.
-8. **`tools/smoke.mjs`** — extend (see Test plan).
-9. **`DECISIONS.md`** — append a dated D17 entry: generalization, store shape, rename, table-name
-   asymmetry, `INTERVAL_` env rename.
-10. **`docs/nfl-model-scope.md`** :25 — one-line status edit.
+1. **`edge-tracker-agents/src/agents/nfl-line-move/index.js`** — rewrite in place (name stays `'nfl-line-move'`):
+   - Header: drop "NFL", keep "$0 / dormant on an empty slate", add the two paragraphs above (why not the season signal; why not the movement tables), the `ml_move` sign convention.
+   - Imports: add `import { impliedProb } from '../shared/odds-math.js'`. Nothing from `odds/`, `espn-odds`, or event helpers.
+   - Add `const num = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);` (the `shared/key-numbers.js:34` shape). **Two live traps in the current file:** `:31 Number(o.line)` and `:68-69 .map(Number).filter(Number.isFinite)` turn a null `total_move` into a counted `0` move, diluting `total_down_pct` and `avg_abs`. Replace both with `num()` + `Number.isFinite`. `impliedProb(null)` returns `0` silently (`toDecimal(null)` → `Infinity`), so `ml_move` is computed only when both sides pass `num()` and `Math.abs(x) >= 100`.
+   - `:23` → `getGames().filter((g) => g.sport && g.commence_time)`; `:24` message `'dormant — empty slate'` (benign, not blocked).
+   - `:29` openers read: chunked as above; on **throw** → `setNflLineMove(null)` and `summary: 'skipped — opening_lines unreadable (k consecutive)'`; only after **3 consecutive** failing runs (a module-level streak, the D76 breaker shape; one success resets it) does the return carry `blocked: OPENERS_BLOCKED`, where `const OPENERS_BLOCKED = 'opening_lines could not be read'` — a constant literal, no counts, no env (D80). A lone network blip is not "will fail identically next run", and with `blockedRunsMin = 1` it would be an immediate watchdog alert (review fix 5). Today it is a swallowed `catch (_)`.
+   - Row (`:41-45`): add `sport: g.sport`, `open_ml`/`close_ml` from `openMap.get(…|ml)` / `m.ml.consensusHome`, `ml_move = r1((impliedProb(close) - impliedProb(open)) * 100)`.
+   - `:57` fresh filter also accepts `r.ml_move != null`. `:61` insert adds the four columns. On a missing-column error (`/column/i.test(e.message)`, the D73 distinction — not `db.isMissingRelation`) retry once with the four fields stripped **for the NFL rows only** — a stripped row is sportless and every reader (PWA, backfill) treats sportless as NFL, so writing an NBA close that way would relabel it NFL forever and pollute NFL aggregates with NBA-scale moves. The other sports' closes are dropped for the run, counted in `data.dropped`/the summary, named in a `logger.warn`, and left out of `persisted` so they land on a later run if the DDL arrives while they are on the slate (review fix 1). The missing-schema state **latches** module-level (`schemaMissing`, D73's `isMissingColumn` latch pattern) and every subsequent run returns `blocked: SCHEMA_BLOCKED` (`'nfl_line_moves is missing the all-sports columns — run the schema.sql block'`) until an insert *with* the new columns succeeds — without the latch a run with no new close returned unblocked, the orchestrator reset the streak and cleared the degraded key, and `/health` toggled 1→0→1 all day (review fix 2). Prune `persisted` to game_ids still on the slate (the Set was never pruned).
+   - History (`:67`): the bounded query above; `const agg = (rows) => ({…})` with `ml_avg_abs`; `overall = agg(hist)`, `bySport` built the `clv-tracker:238-243` way, sorted by `n`.
+   - Publish: `live` capped **per sport** (`capPerSport`, soonest 32 of each sport, then merged by `commence_time`) — a flat first-80 by kickoff let a November Saturday's ~150 NCAAF/NCAAB/NBA/NHL games fill every slot before Sunday NFL and the NFL Prep 📐 block painted zero rows, a regression from the old NFL-only 32 (review fix 3); the Close panel applies the same per-sport cap (16) client-side. `setNflLineMove({ updated, live, agg: overall, bySport, history_from, history_days, history_capped })`. Summary: `` `${live.length} games · ${sports.length} sports (${fresh.length} new closes) · ${overall.n} in history` ``.
+2. **`edge-tracker-agents/src/config/index.js`** `:230-231` — comment and label `'Opener→Close Lines (all sports)'`; `min: 30` unchanged.
+3. **`edge-tracker-agents/src/index.js`** `:419` — add top-level `lineMove: getNflLineMove()`; keep `nflPrep.lineMove`.
+4. **`edge-tracker-agents/scripts/schema.sql`** — DDL block after `:710`, with a comment that it is hand-run.
+5. **`index.html`**:
+   - `:6043` label `'Opener→Close Lines (all sports)'`, cadence `'30m (sports on the slate)'`. `:6055` unchanged.
+   - `:6127` stays; append to the `:6129` line `state.agentsLineMove=bag.bePlays.lineMove||(bag.bePlays.nflPrep&&bag.bePlays.nflPrep.lineMove)||null;`.
+   - `:6675-6692` (Plays → NFL Prep, inside the `:6566` NFL PREP section): read `state.agentsLineMove||state.agentsNflLineMove`, and **filter `live` to `g.sport==='NFL'||g.sport==null`** (the page is NFL Prep; legacy cached rows have no `sport`). Header text unchanged. The history card uses the NFL entry of `lm.bySport||[]` when present, else `lm.agg` (old payload).
+   - Signal tab, fifth panel **`close`**: `SIG_PANELS` (`:6925`) gains `{id:'close',label:'Close'}`; `SIG_CLOSE_BOUND=(AGENT_STALE_MS['nfl-line-move']||5400000)*2` beside `:6928`; `sigCloseFacts()` next to `:7122` reading `state.agentsLineMove` with `sigState(state.sigSrc.plays, lm, (lm.live||[]).length+(lm.bySport||[]).length, SIG_CLOSE_BOUND, lm&&lm.updated)`; a chip entry in `sigChipStatus()` (`:7142`, text `N sports` or `—`); `renderSigClose()` after `renderSigSteam()` (`:7485`) — banners via `sigBanner` only, a `sigtbl` per-sport table (sport · n · totals-down% · avg total · avg spread · avg ML pp) then live rows (sport, matchup, O/U open→now, spr, ML pp) in `.sigtbl-wrap`; dispatch in `renderSignalContent()` (`:6984-6987`). No `fetch(`, no CSS outside `.sighud`, no `<svg>`. Every field optional-chained/defaulted (`etBagCache` replay, `:6146-6151`).
+6. **`tools/smoke.mjs`** — new group 16 (below). **`edge-tracker-agents/test/nfl-line-move.test.js`** — new (below).
+7. **`DECISIONS.md`** — D95: generalization, rename reversed and why, table asymmetry, slate-not-season, the two `Number` traps, the two `blocked` constants.
+8. **`docs/nfl-model-scope.md`** `:25` — one-line status edit.
 
-Do **not** touch `agents/odds/index.js`, `agents/sharp/*`, `agents/public-splits/*`, or
-`buildDataHealth` (`src/index.js:320-335`) — those are phases (b)/(c).
+Do **not** touch `agents/odds/*`, `agents/sharp/*`, `agents/book-move/*`, `agents/public-splits/*`, `src/health/data-health.js` (already probes `nfl_line_moves`, `:103`).
 
 ## Risks & open questions
 
-- **For Blake to decide:** accept the orphaned `nfl-line-move` run history in `scan_runs` (the
-  rename), or keep the stale name? Spec assumes rename.
-- **For Blake to decide:** table stays `nfl_line_moves`. A later cosmetic fix is
-  `create view line_moves as select * from nfl_line_moves;` — not in this spec.
-- UFC/BOXING `game_id`s are per-fight; the per-day dedup at :54 is keyed on `game_id` only, which is
-  still unique — but a fight card produces many rows per day. Expected, not a bug.
-- `ml_move` sign convention is *home side, implied-probability points, positive = home shortened*.
-  Soccer draws are ignored (we only store home ML). Document it in the file header.
-- The 180-day history window plus 12 sports could make `bySport` buckets thin (n<20) early. Render
-  per-sport lines regardless; do **not** add a min-n gate — this is reference data, and clv-tracker
-  shows thin buckets too.
+- **Blake:** confirm keeping the name `nfl-line-move` (Decision 2). Flip = nine sites + a split history; the spec assumes keep.
+- **Blake:** the DDL is hand-run. Until it is, NFL closes still persist on the legacy columns **with `sport` null — invisible to the per-sport history reads until the backfill labels them** — and `/health` shows `blockedRuns ≥ 1` with the schema reason — that is the feature, not a defect.
+- UFC/BOXING `game_id`s are per fight: many rows per card-day. Expected.
+- Early `bySport` buckets will be thin (n<20); render regardless, no min-n gate (reference data; clv-tracker shows thin buckets).
+- `impliedProb` has no null guard upstream; this spec guards at the call site rather than changing `shared/odds-math.js` (other callers unaudited).
 
 ## Test plan
 
-Extend `tools/smoke.mjs` with a new group **"9. Line-move generalization"** (same `ok()` helper, same
-read-the-source style as group 7, which already reads `edge-tracker-agents/src/index.js`):
-- read `edge-tracker-agents/src/agents/line-move/index.js`:
-  - `ok('line-move spends nothing', !/\bfetch\s*\(/.test(src))` — the hard constraint, pinned.
-  - `ok('line-move is not NFL-gated', !/sport\s*===\s*['"]NFL['"]/.test(src))`.
-  - `ok('line-move publishes bySport', /bySport/.test(src))`.
-- read `config/index.js`, `orchestrator/index.js`, `index.html`: assert `'line-move'` present in all
-  three **and** `nfl-line-move` absent from all three (catches a half-rename), and that
-  `AGENT_STALE_MS` contains `'line-move'`.
-- read `store/index.js`: `ok('store exports setLineMove', /export function setLineMove/.test(src))`.
-- read `src/index.js`: `ok('/plays serves lineMove at top level', /lineMove:\s*getLineMove\(\)/…)` and
-  that `nflPrep` still carries `lineMove:` (backward compat).
-- `index.html`: `ok('line-move render tolerates old cached payload', /lm\.bySport\s*\|\|/.test(html))`.
-- Group 1 (inline-script parse) already covers the `index.html` edit; no change needed there.
+Baseline is **231 tests / 202 smoke, 0 failures** (D82); any failure is real. `npm ci` in `edge-tracker-agents/` first.
 
-Run `node tools/smoke.mjs` and `node tools/smoke.mjs --live`. Verifier should additionally confirm
-`git grep -n "nfl-line-move\|NflLineMove"` returns only `DECISIONS.md` and `docs/`.
+**Unit — `test/nfl-line-move.test.js`** (`node:test`, `mock.module` for `db`, `utils`, `store`; `fakeDb` from `test/helpers/fake-db.js`; the `clv-tracker.test.js:25-35` harness shape; inject `getGames` and capture `setNflLineMove`):
+1. Three sports on the slate (NFL total/spread, NBA, UFC ML-only) → `live[]` rows carry `sport`, `bySport` has 3 entries, UFC row has `ml_move` and null totals/spread.
+2. `ml_move` for open -110 → close -130 ≈ +4.1 pp (home shortened); a `null` opener yields `null`, never `0`.
+3. History rows with `total_move: null` do not count toward `total_down_pct`/`total_avg_abs` (the live trap).
+4. Query shape (assert on `db.calls.select`): history is one `match: { sport }` read per roster sport, each with `gte.captured_at`, `ascending:false`, `limit` ≤ 4000; openers are chunked (≤100 ids per call for a 250-game slate); **no select on `line_snapshots` or `line_movements`**. A fixture with 4,100 NBA rows at 1d and 10 NCAAF rows at 60d → NCAAF still has a `bySport` entry (n=10, days≈60), `history_days`≈60, aggregate ≤4000.
+5. `fail['select:opening_lines']` once → no `blocked`, store `null`, summary says so; three consecutive → `blocked === OPENERS_BLOCKED` (constant equality, D80 closed-template style); one success resets the streak.
+6. `fail['insert:nfl_line_moves']` with a "column … does not exist" message → second insert without `sport/open_ml/close_ml/ml_move`, result `blocked === SCHEMA_BLOCKED`; a non-column error → no retry, no blocked. Pre-DDL with NFL + NBA closes → only the NFL row is retried, the NBA loss is counted (`data.dropped`) and named in the warn. Latch: blocked run → run with nothing to insert → **still** blocked; a successful full-column insert clears it.
+6b. Live cap: 150 NCAAB at +2h and 16 NFL at +25h → all 16 NFL rows in `live`, NCAAB capped at 32, merged by kickoff. Dedup: a row captured 2h ago (previous UTC date) is not re-inserted; the dedup lower bound is now−36h; one 40h old is re-inserted. `postgrestCapped(4000, 1000 rows)` is true, `(1000, 1000)` and `(333, 333)` false.
+7. Empty slate → `dormant — empty slate`, no `blocked`.
 
-### Manual check recipe (Blake, ~5 min)
+**Smoke — `tools/smoke.mjs` group 16 "Open→close for all sports"** (same read-the-source style as group 10; feature-detect on `/bySport/.test(lmSrc)` and `skip()` otherwise so the harness stays green on `main`):
+`spends nothing` (`!/\bfetch\s*\(/` on `codeOnly(src)`); `not NFL-gated` (`!/sport\s*===\s*['"]NFL['"]/`); `does not read movement tables` (no `line_snapshots|line_movements|getIntel\(`); `does not import the odds agent` (no `agents/odds/|espn-odds`); `blocked reasons are constant literals` (`OPENERS_BLOCKED`/`SCHEMA_BLOCKED` assigned from a quoted string with no `${`); `no bare Number( on possibly-absent values` (`!/Number\((o|h)\./`); `name unchanged` (`name: 'nfl-line-move'` in agent, config, `AGENTS_META`, `AGENT_STALE_MS`); `/plays serves lineMove at top level` and `nflPrep` still has `lineMove:`; `index.html` has `SIG_PANELS` entry `close`, `function renderSigClose`, `lm.bySport||`, and the NFL Prep block filters on `sport==='NFL'`; group 14's existing "no second /plays fetch" and scoped-CSS assertions must still pass.
 
-1. Apply the schema DDL in the Supabase SQL editor, then restart the agents process and hit
-   `/health` — the agent list should show `line-move` (not `nfl-line-move`) with a recent run.
-2. `curl -s "$API/plays" | python3 -m json.tool | grep -A3 '"lineMove"'` — confirm a top-level
-   `lineMove` exists, `live[]` rows carry `sport`, and `bySport` has more than one entry on a day with
-   a multi-sport slate (an NFL-only Sunday night will legitimately show one).
-3. Serve the PWA: `npx serve .` — **it silently falls back to a random port when 3000/5000 is taken**
-   (Vantyx holds 3000; a Pool Room Pro Electron process holds 4317-4318), so read the port off
-   `lsof -nP -iTCP -sTCP:LISTEN | grep -i node` rather than assuming, and open that port.
-4. Agents tab → scroll to 📐 LINE MOVEMENT — OPEN → CLOSE. Expect non-NFL rows with sport chips, an
-   overall history card, and per-sport lines. Confirm the Agents list row for `line-move` is green.
-5. Stale-client check: in DevTools → Application, keep `etBagCache` (do **not** clear storage) and
-   hard-reload. The section must still render on first paint from the old cached payload (no `sport`,
-   no `bySport`) without a console error — this is the SW/localStorage seam.
-6. `curl -s "$API/plays" | grep -c '"nflPrep"'` → 1, and `nflPrep.lineMove` still populated
-   (backward-compat key).
+Verifier: `node tools/smoke.mjs`, `node tools/smoke.mjs --live`, `npm test`; `git grep -n "line-move'" -- edge-tracker-agents/src index.html` shows only `nfl-line-move`.
+
+### Manual check recipe (Blake, ~10 min) — each step names what it proves
+0. `lsof -nP -iTCP -sTCP:LISTEN` — Pool Room Pro holds 4317-4318, node 3000 and 5173, ControlCenter 5000 and 7000. Note a free port; `npx serve .` silently falls back when its default is taken, so read its port from the next `lsof`, never assume.
+1. Supabase SQL editor: run the five DDL lines, then `select column_name from information_schema.columns where table_name='nfl_line_moves'` → shows `sport, open_ml, close_ml, ml_move`. *Proves the schema is applied.*
+2. Deploy/restart Railway; `curl -s $API/health | python3 -c "import sys,json;a=[x for x in json.load(sys.stdin)['agents'] if x['name']=='nfl-line-move'][0];print(a['lastResult'],a['blockedRuns'],a['blockedReason'])"` → summary reads `N games · K sports …` with `K ≥ 2` on a multi-sport day, `blockedRuns 0`. *Proves the run completed, unblocked, across sports.* (If `blockedRuns ≥ 1` with the schema reason, step 1 did not take.)
+3. **Decisive observable:** `curl -s $API/plays | python3 -c "import sys,json;lm=json.load(sys.stdin)['lineMove'];print([b['sport'] for b in lm['bySport']]);print([r for r in lm['live'] if r['sport']!='NFL' and (r['total_move'] is not None or r['ml_move'] is not None)][:3])"` → a non-NFL sport with a real non-null delta. *Proves non-NFL open→close is published.* Also `'nflPrep' in …` and `nflPrep.lineMove is lineMove-shaped` — *backward-compat key intact.*
+4. After any non-NFL game passes kickoff −30m: `select sport, count(*) from nfl_line_moves where captured_at > now() - interval '1 day' group by 1` → a non-NFL row. *Proves persistence, with `sport` populated.*
+5. `/budget` `used` before and after: the only new reads are our own tables; smoke pins no `fetch(`. *Zero Odds API spend is structural, not observed.*
+6. PWA on the port from step 0: Signal → Close chip shows `K sports`; panel renders the per-sport table and live rows with sport chips. Plays → NFL Prep → 📐 block shows **only NFL** rows. *Proves both surfaces, and that NFL Prep stayed NFL.*
+7. DevTools → Application: keep `etBagCache`, hard-reload → first paint from the old cached payload (no `sport`, no `bySport`) renders without a console error; Close panel shows a banner, not `undefined`. *Proves the cache seam.*
 
 ## Follow-up phases (not designed here)
 
-- **Phase (b) — give `line_movements` a reader.** `line_movements` is write-only today: the sole
-  reference is the INSERT at `odds/index.js:356`. `sharp` and `public-splits` consume
-  `getIntel('movements')`, the in-memory array from only the most recent odds run, which is why sharp
-  reports "no recent line movement" across 13,028 runs. Phase (b) queries `line_movements` over a real
-  window for steam/RLM, and adds `['line_movements','fetched_at']` to the `buildDataHealth` specs list
-  at `src/index.js:323-328`, where it is currently unwatched.
-- **Phase (c) — persist the movement baseline.** `lastLines` (`odds/index.js:162`) is a process-local
-  `Map`, so every redeploy wipes the baseline and the first post-restart run detects zero movement.
-  Phase (c) rehydrates it from the latest `line_snapshots` row per `game_id|book|market|side` at
-  startup (or writes a small `last_lines` table), making detection survive restarts. Related: movement
-  is computed only inside `normalize()`, so budget-capped sports (the `break` at `odds/index.js:320`)
-  produce none — worth fixing in the same pass.
+Done since October: `book-move` per-book attribution (#133), movement baseline rehydration (#136), Signal dashboard (#138), automatic seasonality (#139), the steam history reader (D92–D94). Remaining: `public-splits` absent-vs-zero (in the small-fixes PR now); the zero-recipient watchdog (`notifyAll` needs `ALERT_NUMBERS`/`SMTP_*`); the "add an originating book" decision (D57 — costs API spend, deliberately untaken). Optional cosmetic: `create view line_moves as select * from nfl_line_moves;` if the table name ever grates.

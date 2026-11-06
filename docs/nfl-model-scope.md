@@ -22,7 +22,7 @@ line-vs-public. Under bias applies to totals.
 | 8 | Coaching / pace module | ✅ built (`nfl-pace`) | curated team-tempo map (pace + pass tendency, like MLB park factors) → totals lean; no verified free pace feed, so review each offseason / override via NFL_PACE_OVERRIDES. Reference/observational |
 | 9 | Injury / inactives-speed agent | ✅ built (`nfl-inactives`) | self-gates to NFL games near kickoff (dormant offseason); flags key skill-position OUTs + Under lean + how early caught. Observational |
 | 10 | Derivative ingestion | ✅ built (`nfl-derivatives`) | team totals +EV (devigged); OFF by default (`NFL_DERIVATIVES=true`), daily-capped, self-gates. Add alt_totals/alt_spreads via `NFL_DERIVATIVE_MARKETS` |
-| 11 | Opener→close CLV (NFL) | ✅ built (`nfl-line-move`) | per-game open→close total/spread move + history aggregate; self-gates (dormant offseason). Reference |
+| 11 | Opener→close CLV | ✅ built (`nfl-line-move`) | per-game open→close total/spread/ML move + history aggregate, overall and per sport — generalized to every sport on the slate (D95; name kept); dormant on an empty slate. Reference |
 
 ## Wiring notes
 - Offseason prep agents run on slow daily cadences and produce reference data.

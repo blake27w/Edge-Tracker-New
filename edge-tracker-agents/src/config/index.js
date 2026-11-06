@@ -230,8 +230,8 @@ const AGENT_DEFS = {
   // Closing-line history for every NFL game (free ESPN pickcenter) → fav/dog, O/U by slot, div, band. Weekly.
   'nfl-history': { label: 'NFL Closing-Line History', emoji: '📚', min: 10080 },
   'ncaaf-history': { label: 'NCAAF Closing-Line History (Top 25)', emoji: '📚', min: 10080 },
-  // Self-gates to NFL games — dormant (cheap no-op) in the offseason.
-  'nfl-line-move': { label: 'NFL Opener→Close Lines', emoji: '📐', min: 30 },
+  // Open→close for every sport on the slate ($0; name kept for run history, D95) — dormant on an empty slate.
+  'nfl-line-move': { label: 'Opener→Close Lines (all sports)', emoji: '📐', min: 30 },
   // Disabled unless NFL_DERIVATIVES=true (costs Odds API credits); self-no-ops otherwise.
   'nfl-derivatives': { label: 'NFL Derivatives (team totals)', emoji: '🧩', min: 20 },
   'nfl-pace': { label: 'NFL Coaching/Pace', emoji: '⏱️', min: 1440 },

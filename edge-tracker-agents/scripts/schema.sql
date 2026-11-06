@@ -708,6 +708,25 @@ create table if not exists nfl_line_moves (
   captured_at  timestamptz not null default now()
 );
 create index if not exists nfl_line_moves_idx on nfl_line_moves (captured_at desc);
+-- All-sports columns (D95). HAND-RUN in the Supabase SQL editor — nothing applies
+-- this file. Until it runs, the agent still lands NFL rows on the legacy
+-- columns and reports `blocked` with the schema reason on /health.
+alter table nfl_line_moves add column if not exists sport    text;
+alter table nfl_line_moves add column if not exists open_ml  numeric;
+alter table nfl_line_moves add column if not exists close_ml numeric;
+alter table nfl_line_moves add column if not exists ml_move  numeric;  -- implied-prob pts, home side
+-- Backfill. Every row with `sport is null` at the moment you run this is NFL:
+-- rows written before the all-sports build are NFL by construction, and the
+-- build itself only ever writes NFL rows sportless — its pre-DDL retry DROPS
+-- every other sport (counted as `dropped` on /health) rather than write it
+-- without a label. So the bound below must be THE TIME YOU RUN THIS BLOCK,
+-- not the deploy time: a deploy-time bound would leave every NFL close landed
+-- between deploy and now permanently sportless and invisible to history (the
+-- agent reads history with `match: { sport }`). The placeholder does not cast,
+-- so an unedited copy fails loudly — and because the SQL editor runs this as
+-- one transaction, the alter tables above roll back with it; nothing half-applies.
+update nfl_line_moves set sport = 'NFL' where sport is null
+  and captured_at < 'YYYY-MM-DDTHH:MM:SSZ';                                  -- <- the time you run this, UTC
 
 -- ── NFL derivative edges (team totals etc.; only when NFL_DERIVATIVES=true) ──
 create table if not exists nfl_derivatives (
