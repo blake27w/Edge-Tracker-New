@@ -185,6 +185,48 @@ test('every books[] entry carries key (the slate book key) and book (its label);
   }
 });
 
+// ── per-game age ──────────────────────────────────────────────
+// The fallback keeps each game's NEWEST batch across ~5 batches, so one board
+// can carry a 16-h-old game beside a 10-min-old one while `at` is the newest.
+test("each game publishes its own splits_at; a game with no rows has null; memory path too", async () => {
+  const older = T(-16 * 60), newer = T(-10);
+  db.setRows('public_splits', [dbRow('g1', 'spread', 'Home -3', 60, 70, older), dbRow('g2', 'ml', 'AWAY', 55, 61, newer)]);
+  const r = await mod.buildSplits(url());
+  assert.equal(r.splits_meta.at, newer);
+  assert.equal(r.games.find((g) => g.game_id === 'g1').splits_at, older, "g1's rows are 16 h old even though the board's `at` is 10 min");
+  assert.equal(r.games.find((g) => g.game_id === 'g2').splits_at, newer);
+  store.setGames([game('NBA', 'g1', { total: 220.5 }), game('NBA', 'g2', { total: 44.5 }), game('NBA', 'g3', { total: 200 })]);
+  const mem = memRows(); // one array: memRows() stamps T(-10) at call time
+  store.setIntel('splits', mem);
+  const r2 = await mod.buildSplits(url());
+  assert.equal(r2.games.find((g) => g.game_id === 'g3').splits_at, null, 'no rows → null, never a borrowed stamp');
+  assert.equal(r2.games.find((g) => g.game_id === 'g1').splits_at, mem[0].fetched_at);
+});
+
+// ── truncation is said, not hidden ────────────────────────────
+test('a read that fills SPLITS_DB_LIMIT publishes truncated:true; a smaller one false; memory never', async () => {
+  const many = [];
+  for (let i = 0; i < 300; i++) many.push(dbRow(`x${i}`, 'total', 'Over', 60, 55, T(-5)));
+  db.setRows('public_splits', many);
+  const r = await mod.buildSplits(url());
+  assert.equal(r.splits_meta.truncated, true, 'games may be missing — say so rather than drop them silently');
+  mod.__resetSplitsCache();
+  db.setRows('public_splits', many.slice(0, 50));
+  assert.equal((await mod.buildSplits(url())).splits_meta.truncated, false);
+  store.setIntel('splits', memRows());
+  assert.equal((await mod.buildSplits(url())).splits_meta.truncated, false);
+});
+
+// ── in-flight dedupe ──────────────────────────────────────────
+test('two clients polling in the same instant after a restart share ONE in-flight select', async () => {
+  db.setRows('public_splits', [dbRow('g1', 'total', 'Over', 64, 52, T(-60))]);
+  const now = Date.now();
+  const [a, b] = await Promise.all([mod.buildSplits(url(), { now }), mod.buildSplits(url('NBA'), { now })]);
+  assert.equal(db.calls.select.length, 1, 'the second caller awaits the first select instead of issuing its own');
+  assert.equal(a.splits_meta.source, 'db'); assert.equal(b.splits_meta.source, 'db');
+  assert.equal(b.games.find((g) => g.game_id === 'g1').splits.length, 1, 'and sees its rows');
+});
+
 test('?sport= filters the board but off-slate is counted against the whole slate', async () => {
   store.setGames([game('NBA', 'g1', { total: 220.5 }), game('NFL', 'n1', { total: 44.5 })]);
   db.setRows('public_splits', [dbRow('n1', 'total', 'Over', 70, 60, T(-5)), dbRow('zz', 'total', 'Over', 70, 60, T(-5))]);

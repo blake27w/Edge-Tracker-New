@@ -7075,7 +7075,9 @@ function sigBanner(kind,o){
     // naming the category.
     txt=o.text||('NOT FIRING — '+(o.reason||'the mechanism is not producing')+'. Blank because the signal isn\'t being produced, not because there is nothing to see.');
   } else if(kind==='failed'){
-    txt='Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.');
+    // o.text, as for `off`: a panel that knows WHICH read failed (the route
+    // answered but its own DB read did not) names that, not the route.
+    txt=o.text||('Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.'));
   } else return '';
   // The kind is the class: wine for off/failed, brass for stale, mint-framed
   // for the two quiet states. Colour never carries the distinction alone.
@@ -8264,8 +8266,13 @@ function splitsFacts(){
   books.sort(function(a,b){return a.label.localeCompare(b.label)});
   var book=seen[state.splitsBook]?state.splitsBook:SPLITS_CONSENSUS;
   var st=sigState(src,b,nRows,SPLITS_BOUND,meta.at||null);
+  // The route answered but its own public_splits fallback read failed
+  // (source null + db_error): that is a FAILED read, not "0 rows" — house
+  // rule 2, "nothing happened" and "I cannot see it" must never look the same.
+  var dbFail=!!(b&&meta.source===null&&meta.db_error);
+  if(st!=='failed'&&st!=='loading'&&dbFail)st='failed';
   if(st!=='failed'&&st!=='loading'&&blocked)st='off';
-  return {st:st,b:b,games:games,all:all,meta:meta,blocked:blocked,at:meta.at||null,books:books,book:book,run:run,src:src,nRows:nRows};
+  return {st:st,b:b,games:games,all:all,meta:meta,blocked:blocked,dbFail:dbFail,at:meta.at||null,books:books,book:book,run:run,src:src,nRows:nRows};
 }
 // Both sides of one reported split. The row stores ONE side (the public
 // side); the other is 100 − pct, computed only when the pct is non-null.
@@ -8348,7 +8355,7 @@ function splitsRow(name,ln,s,market,g,chips,fmt){
   h+='</div>';
   return h;
 }
-function renderSplitsCard(g,book,bookLabel){
+function renderSplitsCard(g,book,bookLabel,boardAt){
   var L=splitsLines(g,book),M=splitsMoves(g,book);
   var by={};(g.splits||[]).forEach(function(s){if(s&&s.market&&!by[s.market])by[s.market]=s;});
   var live=!!g.live;
@@ -8362,6 +8369,13 @@ function renderSplitsCard(g,book,bookLabel){
   h+=splitsRow('TOTAL',L.total,by.total||null,'total',g,M.total,sigNum);
   h+=splitsRow('ML',L.ml,by.ml||null,'ml',g,[],sigSgn);
   if(!(g.splits||[]).length)h+='<div class="sh-cap">no split for this game</div>';
+  // The DB fallback keeps each game's NEWEST batch across ~5 batches, so this
+  // card's percentages can be a batch or more older than the board's `at`
+  // (which the stale banner keys off). Say so when the gap exceeds one cadence.
+  else if(g.splits_at&&boardAt){
+    var _gap=Date.parse(boardAt)-Date.parse(g.splits_at);
+    if(_gap===_gap&&_gap>(AGENT_STALE_MS['public-splits']||14400000))h+='<div class="sh-cap sp-age">this game\'s batch is '+esc(agentAgo(g.splits_at))+' — older than the board\'s</div>';
+  }
   // Per-book line board — the only thing that scrolls sideways, inside its own box.
   var bk=g.books||[];
   if(bk.length){
@@ -8371,7 +8385,7 @@ function renderSplitsCard(g,book,bookLabel){
     var maxO=Math.max.apply(null,bk.map(function(x){return x.over_price!=null?x.over_price:-1e9}));
     var maxU=Math.max.apply(null,bk.map(function(x){return x.under_price!=null?x.under_price:-1e9}));
     var g1='#34d399';
-    h+='<details class="sh-books"><summary>per-book lines · '+bk.length+'</summary><div class="sigtbl-wrap"><table class="sigtbl">';
+    h+='<details class="sh-books" data-game="'+esc(g.game_id||'')+'"><summary>per-book lines · '+bk.length+'</summary><div class="sigtbl-wrap"><table class="sigtbl">';
     h+='<tr><th class="l">Book</th><th>'+esc(g.away||'A')+'</th><th>'+esc(g.home||'H')+'</th><th>Spread</th><th>O</th><th>U</th></tr>';
     bk.forEach(function(x){
       h+='<tr'+(x.key&&x.key===book?' class="on"':'')+'>';
@@ -8409,7 +8423,10 @@ function renderSplitsBody(){
   h+='</div>';
   var bookLabel=F.book===SPLITS_CONSENSUS?'Consensus':((F.books.filter(function(b){return b.key===F.book})[0]||{}).label||F.book);
   // Banners
-  if(st==='failed')h+=sigBanner('failed',sigFailOpts('/splits',src));
+  if(st==='failed'){
+    if(F.dbFail&&src.ok!==false)h+=sigBanner('failed',{text:'Read failed — the backend answered, but its public_splits fallback read failed (memory is empty after a restart and Postgres did not answer; retried every 10 min). Percentages are missing because the read failed, not because the public is quiet. Lines below still update.'});
+    else h+=sigBanner('failed',sigFailOpts('/splits',src));
+  }
   if(st==='loading')return h+sigBanner('loading',{});
   if(st==='off'){
     var r=F.blocked;
@@ -8424,7 +8441,7 @@ function renderSplitsBody(){
   // Cards
   if(games.length){
     h+='<div class="sp-cards">';
-    games.forEach(function(g){h+=renderSplitsCard(g,F.book,bookLabel)});
+    games.forEach(function(g){h+=renderSplitsCard(g,F.book,bookLabel,F.at)});
     h+='</div>';
   } else if(!F.all.length){
     h+='<div class="sh-cap">No slate loaded — lines appear once games are in the next-36h window.</div>';
@@ -8448,12 +8465,39 @@ function renderSplitsContent(){
   h+='<span><i class="sh-dot'+dot+'"></i><span class="sh-lnk" onclick="agentSetApiUrl()">backend</span> <b'+(hsrc.ok===false?' class="off"':'')+'>'+link+'</b></span>';
   h+='<span>'+(state.agentsLastLoad?('updated <b>'+esc(agentAgo(state.agentsLastLoad))+'</b>'):(state.agentsCachedAt?'refreshing…':'loading…'))+'</span>';
   // 4 hours is the design, not an alarm: inside the bound the strip just says the batch age.
-  h+='<span>'+(meta.at?('batch <b>'+esc(sigDur(meta.at))+'</b> · every 4h'):'batch <b>—</b> · every 4h')+(meta.source==='db'?' · restored from Postgres after a restart':'')+'</span>';
+  // Which path produced the rows: memory (the agent ran in this process), db
+  // (restored after a restart), none (no rows anywhere, or the read failed).
+  var srcWord=meta.source==='memory'||meta.source==='db'?meta.source:(meta.source===null?'none':'—');
+  h+='<span>'+(meta.at?('batch <b>'+esc(sigDur(meta.at))+'</b> · every 4h'):'batch <b>—</b> · every 4h')+' · source <b'+(meta.db_error?' class="off"':'')+'>'+srcWord+'</b>'+(meta.source==='db'?' · restored from Postgres after a restart':'')+(meta.truncated?' · DB read capped at 300 rows — games may be missing':'')+'</span>';
   h+='<span class="right"><span class="sh-lnk" onclick="loadAgentsData()">refresh</span></span>';
   h+='</div>';
   h+=renderSplitsBody();
   h+='</div>';
-  $('sport-selector').innerHTML=h;
+  // The 30-s poll lands here and innerHTML replacement would snap every open
+  // <details> shut and reset the book-chip row's scroll — on exactly the
+  // elements the manual check uses. Read the DOM's state before the paint
+  // and put it back after; the poll itself is untouched.
+  var host=$('sport-selector');
+  splitsDomSave(host);
+  host.innerHTML=h;
+  splitsDomRestore(host);
+}
+// Open <details> per game_id and the chip row's scrollLeft, module-level (not
+// state: a per-paint convenience, never saved or synced).
+var _splitsDom={open:{},scroll:0};
+function splitsDomSave(host){
+  if(!host)return;
+  var ds=host.querySelectorAll('details.sh-books[data-game]');
+  for(var i=0;i<ds.length;i++){var id=ds[i].getAttribute('data-game');if(id){if(ds[i].open)_splitsDom.open[id]=1;else delete _splitsDom.open[id];}}
+  var row=host.querySelector('.sp-books');
+  if(row)_splitsDom.scroll=row.scrollLeft||0;
+}
+function splitsDomRestore(host){
+  if(!host)return;
+  var ds=host.querySelectorAll('details.sh-books[data-game]');
+  for(var j=0;j<ds.length;j++){if(_splitsDom.open[ds[j].getAttribute('data-game')])ds[j].open=true;}
+  var row=host.querySelector('.sp-books');
+  if(row&&_splitsDom.scroll)row.scrollLeft=_splitsDom.scroll;
 }
 // Plays → 📊 Splits chip: one renderer. The body is the Splits tab's (sigEpisodeCard pattern, D83).
 function renderSplitsBoard(){return '<div class="sighud">'+renderSplitsBody()+'</div>';}

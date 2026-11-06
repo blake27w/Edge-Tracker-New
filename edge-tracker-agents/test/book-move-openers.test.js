@@ -1,12 +1,15 @@
 // ══════════════════════════════════════════════════════════════
 // Per-book openers inside book-move (docs/specs/splits-tab.md).
 //
-// A book's opener is its FIRST line_snapshots row on file for that game ×
-// market. What these pin: the query shape (D22 — equality on the index prefix,
-// fetched_at ASC, limit 40, no `in:`, no `gte`), that ONLY the first batch
-// counts, that a book absent from that batch is absent from the object
-// (never 0, never the consensus opener), that a game is memoised for the
-// process lifetime, and that a failed read writes no memo so it is retried.
+// A book's opener is THAT BOOK'S OWN oldest line_snapshots row on file for
+// that game × market — never "the rows sharing the oldest stamp": fetched_at
+// is per INSERT statement and a chunked run (D99) carries several. What these
+// pin: the query shape (D22 — equality on the index prefix, fetched_at ASC,
+// limit 60, no `in:`, no `gte`), that each book's oldest row counts whatever
+// batch it sits in, that a book absent from the whole window is absent from
+// the object (never 0, never the consensus opener), that a non-empty result is
+// memoised for the process lifetime, and that a failed OR empty read writes no
+// memo so it is retried.
 // ══════════════════════════════════════════════════════════════
 import { test, mock, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,9 +18,10 @@ import { fakeDb, fakeLogger } from './helpers/fake-db.js';
 const T = (minsFromNow) => new Date(Date.now() + minsFromNow * 60_000).toISOString();
 const g = () => ({ sport: 'NFL', game_id: 'g1', home: 'Kansas City Chiefs', away: 'Denver Broncos', commence_time: T(180), books: {} });
 
-// Two batches: DraftKings opens -3 and moves to -3.5; FanDuel appears only in
-// the second batch; BetMGM's first-batch line is blank (Postgres numerics come
-// back as strings — the fixture uses them too).
+// Two batches: DraftKings opens -3 and moves to -3.5; FanDuel first appears
+// in the second batch (so ITS opener is -3.5); BetMGM's only line is blank;
+// Caesars never posts (Postgres numerics come back as strings — the fixture
+// uses them too).
 const B1 = T(-600), B2 = T(-300);
 const snap = (book, market, side, line, price, fetched_at) => ({ game_id: 'g1', book, market, side, line, price, fetched_at });
 const rows = () => [
@@ -56,7 +60,7 @@ beforeEach(() => {
 const snapSelects = () => db.calls.select.filter((c) => c.table === 'line_snapshots');
 
 // ── (a) query shape ───────────────────────────────────────────
-test('one select per market in spreads/totals/h2h: match {game_id, market}, fetched_at ascending===true, limit===40, no in:, no gte', async () => {
+test('one select per market in spreads/totals/h2h: match {game_id, market}, fetched_at ascending===true, limit===60, no in:, no gte', async () => {
   const r = await mod.openersFor(g());
   assert.equal(r.failed, false);
   assert.equal(r.selects, 3);
@@ -66,24 +70,43 @@ test('one select per market in spreads/totals/h2h: match {game_id, market}, fetc
     assert.equal(q.opts.match.game_id, 'g1', 'equality on the index prefix (D22)');
     assert.equal(q.opts.order.column, 'fetched_at');
     assert.equal(q.opts.order.ascending, true, 'the first batch is the OLDEST — asc, or the limit truncates it away');
-    assert.equal(q.opts.limit, 40);
+    assert.equal(q.opts.limit, 60, 'one run is ≤ 22 rows per market (11 books × 2 sides) — 60 holds a chunk-split first run');
     assert.equal(q.opts.in, undefined, 'no in:');
     assert.equal(q.opts.gte, undefined, 'no gte — the opener may be older than any window');
   }
 });
 
-// ── (b) first batch only ──────────────────────────────────────
-test('only the first batch counts: DraftKings -3 in batch 1, -3.5 in batch 2 → spread === -3; the total likewise', async () => {
+// ── (b) each book's own oldest row ────────────────────────────
+test("each book's OWN oldest row counts: DraftKings -3 in batch 1, -3.5 in batch 2 → spread === -3; FanDuel's first row is batch 2 → -3.5", async () => {
   const { books } = await mod.openersFor(g());
   assert.equal(books.draftkings.spread, -3);
   assert.equal(books.draftkings.total, 44.5);
   assert.equal(books.draftkings.ml, -150, 'h2h opener is the HOME price');
+  assert.equal(books.fanduel.spread, -3.5, 'a book first seen in a later batch gets its own first line, not nothing');
+});
+
+// The D99 case: one odds run written in SNAPSHOT_CHUNK inserts, each with its
+// own default-now() stamp, splits a game × market across two stamps. Every
+// book in that run has its opener on file — none is "absent until kickoff".
+test('a chunk-split first run (two stamps 800 ms apart) yields an opener for EVERY book in it', async () => {
+  const base = Date.now() - 600 * 60_000;
+  const s1 = new Date(base + 100).toISOString(), s2 = new Date(base + 900).toISOString();
+  db.setRows('line_snapshots', [
+    snap('draftkings', 'spreads', 'Kansas City Chiefs', '-3', -110, s1),
+    snap('draftkings', 'spreads', 'Denver Broncos', '3', -110, s1),
+    snap('fanduel', 'spreads', 'Kansas City Chiefs', '-3.5', -110, s2),
+    snap('betmgm', 'spreads', 'Kansas City Chiefs', '-3', -115, s2),
+    snap('fanduel', 'spreads', 'Kansas City Chiefs', '-4', -110, T(-300)), // a later move — not the opener
+  ]);
+  const { books } = await mod.openersFor(g());
+  assert.deepEqual(books, { draftkings: { spread: -3 }, fanduel: { spread: -3.5 }, betmgm: { spread: -3 } },
+    'books after the chunk boundary must not read as absent');
 });
 
 // ── (c) absent is absent — never 0 ────────────────────────────
-test('a book missing from the first batch is not a key, and a blank line yields no field — never 0', async () => {
+test('a book absent from the whole window is not a key, and a blank line yields no field — never 0', async () => {
   const { books } = await mod.openersFor(g());
-  assert.equal('fanduel' in books, false, 'FanDuel first appears in batch 2 → no opener on file');
+  assert.equal('caesars' in books, false, 'Caesars never posted → no opener on file');
   assert.ok(!('betmgm' in books) || !('spread' in books.betmgm), "Number('') is 0 — a blank line is no opener");
   for (const b of Object.values(books)) for (const v of Object.values(b)) assert.notEqual(v, 0);
   assert.notEqual(books.draftkings.spread, 0);
@@ -93,7 +116,7 @@ test('a book missing from the first batch is not a key, and a blank line yields 
 test('with a consensus opener seeded on the line-move slot, a book with no snapshot row still has no spread', async () => {
   store.setNflLineMove({ openers: { g1: { spread: -2.5, total: 44, ml: -140 } } });
   const { books } = await mod.openersFor(g());
-  assert.equal('fanduel' in books, false, 'the consensus opener never appears in the per-book object');
+  assert.equal('caesars' in books, false, 'the consensus opener never appears in the per-book object');
   assert.equal(books.draftkings.spread, -3, 'DraftKings keeps its OWN first line, not the consensus -2.5');
   for (const b of Object.values(books)) assert.notEqual(b.spread, -2.5);
 });
@@ -122,11 +145,18 @@ test('a failed select → failed:true, no memo, and the next call selects again'
   assert.equal(r2.books.draftkings.spread, -3);
 });
 
-test('a game with no snapshot rows at all memoises an empty object (no books), not zeros', async () => {
+// A lost snapshot chunk (the D68/D99 timeout path) leaves 0 rows at THIS run
+// and the rows land minutes later; memoising {} would hide them until kickoff.
+test('a game with no snapshot rows yet is NOT memoised: seed [] → {} → seed a row → the row appears', async () => {
   db.setRows('line_snapshots', []);
   const { books, failed } = await mod.openersFor(g());
   assert.equal(failed, false);
-  assert.deepEqual(books, {});
+  assert.deepEqual(books, {}, 'no books, no zeros');
+  assert.equal(snapSelects().length, 3);
+  db.setRows('line_snapshots', [snap('draftkings', 'spreads', 'Kansas City Chiefs', '-3', -110, T(-5))]);
+  const r2 = await mod.openersFor(g());
+  assert.equal(snapSelects().length, 6, 'an empty read is retried next run — bounded by the per-run cap');
+  assert.equal(r2.books.draftkings.spread, -3, 'the late-landing chunk is seen');
   await mod.openersFor(g());
-  assert.equal(snapSelects().length, 3, 'memoised too — the cost is paid once per game');
+  assert.equal(snapSelects().length, 6, 'and the non-empty result IS memoised');
 });

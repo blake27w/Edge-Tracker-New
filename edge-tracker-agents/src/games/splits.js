@@ -13,8 +13,13 @@
 // otherwise ONE bounded select (newest SPLITS_DB_LIMIT rows by fetched_at desc,
 // riding public_splits_fetched_idx) behind a SPLITS_DB_TTL_MS in-process
 // cache — the route is polled every 30 s and a failed read is cached for the
-// same TTL so a timing-out table is not hammered 120×/hour. `splits_meta.source`
-// says which path produced the rows.
+// same TTL so a timing-out table is not hammered 120×/hour; two clients
+// polling in the same instant after a restart share ONE in-flight select.
+// `splits_meta.source` says which path produced the rows, `truncated` says the
+// read hit SPLITS_DB_LIMIT (games may be missing, not silently dropped), and
+// each game carries its own `splits_at` because the fallback keeps each
+// game's NEWEST batch across ~5 batches — one board can mix a 16-h-old game
+// with a 10-min-old one while `at` reads the newest.
 //
 // Percentages are MARKET-WIDE (public_splits has no book column — D53/D22):
 // a `splits[]` row carries no `book` field, by design. `books[]` gains a
@@ -35,8 +40,9 @@ export const SPLITS_DB_LIMIT = 300;          // ~5 batches of ≤ 60 rows
 export const SPLITS_DB_TTL_MS = 10 * 60_000; // one DB read per 10 min, success or failure
 const SPLITS_COLS = 'game_id,sport,market,side,bets_pct,handle_pct,divergence,rlm,freeze,pileon,net_move,fetched_at';
 
-let dbCache = { at: 0, rows: [], error: false };
-export function __resetSplitsCache() { dbCache = { at: 0, rows: [], error: false }; }
+let dbCache = { at: 0, rows: [], error: false, truncated: false };
+let inflight = null; // the one select in progress, shared by concurrent callers
+export function __resetSplitsCache() { dbCache = { at: 0, rows: [], error: false, truncated: false }; inflight = null; }
 
 // A number, or a non-blank numeric string (Postgres numerics arrive as
 // strings), else null. Never Number(null) — that is a finite 0 (house rule).
@@ -66,17 +72,22 @@ async function splitsRows(dbi, now) {
   if (mem.length) return { rows: mem, source: 'memory', db_error: false };
   if (!dbi.isConnected()) return { rows: [], source: null, db_error: false };
   if (now - dbCache.at >= SPLITS_DB_TTL_MS) {
-    try {
-      const rows = await dbi.select('public_splits', SPLITS_COLS, {
-        order: { column: 'fetched_at', ascending: false }, limit: SPLITS_DB_LIMIT,
-      });
-      dbCache = { at: now, rows: newestPerGame(rows), error: false };
-    } catch (e) {
-      logger.warn('splits', `public_splits read failed: ${e.message}`);
-      dbCache = { at: now, rows: [], error: true };
+    if (!inflight) {
+      inflight = (async () => {
+        try {
+          const rows = await dbi.select('public_splits', SPLITS_COLS, {
+            order: { column: 'fetched_at', ascending: false }, limit: SPLITS_DB_LIMIT,
+          });
+          dbCache = { at: now, rows: newestPerGame(rows), error: false, truncated: rows.length >= SPLITS_DB_LIMIT };
+        } catch (e) {
+          logger.warn('splits', `public_splits read failed: ${e.message}`);
+          dbCache = { at: now, rows: [], error: true, truncated: false };
+        } finally { inflight = null; }
+      })();
     }
+    await inflight;
   }
-  return { rows: dbCache.rows, source: dbCache.error ? null : 'db', db_error: dbCache.error };
+  return { rows: dbCache.rows, source: dbCache.error ? null : 'db', db_error: dbCache.error, truncated: dbCache.truncated };
 }
 
 export async function buildSplits(url, deps = {}) {
@@ -90,12 +101,13 @@ export async function buildSplits(url, deps = {}) {
   const openers = (getNflLineMove() || {}).openers || {};
 
   let at = null, offslate = 0;
-  const byGame = new Map();
+  const byGame = new Map(), atGame = new Map(); // atGame: each game's own newest fetched_at
   for (const s of src.rows) {
     if (!s || !s.game_id) continue;
     if (s.fetched_at && (!at || s.fetched_at > at)) at = s.fetched_at;
     if (!onSlate.has(s.game_id)) { offslate++; continue; }
     (byGame.get(s.game_id) || byGame.set(s.game_id, []).get(s.game_id)).push(s);
+    if (s.fetched_at && (!atGame.has(s.game_id) || s.fetched_at > atGame.get(s.game_id))) atGame.set(s.game_id, s.fetched_at);
   }
 
   const out = games.map((g) => {
@@ -125,13 +137,13 @@ export async function buildSplits(url, deps = {}) {
     return {
       game_id: g.game_id, sport: g.sport, matchup: `${g.away} @ ${g.home}`, home: g.home, away: g.away,
       commence_time: g.commence_time, live: !!(g.commence_time && Date.parse(g.commence_time) <= now),
-      open, current, splits: gs, books,
+      open, current, splits: gs, splits_at: atGame.get(g.game_id) || null, books,
     };
   }).filter((g) => g.books.length);
   out.sort((a, b) => new Date(a.commence_time || 0) - new Date(b.commence_time || 0));
   return {
     count: out.length, games: out,
-    splits_meta: { source: src.source, at, rows: src.rows.length, offslate, db_error: src.db_error },
+    splits_meta: { source: src.source, at, rows: src.rows.length, offslate, db_error: src.db_error, truncated: !!src.truncated },
   };
 }
 
