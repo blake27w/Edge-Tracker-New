@@ -33,19 +33,24 @@ const MIN = 60_000;
 const BOOKS = ['dk', 'fd', 'mgm', 'czr', 'pn', 'br', 'wh', 'esp'];
 const iso = (ms) => new Date(ms).toISOString();
 
-let db, degraded, run;
+let db, degraded, run, config, store;
 
 before(async () => {
   // The tennis category below depends on close-capture being OFF, which is the
   // production default; pin it so a developer's shell env can't flip the test.
+  // `config` is imported AFTER the pin, because it reads the env at load time.
   delete process.env.TENNIS_CLOSE_CAPTURE;
+  config = (await import('../src/config/index.js')).default;
   db = fakeDb();
   degraded = [];
   const { logger } = fakeLogger();
+  // The real store is kept alongside the recording stub so the TTL/clear
+  // semantics the watchdog relies on can be asserted against the real thing.
+  store = await import('../src/store/index.js');
   mock.module(import.meta.resolve('../src/db/index.js'), { defaultExport: db, namedExports: { isConnected: db.isConnected, isMissingRelation: db.isMissingRelation } });
   mock.module(import.meta.resolve('../src/utils/index.js'), { namedExports: { logger } });
   mock.module(import.meta.resolve('../src/store/index.js'), {
-    namedExports: { setClvReport: () => {}, reportDegraded: (k, d) => degraded.push({ k, d }) },
+    namedExports: { setClvReport: () => {}, reportDegraded: (k, d) => { degraded.push({ k, d }); store.reportDegraded(k, d); } },
   });
   run = (await import('../src/agents/clv-tracker/index.js')).default.run;
 });
@@ -130,13 +135,24 @@ test('the production window: 7 live NFL plays + 8 single-batch tennis plays must
   db.setRows('line_snapshots', snapshots);
   db.setRows('monitor_scores', plays);
   db.setRows('clv_records', []);
+  db.calls.select.length = 0;
 
   const r = await run();
+
+  // The projection is part of the fix. fakeDb records `cols` but does not
+  // apply them, so a row keeps `live` whatever run() asked for — dropping it
+  // from the select would pass every assertion below on this fake while
+  // PostgREST handed production rows with no `live` at all. Pin the query.
+  const playsQ = db.calls.select.find((c) => c.table === 'monitor_scores');
+  assert.ok(playsQ, 'run() reads monitor_scores');
+  assert.ok(playsQ.cols.split(',').map((c) => c.trim()).includes('live'),
+    `monitor_scores projection must carry \`live\` — got '${playsQ.cols}'`);
 
   assert.deepEqual(alarms(), [],
     `no coverage defect exists — every game has a batch every 3 minutes — yet got: ${JSON.stringify(alarms())} (summary: ${r.summary})`);
   assert.equal(r.data.unmeasurable, 8,
     `only the eight single-batch tennis plays lack a close; a live bet is out of scope, not unmeasurable (summary: ${r.summary})`);
+  assert.equal(r.data.inPlay, 7, 'and the seven live plays are reported for what they are');
 });
 
 test('a window of nothing but live in-game plays never alarms on snapshot coverage, at any count', async () => {
@@ -243,4 +259,234 @@ test('a game with no commence_time is unmeasurable, never a fabricated close fro
   assert.equal(r.data.noCommence, 12, `summary: ${r.summary}`);
   assert.equal(r.data.unmeasurable, 12);
   assert.deepEqual(alarms(), [], `no kickoff is not a coverage gap: ${JSON.stringify(degraded)}`);
+});
+
+// ── Regression sweep on the alarm population ─────────────────────
+//
+// The fix narrowed WHO is counted, not the floor. Each category is walked
+// to the edge of ALARM_MIN (12) so that the floor is shown to be real for
+// the one branch that remains, and shown NOT to be reachable through any of
+// the branches that were wrongly feeding it.
+
+// A pre-game NFL spread in a tracked market with exactly ONE snapshot batch:
+// the play was logged seconds after the only batch the game ever got, and
+// the game has since kicked off. capture() finds entry === close and returns
+// `{unmeasurable}` with no further marker — this is the genuine coverage
+// failure the alarm exists for.
+function singleBatchPlay({ id, kickoff, batchAt = kickoff - 120 * MIN, sport = 'NFL', live = false, commence = iso(kickoff) }) {
+  const home = `H-${id}`, away = `A-${id}`;
+  const snaps = BOOKS.map((book) => ({
+    sport, game_id: id, commence_time: commence, home, away, book,
+    market: 'spreads', side: away, line: 3.5, price: -110, fetched_at: iso(batchAt),
+  }));
+  const play = { sport, game_id: id, market: 'spread', side: away, line: 3.5, scored_at: iso(batchAt + 10_000), qualified: true, live, status: 'pending' };
+  return { snaps, play };
+}
+
+// N single-batch pre-game plays over N games that kicked off 1-N hours ago.
+function singleBatchWindow(n, now) {
+  const snapshots = [], plays = [];
+  for (let i = 0; i < n; i++) {
+    const g = singleBatchPlay({ id: `sb${i}`, kickoff: now - (i + 1) * 60 * MIN });
+    snapshots.push(...g.snaps);
+    plays.push(g.play);
+  }
+  return { snapshots, plays };
+}
+
+async function runWith({ snapshots, plays }) {
+  degraded.length = 0;
+  for (const d of store.getDegraded()) store.clearDegraded(d.key);
+  db.setRows('line_snapshots', snapshots);
+  db.setRows('monitor_scores', plays);
+  db.setRows('clv_records', []);
+  db.calls.upsert.length = 0;
+  return run();
+}
+const clvUpserts = () => db.calls.upsert.filter((c) => c.table === 'clv_records');
+const counts = (r) => {
+  const { inPlay, untracked, noCloseCapture, noCommence, unmeasurable, recorded } = r.data;
+  return { inPlay, untracked, noCloseCapture, noCommence, unmeasurable, recorded };
+};
+
+test('twelve pre-game plays in a tracked market with one batch only DO alarm — the floor is real', async () => {
+  const now = Date.now();
+  const w = singleBatchWindow(12, now);
+  const r = await runWith(w);
+
+  assert.equal(alarms().length, 1, `the coverage branch still fires at the floor (summary: ${r.summary}; degraded: ${JSON.stringify(degraded)})`);
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 12, recorded: 0 });
+  assert.equal(clvUpserts().length, 0, 'nothing fabricated');
+
+  // The message claims only what the surviving branch measures.
+  const msg = alarms()[0].d;
+  assert.doesNotMatch(msg, /only one snapshot batch/, `the old wording blamed coverage for every category: ${msg}`);
+  assert.match(msg, /^12 pre-game plays past kickoff with no pre-kickoff batch distinct from entry/, msg);
+});
+
+test('eleven such plays do not alarm — ALARM_MIN is unchanged at 12', async () => {
+  const now = Date.now();
+  const r = await runWith(singleBatchWindow(11, now));
+  assert.deepEqual(alarms(), [], `summary: ${r.summary}`);
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 11, recorded: 0 });
+});
+
+test('twelve where one is LIVE: eleven in the population, no alarm, no row for the live play', async () => {
+  const now = Date.now();
+  const w = singleBatchWindow(11, now);
+  // A live bet on a densely-covered game, scored 20 minutes into it.
+  const g = { gameId: 'lv', home: 'Home LV', away: 'Away LV', kickoff: now - 60 * MIN };
+  w.snapshots.push(...nflSnapshots({ ...g, until: now - 2 * MIN }));
+  w.plays.push(livePlays({ ...g, offsetsMin: [20, 0, 0, 0] })[0]);
+  assert.equal(w.plays.length, 12);
+
+  const r = await runWith(w);
+
+  assert.deepEqual(alarms(), [], `summary: ${r.summary}; degraded: ${JSON.stringify(degraded)}`);
+  assert.deepEqual(counts(r), { inPlay: 1, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 11, recorded: 0 });
+  assert.equal(clvUpserts().length, 0, 'a live play must never produce a clv_records row');
+  assert.equal(db.calls.select.filter((c) => c.table === 'line_snapshots' && c.opts.match?.game_id === 'lv').length, 0,
+    'and no snapshot query is spent on it');
+});
+
+test('twelve where one is TENNIS without close-capture: counted as noCloseCapture, no alarm', async () => {
+  assert.equal(config.tennisCloseCapture, false, 'precondition: the production default');
+  const now = Date.now();
+  const w = singleBatchWindow(11, now);
+  const ingestAt = now - 20 * 60 * MIN;
+  const t = tennisMatch({ id: 'tn', p1: 'Pa', p2: 'Pb', ingestAt, startsAt: now - 30 * MIN });
+  w.snapshots.push(...t.snaps);
+  w.plays.push(t.play);
+  assert.equal(w.plays.length, 12);
+
+  const r = await runWith(w);
+
+  assert.deepEqual(alarms(), [], `summary: ${r.summary}; degraded: ${JSON.stringify(degraded)}`);
+  // Tennis is genuinely unmeasurable (inside the 12) but explained, so the
+  // alarm population is 12 - 1 = 11.
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 1, noCommence: 0, unmeasurable: 12, recorded: 0 });
+  assert.equal(clvUpserts().length, 0);
+});
+
+test('the same twelve with TENNIS_CLOSE_CAPTURE on: tennis counts normally and the alarm fires', async () => {
+  // With close-capture enabled a single-batch tennis play IS a coverage
+  // failure — the close agent should have written a second batch — so it
+  // belongs in the population and twelve is the floor.
+  const now = Date.now();
+  const w = singleBatchWindow(11, now);
+  const t = tennisMatch({ id: 'tn2', p1: 'Pc', p2: 'Pd', ingestAt: now - 20 * 60 * MIN, startsAt: now - 30 * MIN });
+  w.snapshots.push(...t.snaps);
+  w.plays.push(t.play);
+
+  config.tennisCloseCapture = true;
+  let r;
+  try { r = await runWith(w); } finally { config.tennisCloseCapture = false; }
+
+  assert.equal(alarms().length, 1, `summary: ${r.summary}; degraded: ${JSON.stringify(degraded)}`);
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 12, recorded: 0 });
+  assert.match(alarms()[0].d, /^12 pre-game plays/);
+});
+
+test('twelve where one has null commence_time: counted as noCommence, no alarm, no fabricated close', async () => {
+  const now = Date.now();
+  const w = singleBatchWindow(11, now);
+  // Dense coverage, pre-game play, in-play batches on file with a collapsed
+  // total — exactly the shape the unbounded close query would have scored.
+  const kickoff = now - 90 * MIN;
+  const g = { gameId: 'nc', home: 'Home NC', away: 'Away NC', kickoff };
+  w.snapshots.push(...nflSnapshots({ ...g, until: now - 2 * MIN }).map((s) => ({ ...s, commence_time: null })));
+  w.plays.push({ ...livePlays({ ...g, offsetsMin: [-60, 0, 0, 0] })[2], live: false, scored_at: iso(kickoff - 60 * MIN) });
+  assert.equal(w.plays.length, 12);
+
+  const r = await runWith(w);
+
+  assert.deepEqual(alarms(), [], `summary: ${r.summary}; degraded: ${JSON.stringify(degraded)}`);
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 0, noCommence: 1, unmeasurable: 12, recorded: 0 });
+  assert.equal(clvUpserts().length, 0, 'a null-commence play must never produce a clv_records row');
+});
+
+test('a TENNIS match that DOES have a distinct close is recorded, close-capture flag or not', async () => {
+  // Nothing in the fix may stop a real close from landing: an ingest batch
+  // at -150 and a near-start batch at -170 is a measurable moneyline CLV.
+  const now = Date.now();
+  const startsAt = now - 30 * MIN;
+  const t = tennisMatch({ id: 'tc', p1: 'Pe', p2: 'Pf', ingestAt: now - 20 * 60 * MIN, startsAt });
+  const closeAt = startsAt - 10 * MIN;
+  const close = BOOKS.slice(0, 4).map((book) => ({
+    sport: 'TENNIS', game_id: 'tc', commence_time: iso(startsAt), home: 'Pe', away: 'Pf', book,
+    market: 'h2h', side: 'Pe', line: null, price: -170, fetched_at: iso(closeAt),
+  }));
+
+  const r = await runWith({ snapshots: [...t.snaps, ...close], plays: [t.play] });
+
+  assert.deepEqual(counts(r), { inPlay: 0, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 0, recorded: 1 }, r.summary);
+  assert.equal(clvUpserts().length, 1);
+  const row = clvUpserts()[0].rows[0];
+  assert.equal(row.game_id, 'tc');
+  assert.equal(row.bet_market, 'ml');
+  assert.notEqual(row.entry_at, row.close_at, 'entry and close are distinct batches');
+  assert.equal(row.odds_logged, -150);
+  assert.equal(row.odds_close, -170);
+  assert.equal(row.beat_close, true, 'we took -150 and it closed -170');
+  assert.equal(row.suspect, false);
+  assert.deepEqual(alarms(), []);
+});
+
+test('the clv|unmeasurable key is not refreshed by a run with no alarm, and ages out at the TTL', async () => {
+  // The agent never clears the key itself; the store entry is self-expiring
+  // (DEGRADED_TTL_MS, 90 min) and stays alive only while runs keep
+  // re-reporting it. A fixed population therefore stops feeding it and it
+  // ages out — the watchdog's clear semantics.
+  const now = Date.now();
+  const key = 'clv|unmeasurable';
+  await runWith(singleBatchWindow(12, now));
+  const first = store.getDegraded().find((d) => d.key === key);
+  assert.ok(first, 'the alarm landed in the real store');
+  assert.equal(first.count, 1);
+
+  // A second alarm run keeps it alive and counts it.
+  degraded.length = 0;
+  db.calls.upsert.length = 0;
+  await run();
+  const second = store.getDegraded().find((d) => d.key === key);
+  assert.equal(second.count, 2);
+
+  // A run with no alarm neither clears nor refreshes it.
+  degraded.length = 0;
+  db.setRows('monitor_scores', singleBatchWindow(11, now).plays);
+  await run();
+  assert.deepEqual(alarms(), []);
+  const after = store.getDegraded().find((d) => d.key === key);
+  assert.ok(after, 'a quiet run does not retract the entry early');
+  assert.equal(after.count, 2, 'and does not touch it');
+  assert.equal(after.at, second.at, 'the last-reported stamp is not refreshed by a quiet run');
+  assert.equal(after.since, first.since);
+
+  // ...and at the TTL it is gone, with no agent action required.
+  mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  try {
+    mock.timers.tick(90 * MIN + 1000);
+    assert.equal(store.getDegraded().find((d) => d.key === key), undefined, 'aged out at DEGRADED_TTL_MS');
+  } finally { mock.timers.reset(); }
+});
+
+test('`live` as the column actually delivers it — boolean or null — classifies correctly', async () => {
+  // monitor_scores.live is `boolean default false` (schema.sql) and reaches
+  // run() through supabase-js as JSON true/false/null; a string form cannot
+  // arrive. The gate is a plain truthiness check, so these three shapes are
+  // the contract: only `true` is in-play.
+  const now = Date.now();
+  const w = singleBatchWindow(0, now);
+  const shapes = [true, false, null, undefined];
+  shapes.forEach((live, i) => {
+    const g = singleBatchPlay({ id: `cx${i}`, kickoff: now - (i + 1) * 60 * MIN, live });
+    if (live === undefined) delete g.play.live;
+    w.snapshots.push(...g.snaps);
+    w.plays.push(g.play);
+  });
+
+  const r = await runWith(w);
+
+  assert.deepEqual(counts(r), { inPlay: 1, untracked: 0, noCloseCapture: 0, noCommence: 0, unmeasurable: 3, recorded: 0 }, r.summary);
+  assert.equal(clvUpserts().length, 0);
 });
