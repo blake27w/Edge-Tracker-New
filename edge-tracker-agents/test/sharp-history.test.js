@@ -109,11 +109,24 @@ test('one bounded select per game on the composite index, capped at HIST_MAX_GAM
   assert.equal(res.data.games, 24);
 });
 
-test('the slate is kickoff-windowed: upcoming soonest-first, then started freshest-first', () => {
-  const games = [game('late', 30 * H), game('soon', 5 * MIN), game('later', 60 * MIN),
+test('the slate is kickoff-windowed to the odds fetch horizon: upcoming soonest-first, then started freshest-first', () => {
+  // +30h is inside the window (odds fetches to 36h — a game can carry steam a
+  // day and a half out); +40h is not. Nearest kickoff first, so near games
+  // always win the cap.
+  const games = [game('late', 30 * H), game('tooLate', 40 * H), game('soon', 5 * MIN), game('later', 60 * MIN),
     game('started', -10 * MIN), game('old', -4 * H), game('justStarted', -1 * MIN), { game_id: 'nokick' }];
-  assert.deepEqual(hist.selectSlate(games, now).map((g) => g.game_id), ['soon', 'later', 'justStarted', 'started']);
+  assert.equal(hist.SLATE_AHEAD_H, 36, 'coupled to fetchOdds commenceTimeTo');
+  assert.deepEqual(hist.selectSlate(games, now).map((g) => g.game_id), ['soon', 'later', 'late', 'justStarted', 'started']);
   assert.deepEqual(hist.selectSlate(games, now, 2).map((g) => g.game_id), ['soon', 'later']);
+});
+
+test('a game 30h out with three co-directional rows inside the window is steam', async () => {
+  store.setGames([game('far', 30 * H)]);
+  fdb.setRows('line_movements', BOOKS.map((book, i) => row({ book, game_id: 'far', detected_at: pg(now - i * MIN) })));
+  const res = await sharp.run();
+  assert.match(res.summary, /^1 steam · 3 rows \/ 3 gap-eligible \/ 1 markets · 1 games · history\+memory · window 45m$/, res.summary);
+  assert.equal(store.getIntel('sharp')[0].game_id, 'far');
+  assert.equal(sigInserts().length, 1);
 });
 
 // ── The decisive negative ───────────────────────────────────────
@@ -148,7 +161,8 @@ test('three books, gap 10, within three minutes → one steam signal with its wi
   assert.equal(sg[0].signal_type, 'steam');
   assert.deepEqual(sg[0].books, [...BOOKS].sort());
   assert.equal(sg[0].side, 'Under', 'a coordinated DOWN move on a total is Under money');
-  // Intersection of [t-11,t-1], [t-12,t-2], [t-13,t-3] is [t-11,t-3]: 8 minutes.
+  // Rows at t, t-1, t-2 with gap 10: [t-10,t], [t-11,t-1], [t-12,t-2]
+  // intersect in [t-10,t-2]: 8 minutes.
   assert.match(sg[0].detail, /^3 books moved totals Over down \(avg 1\.0\) within 8m · history$/, sg[0].detail);
   assert.equal(sigInserts().length, 1);
   assert.equal(sigInserts()[0].rows.length, 1);
@@ -208,7 +222,7 @@ test('a window where no row carries gap_min is a writer fault: blind, and blocke
   fdb.setRows('line_movements', BOOKS.map((book) => row({ book, gap_min: null })));
   const res = await sharp.run();
   assert.equal(res.summary, 'blind — 3 rows in the last 45m, none carry gap_min (writer is stripping it — see odds log)');
-  assert.equal(res.blocked, true);
+  assert.equal(res.blocked, 'no row carries gap_min', 'a constant reason — the orchestrator keys the streak on it');
   assert.equal(res.data.preFix, 3);
   assert.equal(sigInserts().length, 0);
 });
@@ -222,16 +236,17 @@ test('a persistent read failure is reported as blocked after 3 runs, then probes
   for (const n of [1, 2]) {
     await orch.runAgentOnceForTest(sharp);
     const h = orch.getHealth().find((x) => x.name === 'sharp');
-    assert.equal(h.lastResult, 'blind — history read failed for 3/3 games', `run ${n} is visibly blind`);
+    assert.equal(h.lastResult, 'blind — history read failed for 3/3 games · memory-only: 0 steam · 0 rows / 0 gap-eligible', `run ${n} is visibly blind`);
     assert.equal(h.blockedRuns, 0, `run ${n} is not yet blocked — one timeout is transient`);
     assert.equal(degraded().length, 0);
   }
   await orch.runAgentOnceForTest(sharp);
   const h3 = orch.getHealth().find((x) => x.name === 'sharp');
-  assert.equal(h3.lastResult, 'blind — history read failed for 3/3 games, 3 consecutive runs');
+  assert.equal(h3.lastResult, 'blind — history read failed for 3/3 games, 3 consecutive runs · memory-only: 0 steam · 0 rows / 0 gap-eligible');
+  assert.equal(h3.blockedReason, 'history read failed', 'the reason is the constant literal, not the counting summary');
   assert.equal(h3.blockedRuns, 1, 'run 3 opts in via blocked: true');
   assert.equal(degraded().length, 1, 'the orchestrator reported it — no reportDegraded of sharp\'s own');
-  assert.match(degraded()[0].detail, /not doing its job — blind — history read failed/);
+  assert.match(degraded()[0].detail, /^not doing its job — history read failed \(1 consecutive runs since /);
   await watchdog.run();
   const issue = ((store.getWatchdog() || {}).issues || []).find((i) => i.key === 'data|sharp|blocked');
   assert.ok(issue, 'the watchdog sees it');
@@ -247,13 +262,61 @@ test('a persistent read failure is reported as blocked after 3 runs, then probes
   fdb.calls.select.length = 0;
   await orch.runAgentOnceForTest(sharp);
   const h5 = orch.getHealth().find((x) => x.name === 'sharp');
-  assert.match(h5.lastResult, /^0 steam · 0 movement rows in the last 45m across 3 games · history\+memory$/);
+  assert.match(h5.lastResult, /^0 steam · 0 movement rows in the last 45m across 1 of 3 games \(probe\) · history\+memory$/,
+    'the probe run says what it queried, not the whole slate');
+  assert.equal(h5.blockedReason, null);
   assert.equal(h5.blockedRuns, 0);
   assert.equal(degraded().length, 0, 'retracted on the first unblocked run');
   assert.equal(histSelects().length, 1, 'the probe run is the one that succeeded; the full slate resumes next run');
   fdb.calls.select.length = 0;
   await sharp.run();
   assert.equal(histSelects().length, 3, 'breaker closed — the full slate again');
+});
+
+test('the blocked reason is constant: blockedRuns climbs and blockedSince stays pinned across failed runs', async () => {
+  store.setGames([game('g1'), game('g2', 25 * MIN), game('g3', 30 * MIN)]);
+  fdb.fail['select:line_movements'] = new Error('timeout');
+  const health = () => orch.getHealth().find((x) => x.name === 'sharp');
+  for (let n = 1; n <= 2; n++) await orch.runAgentOnceForTest(sharp);
+  await orch.runAgentOnceForTest(sharp);
+  const first = health();
+  assert.equal(first.blockedRuns, 1);
+  assert.ok(first.blockedSince, 'the streak start is latched on the first blocked run');
+  // A reason that interpolated `N consecutive runs` or `N/N games` would be a
+  // NEW fault to the orchestrator every run: blockedRuns 1 forever, blockedSince
+  // === lastRunAt, clearDegraded/reportDegraded churn every 5 minutes.
+  for (let n = 2; n <= 4; n++) {
+    await orch.runAgentOnceForTest(sharp);
+    const h = health();
+    assert.equal(h.blockedRuns, n, `run ${n + 2}: the streak climbs`);
+    assert.equal(h.blockedSince, first.blockedSince, `run ${n + 2}: blockedSince stays pinned to the first blocked run`);
+    assert.equal(h.blockedReason, 'history read failed');
+    assert.match(h.lastResult, new RegExp(`, ${n + 2} consecutive runs · memory-only`), 'the count still lives in the summary');
+  }
+  const deg = store.getDegraded().filter((d) => d.key === 'sharp|blocked');
+  assert.equal(deg.length, 1);
+  assert.match(deg[0].detail, /\(4 consecutive runs since /);
+});
+
+test('a failed history read does not discard the memory feed: memory-only steam still publishes, blind alongside', async () => {
+  // A DB that times out must not publish LESS than a DB that is absent.
+  fdb.fail['select:line_movements'] = new Error('timeout');
+  store.setIntel('movements', BOOKS.map((book) => ({ ...row({ book }), gap_min: 10, detected_at: iso(now - MIN) })));
+  const r1 = await sharp.run();
+  assert.equal(r1.summary, 'blind — history read failed for 1/1 games · memory-only: 1 steam · 3 rows / 3 gap-eligible');
+  assert.equal(r1.blocked, undefined, 'pre-breaker: blind, not yet blocked');
+  assert.equal(r1.data.source, 'memory');
+  assert.equal(r1.data.signals, 1);
+  assert.equal(sigInserts().length, 1, 'the memory-only cluster is written');
+  assert.match(store.getIntel('sharp')[0].detail, /· memory$/);
+  assert.ok(/^blind —/.test(r1.summary), 'still blind to history — the radar keys on this');
+
+  await sharp.run();
+  const r3 = await sharp.run();
+  assert.equal(r3.blocked, 'history read failed', 'past the breaker it IS blocked — the agent is not doing its full job');
+  assert.equal(r3.data.signals, 1, 'and the memory-only set is still published');
+  assert.equal(store.getIntel('sharp').length, 1);
+  assert.equal(sigInserts().length, 1, 'an unchanged cluster is not re-inserted');
 });
 
 test('one game failing of three still emits, and the failure is printed', async () => {
@@ -304,19 +367,30 @@ test('movementFrom stamps detected_at from the nowMs it is given', () => {
 });
 
 // ── Re-emission ─────────────────────────────────────────────────
-test('an unchanged window inserts once across runs; a fourth book re-emits', async () => {
-  fdb.setRows('line_movements', BOOKS.map((book) => row({ book })));
+test('an unchanged window inserts once across runs; a member re-ticking does not re-emit; a fourth book does', async () => {
+  const base = BOOKS.map((book, i) => row({ book, detected_at: pg(now - (i + 1) * MIN) }));
+  fdb.setRows('line_movements', base);
   await sharp.run();
   const r2 = await sharp.run();
   assert.equal(sigInserts().length, 1, 'the second run re-derives the cluster but does not re-insert');
   assert.equal(r2.data.inserted, 0);
   assert.equal(store.getIntel('sharp').length, 1, 'but the live set is republished every run');
 
-  fdb.setRows('line_movements', [...BOOKS, 'caesars'].map((book) => row({ book })));
+  // The book holding the cluster's `hi` ticks again: same three books, a
+  // different intersection. Keying on `hi` wrote a second row here on every
+  // half-point tick during a live steam.
+  fdb.setRows('line_movements', [...base, row({ book: 'betmgm', line_current: '43', moved: '-1.5', detected_at: pg(now) })]);
+  const r2b = await sharp.run();
+  assert.equal(r2b.data.inserted, 0, 'the same book set is not a new claim');
+  assert.equal(sigInserts().length, 1);
+  assert.equal(store.getIntel('sharp').length, 1);
+
+  fdb.setRows('line_movements', [...base, row({ book: 'caesars' })]);
   const r3 = await sharp.run();
   assert.equal(sigInserts().length, 2, 'a cluster that gains a book is a stronger claim and re-emits');
   assert.equal(r3.data.inserted, 1);
   assert.equal(store.getIntel('sharp')[0].books.length, 4);
+  assert.equal((await sharp.run()).data.inserted, 0, 'and once only');
 });
 
 // ── The seven states are seven different sentences ──────────────
@@ -335,13 +409,13 @@ test('all seven summaries are distinct, and no regex confuses "nothing moved" wi
   await sharp.run(); await sharp.run();
   const rf = await sharp.run();
   out.readFailed = rf.summary;
-  assert.equal(rf.blocked, true);
+  assert.equal(rf.blocked, 'history read failed');
   fdb.fail = {}; sharp.__reset();
 
   fdb.setRows('line_movements', BOOKS.map((book) => row({ book, gap_min: null })));
   const ng = await sharp.run();
   out.nullGap = ng.summary;
-  assert.equal(ng.blocked, true);
+  assert.equal(ng.blocked, 'no row carries gap_min');
 
   fdb.setRows('line_movements', []);
   out.empty = (await sharp.run()).summary;

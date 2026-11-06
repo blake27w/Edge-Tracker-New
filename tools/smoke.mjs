@@ -471,7 +471,7 @@ ok('sharp distinguishes blind from empty', /blind —/.test(sharpSrc) && /0 move
 ok('sharp never reads the complete feed', !/movementsAll/.test(sharpCode),
   'that feed belongs to public-splits (D74)');
 ok('sharp spends nothing', !/\bfetch\s*\(/.test(sharpCode), 'the reader is Postgres only — zero Odds API credits');
-ok('a persistent read failure is blocked, not bespoke', /blocked: true/.test(sharpSrc) && /HIST_FAIL_RUNS/.test(sharpSrc)
+ok('a persistent read failure is blocked, not bespoke', /blocked: (streak \? )?BLOCKED_\w+/.test(sharpSrc) && /HIST_FAIL_RUNS/.test(sharpSrc)
   && !/reportDegraded/.test(sharpCode),
   'the orchestrator\'s existing D80 path reports it; a fourth channel would be one more thing to retract');
 ok('the history query does not name baseline_source', !/baseline_source/.test(codeOnly(histSrc)),
@@ -709,8 +709,9 @@ ok('the Steam radar keys on blind', /notFiring:\/\^blind —\/\.test\(res\)/.tes
   'the radar means "the agent says it cannot see", and every one of those summaries starts "blind —"');
 ok('the Steam stale bound follows the 5-min cadence', /sharp:600000/.test(html) && /20m \(2× the sharp agent/.test(sigBlock),
   'AGENT_STALE_MS.sharp at 300000 flags a 5-min agent stale between runs, and the banner copy must say the bound it uses');
-ok('the NOT FIRING banner quotes the agent', /NOT FIRING — the sharp agent reports "'\+esc\(res\)\+'"/.test(sigBlock),
-  'the blind reason is the agent\'s own line, not a fixed sentence about a deleted string');
+ok('the NOT FIRING banner quotes the agent, escaped once', /NOT FIRING — the sharp agent reports "'\+res\+'"/.test(sigBlock)
+  && !/reports "'\+esc\(res\)/.test(sigBlock),
+  'the blind reason is the agent\'s own line, not a fixed sentence about a deleted string; sigBanner escapes the whole text, so a pre-escaped res would render &amp;quot;');
 ok('signal block found', sigBlock.length > 2000, `${sigBlock.length} chars`);
 
 // The whole design premise: the dashboard reads the bag the Agents tab already

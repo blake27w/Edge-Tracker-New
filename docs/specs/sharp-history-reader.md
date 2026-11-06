@@ -80,21 +80,31 @@ precision the data lacks).
 |---|---|---|
 | no slate | `dormant — empty slate` | no (benign, D80) |
 | no DB and no memory feed | `blind — no DB and no in-memory feed` | no (`no DB` is normal locally, D80) |
-| every history read failed, ≥ `HIST_FAIL_RUNS` (3) consecutive runs | `blind — history read failed for 24/24 games, 3 consecutive runs` | **`blocked: true`** |
-| rows in window, every one `gap_min` null | `blind — 61 rows in the last 45m, none carry gap_min (writer is stripping it — see odds log)` | **`blocked: true`** |
+| every history read failed — the memory feed still runs and publishes | `blind — history read failed for 24/24 games[, 3 consecutive runs] · memory-only: 1 steam · 3 rows / 3 gap-eligible` | **`blocked: 'history read failed'`** once ≥ `HIST_FAIL_RUNS` (3) consecutive runs |
+| rows in window, every one `gap_min` null | `blind — 61 rows in the last 45m, none carry gap_min (writer is stripping it — see odds log)` | **`blocked: 'no row carries gap_min'`** |
 | window genuinely empty | `0 steam · 0 movement rows in the last 45m across 12 games · history+memory` | no |
 | rows, none simultaneous | `0 steam · 128 rows / 41 gap-eligible / 0 simultaneous clusters · 12 games · history+memory` | no |
 | success | `3 steam · 128 rows / 41 gap-eligible / 9 markets · 12 games · history+memory · window 45m` | no |
 
+**A failed history read does not discard the memory feed.** A DB that times out must not publish
+*less* than a DB that is absent (`isConnected() === false` already publishes from memory), so the
+read-failed state runs the memory-only path, publishes whatever it yields, and reports history's
+blindness alongside — the summary still starts `blind —` (the agent cannot see `line_movements`),
+`source` is `memory`, and the counts after `memory-only:` are the memory feed's. It is one state,
+not two: pre-breaker it is blind, post-breaker it is blind *and* blocked.
+
 **No fourth reporting channel.** `sharp` makes no `reportDegraded` call of its own. The two
-"blind" states a human must act on return `blocked: true` ("the summary is the reason"), and the
+"blind" states a human must act on return `blocked: '<constant literal>'` — `'history read failed'`
+and `'no row carries gap_min'`, never the summary: the orchestrator treats a *changed* reason as a
+new fault and resets the streak (`src/orchestrator/index.js:211-217`), so a reason that interpolated
+`N consecutive runs` would read `blockedRuns: 1` forever. Counts stay in the summary. The
 orchestrator (`src/orchestrator/index.js:202-245`) does the rest: `reportDegraded('sharp|blocked')`
 → `watchdog.issues[]` as `type: 'blocked'` and `/health.system.degraded`, plus
 `blockedRuns`/`blockedReason`/`blockedSince` on `/health`, and unconditional clearing on the next
 non-blocked run. `HIST_FAIL_RUNS = 3` is a module-local streak (D76's number for the same
 table-in-distress case) because a single statement timeout is transient and `rules.blockedRunsMin`
 is 1 globally; runs 1–2 still print `blind — history read failed for N/N games` in `lastResult`,
-just without the alert. Partial failures are always appended (`, 2 read failures`). The reason
+just without the alert. Partial failures are always appended (`, 2 read failures`). The summary
 strings are authored literals with counts interpolated — never anything from `process.env` (D80).
 
 ## Data model / API changes
@@ -117,8 +127,12 @@ are filtered and grouped in JS so the index prefix stays an equality. `in: { gam
 rejected per D71.
 
 **Bounds — exact.** `HIST_MAX_GAMES = 24` (`SHARP_HIST_MAX_GAMES`), slate filtered to kickoff in
-`[now − 3h, now + 24h]`, upcoming soonest-first then started freshest-first (`book-move/index.js:
-370-381` verbatim). `HIST_ROW_LIMIT = 400` (`SHARP_HIST_ROW_LIMIT`); a whole-market move is
+`[now − 3h, now + 36h]` — the forward edge is `odds`' fetch horizon (`fetchOdds` `commenceTimeTo`,
+`SLATE_AHEAD_H` in `history.js` names the coupling, D95): a three-book move on a game 24–36h out is
+written to `line_movements` the moment `odds` sees it, and a 24h slate would admit the game only
+once those rows were older than the window (Saturday steam on Sunday 1pm NFL was never steam).
+Upcoming soonest-first then started freshest-first (`book-move/index.js:370-381`'s ordering), so
+near games always win the cap. `HIST_ROW_LIMIT = 400` (`SHARP_HIST_ROW_LIMIT`); a whole-market move is
 11 books × 2 markets × 2 sides = 44 rows, so 400 covers ~9 events in the window; `truncated` is
 counted and printed. **Worst case per run: 24 `db.select` + at most 1 `db.insert`
 (`sharp_signals`) = 25 statements, ≤ 9,600 rows.** It is 24 and not 48: the first draft's one-time
@@ -147,9 +161,11 @@ file, pinned by smoke.
 the run time (existing behaviour); the cluster's `hi` is in `detail`.
 
 **Re-emission.** The same cluster is re-derived every run for the life of the window. A
-process-local `Set` of emitted keys (`game_id|market|side|direction|<sorted books>|<hi ms>`)
-suppresses duplicate inserts; entries evict when the game leaves the slate (D75). A cluster that
-gains a book changes key and re-emits — a strictly stronger claim. A restart re-emits each live
+process-local map keyed `game_id|market|side|direction` → the book sets already written suppresses
+duplicate inserts; entries evict when the game leaves the slate (D75). A cluster re-emits only when
+its book set *gains* a member — a strictly stronger claim. `hi` is deliberately not in the key: it
+moves whenever a member book ticks again inside the stab point, and keying on it would insert a
+second `sharp_signals` row naming the same books on every half-point tick of a live steam. A restart re-emits each live
 cluster once (the alternative is a unique index, i.e. DDL). `setIntel('sharp', …)` is republished
 every run regardless, so the dashboard and `/plays` see the live set.
 
@@ -251,14 +267,21 @@ every run regardless, so the dashboard and `/plays` see the live set.
   `preFix` counted; an all-null window → the `none carry gap_min` summary and `blocked === true`.
   Mutation: treat null as `0` → fails.
 - *Read failure:* `fail['select:line_movements']` → runs 1–2 return `blind — history read failed`
-  with no `blocked`; run 3 returns `blocked: true`; through the orchestrator,
+  with no `blocked`; run 3 returns `blocked: 'history read failed'`; through the orchestrator,
   `getDegraded()` contains key `sharp|blocked` with `type: 'blocked'` in the watchdog's view, and
   the next successful run clears it. Run 4 issues exactly `HIST_PROBE_GAMES` selects. One game
   failing of three → signals still emitted and `, 1 read failure` in the summary.
 - *Merge and dedupe:* the same move in both history and `getIntel('movements')` counts once; a
   memory-only row forms a cluster with `isConnected() === false`, summary ends `· memory`.
 - *`movementFrom` stamps `detected_at`* equal to `new Date(nowMs).toISOString()`.
-- *Re-emission:* two runs over an unchanged window insert once; a fourth book re-emits.
+- *Re-emission:* two runs over an unchanged window insert once; a member book re-ticking (same
+  book set, different `hi`) does not re-insert; a fourth book re-emits once.
+- *Blocked reason is constant:* ≥3 consecutive failed runs through the real orchestrator →
+  `blockedRuns` climbs and `blockedSince` stays pinned.
+- *Memory survives a failed history read:* all reads fail, three memory rows → one signal inserted,
+  summary `blind — … · memory-only: 1 steam …`, `blocked` only past the breaker.
+- *Slate horizon:* a game at +30h with three co-directional rows inside 45m → steam.
+- *Probe-run summary:* the run that closes the breaker says `across 1 of 3 games (probe)`.
 - *Messages:* all seven summaries asserted as distinct strings; no single regex matches both a
   "nothing moved" and a "blind" state.
 

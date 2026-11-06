@@ -39,15 +39,25 @@ export const STEAM_LOOKBACK_MIN = Number(process.env.SHARP_HIST_LOOKBACK_MIN) ||
 export const HIST_COLS = 'sport,game_id,market,book,side,line_open,line_current,moved,direction,gap_min,detected_at';
 
 const MIN_MS = 60_000;
+const HOUR_MS = 3600_000;
+// COUPLED to odds: `fetchOdds` asks the API for games starting in the next
+// 36h (`commenceTimeTo`, odds/index.js) and that literal is not exported, so it
+// is restated here once. The slate must reach as far as the fetch does: a
+// three-book move on a game 24–36h out (Saturday steam on Sunday 1pm NFL) is
+// written to line_movements the moment odds sees it, and a shorter slate
+// would only admit the game once those rows were older than the window (D95).
+export const SLATE_AHEAD_H = 36;
+export const SLATE_BEHIND_H = 3;
 
-// Kickoff in [now − 3h, now + 24h]; upcoming soonest-first claim the cap, then
-// in-progress games freshest-first (book-move's rule, verbatim).
+// Kickoff in [now − 3h, now + 36h]; upcoming soonest-first claim the cap (so
+// near games always win it), then in-progress games freshest-first
+// (book-move's ordering rule).
 export function selectSlate(games, now, max = HIST_MAX_GAMES) {
   const inWindow = [];
   for (const g of games || []) {
     if (!g || !g.game_id) continue;
     const t = g.commence_time ? new Date(g.commence_time).getTime() : NaN;
-    if (Number.isFinite(t) && t >= now - 3 * 3600_000 && t <= now + 24 * 3600_000) inWindow.push({ g, t });
+    if (Number.isFinite(t) && t >= now - SLATE_BEHIND_H * HOUR_MS && t <= now + SLATE_AHEAD_H * HOUR_MS) inWindow.push({ g, t });
   }
   const upcoming = inWindow.filter((x) => x.t >= now).sort((a, b) => a.t - b.t);
   const started = inWindow.filter((x) => x.t < now).sort((a, b) => b.t - a.t);

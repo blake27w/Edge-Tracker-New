@@ -7456,7 +7456,7 @@ function renderSigSteam(){
     // summary is the only thing that can tell them apart, so read it. Only the
     // proven-dead case earns the radar: a sweep over a feed that merely found
     // nothing would dress a zero up as a diagnosis.
-    if(F.notFiring)h+='<div class="sh-radar">'+sigRadar()+'<div>'+sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "'+esc(res)+'". It cannot see line_movements (no DB, every history read failed, or the writer is stripping gap_min); a zero would read "0 steam" instead.'})+'</div></div>';
+    if(F.notFiring)h+='<div class="sh-radar">'+sigRadar()+'<div>'+sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "'+res+'". It cannot see line_movements (no DB, every history read failed, or the writer is stripping gap_min); a zero would read "0 steam" instead.'})+'</div></div>';
     else h+=sigBanner('nodata',{things:'steam signals',at:sigAt((run&&(run.finished_at||run.lastRunAt))||state.agentsLastLoad)});
   }
   // The agent's own line is shown whatever the state: it is the evidence for
