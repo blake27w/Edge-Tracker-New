@@ -958,6 +958,21 @@ if (hasSignal) {
     'the pre-deploy off banner still works'], SIGNAL_SPEC);
 }
 
+// ── 16. CLV alarm population ────────────────────────────────────
+// Production 2026-11-06: "15 plays past close with only one snapshot batch"
+// on every run while line_snapshots took 60k rows in three hours. Seven of
+// the fifteen were in-game plays (`monitor_scores.live`) that run() never
+// read — not even in the projection — so a bet with no close to beat (D37)
+// was counted as a coverage failure. The projection and the exclusion are
+// pinned together: one without the other is the same bug.
+const clvSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/clv-tracker/index.js'), 'utf8');
+ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of the coverage alarm',
+  /db\.select\('monitor_scores', '[^']*\blive\b[^']*'/.test(clvSrc)
+  && /if \(p\.live\) \{ inPlay\+\+; continue; \}/.test(clvSrc)
+  && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
+  && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
+  'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
+
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
 if (skips.length) {
