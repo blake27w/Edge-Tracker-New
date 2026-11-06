@@ -1,10 +1,10 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-06 — **six PRs open (#140–#145), all reviewed and tested, none merged. `main` is at `c075e70`.** Nothing is deployed from them yet. The Anthropic key is set in Railway but the account has no credits, so Claude-backed agents still report `blocked`.
+Last updated: 2026-11-06 — **all six PRs merged (#140–#145). `main` is at `5b92d70`, zero open PRs, 343 tests / 245 smoke, zero failures.** Railway auto-deploys `main`, so #142–#145 are deploying now. **Three things remain, all Blake's: the DDL for #145, Anthropic credits + one redeploy, and the first-day watch list.**
 
 ## DO THIS, IN THIS ORDER
 
-### 1. Merge the PRs — order matters only for `DECISIONS.md`
+### 1. ~~Merge the PRs~~ — DONE 2026-11-06
 
 Every branch is off `main` at `c075e70` and independent **in code**. But each appended its own entries to the append-only `DECISIONS.md`, so from the second merge on GitHub will report a conflict there. **Resolve every one by keeping all entries** (both sides, in number order) — nothing is ever removed from that file. Suggested order, smallest conflict surface first:
 
@@ -17,7 +17,7 @@ Every branch is off `main` at `c075e70` and independent **in code**. But each ap
 | [#143](https://github.com/blake27w/Edge-Tracker-New/pull/143) | `feat/sharp-history-reader-2` | steam reads bounded history with interval intersection (D92–D95) | 271 / 224 |
 | [#145](https://github.com/blake27w/Edge-Tracker-New/pull/145) | `feat/line-move-all-sports-2` | open→close movement for every sport (D95) | 250 / 219 |
 
-`tools/smoke.mjs` will also conflict between #143 and #145 (both add sections at the end) — keep both sections. After the last merge, run `npm ci && npm test` in `edge-tracker-agents/` and `node tools/smoke.mjs` from the root: **zero failures is the only acceptable result** (D82).
+Merged in that order; every `DECISIONS.md` conflict was union-resolved (all entries kept, D92–D100 present), `smoke.mjs` kept both sections, and the one real conflict — both #143 and #145 widening the fleet census in `agent-blocked.test.js` — resolved to `OPTED_IN + nfl-line-move + sharp`. Post-merge: `npm test` 343/343, `node tools/smoke.mjs` 245/0, tree verified identical to the tested one.
 
 ### 2. Hand-run DDL — Supabase SQL editor, after #145 merges
 
