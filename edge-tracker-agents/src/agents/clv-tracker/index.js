@@ -17,6 +17,12 @@
 //   • Exactly one clv_record per play (upsert on game_id+market+side).
 //   • Line CLV (totals/spreads) AND odds CLV (moneylines) from the
 //     consensus of each snapshot batch.
+//   • The coverage alarm counts only plays that COULD have had a close: a
+//     pre-game play, in a CLV-tracked market, on a sport whose close is
+//     captured, with a known kickoff. In-play bets (`monitor_scores.live`),
+//     props, TENNIS while TENNIS_CLOSE_CAPTURE is off, and null-commence
+//     games are each reported under their own count and never read as a
+//     snapshot-coverage defect (D98).
 //
 // Three bugs made this report "0 beat close, N suspect" indefinitely:
 //
@@ -43,6 +49,7 @@
 //      report excludes unknowns from beat_pct instead of counting them as
 //      losses.
 // ══════════════════════════════════════════════════════════════
+import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { setClvReport, reportDegraded } from '../../store/index.js';
@@ -93,10 +100,17 @@ function newestTs(byTs) {
   return best;
 }
 
-// Build a CLV record for one play, or null if it's too early / unmeasurable.
+// Build a CLV record for one play. Returns null ONLY when it is too early (the
+// close window has not opened); every permanent outcome carries a marker so
+// the caller can count it for what it is: `{ untracked }` for a market with
+// no snapshot feed (props), `{ unmeasurable, noCommence }` when the game has
+// no kickoff to bound the close by, `{ unmeasurable }` otherwise.
 async function capture(p) {
   const snapMarket = SNAP_MARKET[p.market];
-  if (!snapMarket || !p.side) return null;
+  // Not "too early" — there is no line_snapshots market for this play and
+  // never will be. Reported as null for months, these read as a perpetually
+  // pending close.
+  if (!snapMarket || !p.side) return { untracked: true };
 
   const where = { game_id: p.game_id, market: snapMarket, side: p.side };
   const cols = 'commence_time,fetched_at,line,price';
@@ -119,11 +133,16 @@ async function capture(p) {
   if (!early.length) return { unmeasurable: true };
 
   const commence = early.find((s) => s.commence_time)?.commence_time;
-  const commenceMs = commence ? new Date(commence).getTime() : null;
+  // No kickoff on any entry row → the close query below has no upper bound,
+  // so the newest batch we hold — which can be in-play — would be taken as
+  // "the close", and `done` would then lock that fabricated CLV in. With no
+  // kickoff there is no close to find; say so instead of guessing one.
+  if (!commence) return { unmeasurable: true, noCommence: true };
+  const commenceMs = new Date(commence).getTime();
 
   // Don't record until the game is at/near start — otherwise "closing" is just
   // an early snapshot ≈ entry (the original bug).
-  if (commenceMs && Date.now() < commenceMs - CLOSE_LEAD_MS) return null;
+  if (Date.now() < commenceMs - CLOSE_LEAD_MS) return null;
 
   // THE CLOSE: newest batch AT OR BEFORE KICKOFF, bounded IN THE QUERY.
   //
@@ -140,10 +159,11 @@ async function capture(p) {
   // Bounding server-side also guarantees the newest returned batch is
   // COMPLETE rather than clipped at the window edge, so the consensus median
   // is over every book that quoted it and not an arbitrary subset.
+  // The bound is unconditional: a play with no kickoff never reaches here.
   const closeOpts = {
-    match: where, order: { column: 'fetched_at', ascending: false }, limit: CLOSE_ROWS,
+    match: where, lte: { fetched_at: commence },
+    order: { column: 'fetched_at', ascending: false }, limit: CLOSE_ROWS,
   };
-  if (commence) closeOpts.lte = { fetched_at: commence };
   let late = [];
   try { late = await db.select('line_snapshots', cols, closeOpts); }
   catch (e) { return { error: `close query: ${e.message}` }; }
@@ -198,10 +218,9 @@ async function capture(p) {
   }
 
   // Suspect now means something real and narrow: our latest batch predates the
-  // close window, so what we're calling "the close" probably isn't. Rows with
-  // no commence_time can't be judged and aren't flagged.
+  // close window, so what we're calling "the close" probably isn't.
   const closeMs = new Date(closeTs).getTime();
-  const suspect = !!commenceMs && closeMs < commenceMs - CLOSE_LEAD_MS;
+  const suspect = closeMs < commenceMs - CLOSE_LEAD_MS;
 
   return {
     sport: p.sport, game_id: p.game_id, bet_market: p.market, side: p.side,
@@ -253,7 +272,10 @@ async function run() {
   const since = new Date(Date.now() - LOOKBACK_MS).toISOString();
   let plays = [];
   try {
-    plays = await db.select('monitor_scores', 'sport,game_id,market,side,line,scored_at', {
+    // `live` is part of the projection on purpose: an in-game play has no
+    // close to beat (D37) and must be told apart from one whose close we
+    // failed to capture.
+    plays = await db.select('monitor_scores', 'sport,game_id,market,side,line,scored_at,live', {
       match: { qualified: true }, gte: { scored_at: since }, order: { column: 'scored_at', ascending: false }, limit: 800,
     });
   } catch (e) {
@@ -271,15 +293,36 @@ async function run() {
 
   const records = [];
   let tooEarly = 0, suspectN = 0, unmeasurable = 0, queryErrors = 0, lastErr = null;
+  // Legitimate categories, each its own count. None of these is a coverage
+  // failure, so none of them feeds the coverage alarm:
+  //   inPlay         — bet placed after kickoff; no close to beat (D37).
+  //   untracked      — market has no line_snapshots feed (props).
+  //   noCloseCapture — TENNIS with TENNIS_CLOSE_CAPTURE off: ingest writes one
+  //                    batch a day, so entry and close are the same batch BY
+  //                    DESIGN. (Counted inside `unmeasurable` too — it is.)
+  //   noCommence     — no kickoff on file, so no close can be bounded.
+  //                    (Also inside `unmeasurable`.)
+  let inPlay = 0, untracked = 0, noCloseCapture = 0, noCommence = 0;
   for (const p of plays) {
     if (done.has(`${p.game_id}|${p.market}|${p.side}`)) continue;
+    if (p.live) { inPlay++; continue; }
     const rec = await capture(p);
     if (!rec) { tooEarly++; continue; }
     if (rec.error) { queryErrors++; lastErr = rec.error; continue; }
-    if (rec.unmeasurable) { unmeasurable++; continue; }
+    if (rec.untracked) { untracked++; continue; }
+    if (rec.unmeasurable) {
+      unmeasurable++;
+      if (rec.noCommence) noCommence++;
+      else if (p.sport === 'TENNIS' && !config.tennisCloseCapture) noCloseCapture++;
+      continue;
+    }
     if (rec.suspect) suspectN++;
     records.push(rec);
   }
+  // The alarm population: plays that COULD have had a distinct close and
+  // didn't — pre-game, tracked market, close captured for the sport, kickoff
+  // known. Everything else above is explained by construction.
+  const noClose = unmeasurable - noCloseCapture - noCommence;
 
   // `_`-prefixed fields are run diagnostics, not columns.
   const rows = records.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith('_'))));
@@ -327,22 +370,37 @@ async function run() {
     logger.error('clv', `0 of ${measured.length} measurable records beat the close — check the closing-price comparison`);
     reportDegraded('clv|none-beat', `0 of ${measured.length} measurable CLV records beat the close`);
   }
-  // Plays exist and are past their close window, yet nothing is measurable →
-  // the snapshot coverage, not the maths, is the problem.
-  if (unmeasurable >= ALARM_MIN && !records.length) {
-    reportDegraded('clv|unmeasurable', `${unmeasurable} plays past close with only one snapshot batch — no CLV measurable`);
+  // Pre-game plays in a tracked market, past kickoff, with a close on file for
+  // the sport — and still no pre-kickoff batch distinct from the entry. That
+  // is the one branch left where the snapshot cadence, not the maths and not
+  // the play, is the problem, and the message claims exactly that. The
+  // explained categories (in-play, props, tennis without close-capture, no
+  // kickoff) are not in `noClose`; before D98 they were, and seven live NFL
+  // plays plus eight daily-ingest tennis plays read as a coverage outage.
+  if (noClose >= ALARM_MIN && !records.length) {
+    reportDegraded('clv|unmeasurable', `${noClose} pre-game plays past kickoff with no pre-kickoff batch distinct from entry — no CLV measurable`);
   }
 
   const parts = [`${records.length} CLV records`];
   const detail = [`${beat} beat close`];
   if (measured.length !== records.length) detail.push(`${records.length - measured.length} unknown`);
   if (suspectN) detail.push(`${suspectN} suspect`);
-  if (unmeasurable) detail.push(`${unmeasurable} unmeasurable`);
+  if (unmeasurable) {
+    const why = [];
+    if (noCloseCapture) why.push(`${noCloseCapture} no close-capture`);
+    if (noCommence) why.push(`${noCommence} no kickoff`);
+    detail.push(`${unmeasurable} unmeasurable${why.length ? ` (${why.join(', ')})` : ''}`);
+  }
+  if (inPlay) detail.push(`${inPlay} in-play`);
+  if (untracked) detail.push(`${untracked} untracked market`);
   if (tooEarly) detail.push(`${tooEarly} too early`);
   if (queryErrors) detail.push(`${queryErrors} query errors`);
   return {
     summary: `${parts.join('')} (${detail.join(', ')})`,
-    data: { recorded: records.length, beat, measured: measured.length, suspect: suspectN, unmeasurable, tooEarly, queryErrors },
+    data: {
+      recorded: records.length, beat, measured: measured.length, suspect: suspectN,
+      unmeasurable, noCloseCapture, noCommence, inPlay, untracked, tooEarly, queryErrors,
+    },
   };
 }
 

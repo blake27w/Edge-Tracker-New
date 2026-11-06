@@ -289,6 +289,31 @@ ok('moved_at is non-null in the schema', /moved_at\s+timestamptz not null/.test(
 ok('the new table is indexed', /book_move_log_book_idx/.test(schema) && /book_move_log_game_idx/.test(schema));
 const migrate = await readFile(join(root, 'edge-tracker-agents/scripts/migrate.js'), 'utf8');
 ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
+
+// The watchdog's schema probes are the ONE runtime tell for a table whose DDL
+// nobody ran (D69/D70) — and book_move_log, hand-run 2026-10-28, was not in
+// them. The list is hand-maintained, so this pins it structurally: every table
+// schema.sql declares must be probed, except the ones that pre-date the probe
+// (frozen below — do not add to it; add the probe instead).
+const watchdogSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/watchdog/index.js'), 'utf8');
+ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+'\]/.test(watchdogSrc));
+{
+  const declared = [...schema.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
+  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const probed = new Set([...probeBlock.matchAll(/\['(\w+)',/g)].map((m) => m[1]));
+  const PRE_PROBE = new Set([
+    'scan_runs', 'api_usage', 'opening_lines', 'line_movements', 'injury_updates', 'game_weather',
+    'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots', 'mlb_context', 'player_usage',
+    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
+    'tennis_matchups', 'subscribers', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
+    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
+    'nfl_inactives', 'nfl_line_moves', 'nfl_derivatives', 'nfl_pace',
+  ]);
+  const unprobed = declared.filter((t) => !probed.has(t) && !PRE_PROBE.has(t));
+  ok('every table schema.sql declares is probed by the watchdog', unprobed.length === 0,
+    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
+  ok('the probe parser saw the list', probed.size >= 14, `parsed ${probed.size} probed tables`);
+}
 ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
   'an unbounded count on that table is what already times out the page');
@@ -932,6 +957,21 @@ if (hasSignal) {
     'the Budget panel names WHY each sport is in or out',
     'the pre-deploy off banner still works'], SIGNAL_SPEC);
 }
+
+// ── 16. CLV alarm population ────────────────────────────────────
+// Production 2026-11-06: "15 plays past close with only one snapshot batch"
+// on every run while line_snapshots took 60k rows in three hours. Seven of
+// the fifteen were in-game plays (`monitor_scores.live`) that run() never
+// read — not even in the projection — so a bet with no close to beat (D37)
+// was counted as a coverage failure. The projection and the exclusion are
+// pinned together: one without the other is the same bug.
+const clvSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/clv-tracker/index.js'), 'utf8');
+ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of the coverage alarm',
+  /db\.select\('monitor_scores', '[^']*\blive\b[^']*'/.test(clvSrc)
+  && /if \(p\.live\) \{ inPlay\+\+; continue; \}/.test(clvSrc)
+  && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
+  && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
+  'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);

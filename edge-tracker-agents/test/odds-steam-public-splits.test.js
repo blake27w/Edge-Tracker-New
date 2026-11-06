@@ -19,7 +19,7 @@
 import { test, mock, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb, fakeLogger } from './helpers/fake-db.js';
-import { getIntel } from '../src/store/index.js';
+import { getIntel, setIntel } from '../src/store/index.js';
 
 const MIN = 60_000;
 const now = Date.now();
@@ -131,4 +131,52 @@ test('an in-cycle move reads the same way — the gap changes sharp\'s feed, not
   assert.equal(row.net_move, -3);
   assert.equal(row.rlm, true, 'same verdict as the wide-gap run: the question is the move, not its gap');
   assert.equal(row.freeze, false);
+});
+
+// ── Absence is absent ────────────────────────────────────────────
+// D77 routed the complete feed here so a withheld row no longer READS as a
+// freeze — but `netMove = moves.total.get(id) ?? 0` was the trap itself, and
+// a game with no movement row at all (first run, feed empty, baseline not yet
+// rehydrated) still published `freeze: true` off a zero nobody measured. The
+// index is written straight into the store here: the question is what the
+// agent does with a hole, a real zero, and a row with no usable magnitude, and
+// the odds agent cannot be asked to produce the last two.
+test('no movement row is "no line data", not a freeze', async () => {
+  setIntel('movementsAll', []);
+  const s = await splits.run();
+  const row = getIntel('splits')[0];
+  assert.equal(row.net_move, null, 'nothing was measured, so nothing is published as the measurement');
+  assert.equal(row.rlm, null, 'not judged — distinct from a judged false');
+  assert.equal(row.freeze, null, 'the old ?? 0 made this true: "I have no data" published as a tell');
+  assert.match(s.summary, /0 freeze/, s.summary);
+  assert.match(s.summary, /1 no line data/, 'the run says WHY the rule did not fire');
+  assert.equal(s.data.noMoveData, 1);
+});
+
+test('a line that genuinely moved zero IS a freeze — zero and absent stay distinct', async () => {
+  setIntel('movementsAll', [{ game_id: 'g1', market: 'totals', side: 'Over', moved: 0 }]);
+  const s = await splits.run();
+  const row = getIntel('splits')[0];
+  assert.equal(row.net_move, 0, 'a measured zero is published as a zero');
+  assert.equal(row.rlm, false);
+  assert.equal(row.freeze, true, 'books held the number against 78% of the tickets — that is the tell');
+  assert.match(s.summary, /1 freeze/, s.summary);
+  assert.match(s.summary, /0 no line data/, s.summary);
+});
+
+test('a movement row with no usable `moved` adds no entry — it is not a zero', async () => {
+  // Number(null), Number(''), Number(false) are all a finite 0 (house rule),
+  // and `(m.moved || 0)` in moveIndexes read every one of them as "did not
+  // move". Over-row magnitude missing, Under-row present: the Over row is the
+  // one the total index is built from, so the index must have no entry.
+  for (const bad of [null, undefined, '', NaN, false, '1']) {
+    setIntel('movementsAll', [
+      { game_id: 'g1', market: 'totals', side: 'Over', moved: bad },
+      { game_id: 'g1', market: 'totals', side: 'Under', moved: -1 },
+    ]);
+    await splits.run();
+    const row = getIntel('splits')[0];
+    assert.equal(row.net_move, null, `moved=${String(bad)} must not coerce to a measured 0`);
+    assert.equal(row.freeze, null, `moved=${String(bad)} must not publish as a freeze`);
+  }
 });
