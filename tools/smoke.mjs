@@ -1158,6 +1158,9 @@ if (!hasSplitsTab) {
     'render() stops the poll before the home dispatch (splits)', 'renderSplitsView restarts the poll',
     'a failed DB fallback read is a FAILED state, not nodata', 'the strip says which path produced the rows',
     'open details and the chip scroll survive the poll repaint', 'a card says when its own batch is older than the board',
+    'the off banner quotes blockedReason verbatim, escaped once', 'the market-wide label is escaped once',
+    'a departed book falls back to consensus for the paint', 'the book selection initialiser is guarded',
+    'the renderer and the day are covered by tests',
   ], SPLITS_SPEC);
 } else {
   // The seven anchors (§14's regexes with the id swapped).
@@ -1276,6 +1279,26 @@ if (!hasSplitsTab) {
     && !/\bin:\s*\{/.test(openersFn) && !/\bgte:/.test(openersFn) && /openerMemo/.test(openersFn)
     && !/fetched_at === rows\[0\]\.fetched_at/.test(openersFn) && /Object\.keys\(books\)\.length/.test(openersFn),
     'one asc select per game × market on the index prefix, limit 60 (a chunk-split first run, D99), each book\'s OWN oldest row — never keyed on stamp equality — and only a non-empty result memoised; `book-move spends nothing` (§10) still holds');
+  // Escaping happens ONCE, inside sigBanner (esc(txt)) — the off text is built
+  // from the raw reason; an esc() in the block would double it, none would
+  // leave it raw if sigBanner ever stopped escaping.
+  const sigBannerFn = (codeOnly(html).match(/function sigBanner\([^)]*\)\{[\s\S]*?\n\}/) || [''])[0];
+  ok('the off banner quotes blockedReason verbatim, escaped once',
+    /sigBanner\('off',\{text:'NOT FIRING — public-splits is blocked: "'\+r\.reason\+'"/.test(spCode) && !/esc\(r\.reason\)/.test(spCode)
+    && /return '<div class="sh-banner '\+kind\+'">'\+esc\(txt\)\+'<\/div>'/.test(sigBannerFn),
+    'the reason is passed raw into sigBanner, which escapes the whole text once');
+  ok('the market-wide label is escaped once', /splits are market-wide — '\+esc\(bookLabel\)\+'/.test(spCode) && !/esc\(esc\(/.test(spCode));
+  ok('a departed book falls back to consensus for the paint', /var book=seen\[state\.splitsBook\]\?state\.splitsBook:SPLITS_CONSENSUS/.test(spCode),
+    'a selected book missing from the (sport-filtered) slate paints as Consensus; the stored preference is left alone');
+  ok('the book selection initialiser is guarded',
+    /splitsBook:\(function\(\)\{try\{return JSON\.parse\(localStorage\.getItem\('et_splitsBook'\)\)\|\|'consensus'\}catch\(e\)\{return 'consensus'\}\}\)\(\)/.test(html),
+    'private mode throws on getItem; a raw or empty value parses to consensus');
+  const renderTest = await readFile(join(root, 'edge-tracker-agents/test/splits-render.test.js'), 'utf8').catch(() => '');
+  const dayTest = await readFile(join(root, 'edge-tracker-agents/test/splits-day.test.js'), 'utf8').catch(() => '');
+  ok('the renderer and the day are covered by tests',
+    /byte-identical/.test(renderTest) && /escaped once/.test(renderTest) && /splitsDomSave\(null\)/.test(renderTest)
+    && /source, 'db'\)/.test(dayTest) && /snapshotsLost/.test(dayTest) && /mock\.timers\.enable/.test(dayTest),
+    'the honesty invariant runs through the real index.html functions in a vm; the day runs through the real agents and route on a pinned clock');
   const routeTest = await readFile(join(root, 'edge-tracker-agents/test/splits-route.test.js'), 'utf8').catch(() => '');
   const openersTest = await readFile(join(root, 'edge-tracker-agents/test/book-move-openers.test.js'), 'utf8').catch(() => '');
   ok('the route is covered by a test',

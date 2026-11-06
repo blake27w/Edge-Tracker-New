@@ -1,15 +1,15 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-06 — **Splits tab built on `feat/splits-report` (off `5b92d70` = `main` with #137–#145 merged). Uncommitted; nothing pushed, no PR yet.** The Anthropic key is set in Railway but the account has no credits, so `public-splits` still reports `blocked` and every Splits card shows `—` percentages under the `off` banner — which is the designed output until credits land.
+Last updated: 2026-11-06 — **#140–#145 merged (`main` at `5b92d70`); one PR open: the 📊 Splits tab (`feat/splits-report`). 388 tests / 287 smoke on that branch, zero failures.** Three things remain on Blake's side: credits + one redeploy, the five-line DDL for #145, and the first-day watch list.
 
-## State of the branch
+## The Splits tab (PR open)
 
-Spec: `docs/specs/splits-tab.md` (implemented as written, D101). What is on disk:
+Blake asked for "a place to view the public splits on lines, like the reports Ewing gives us" (BetMGM's Sportsbook Data Insights sheet), then "just a tab where I can see this info", then "click between books and see their splits". **Per-book ticket/money splits do not exist in this system** (D53 — `public_splits` has no book column; the percentages are Claude-read and market-wide), so the book switcher changes **lines and movement only** and the card says so. Decisions in D101. Two characterised, non-blocking behaviours to carry forward:
 
-- **Backend** — `edge-tracker-agents/src/games/splits.js` (new; the `/splits` join + bounded DB fallback), `src/index.js` (imports it, awaits it), `agents/public-splits/index.js` (`resolveSide` exported), `agents/nfl-line-move/index.js` (slot gains `openers[game_id]`), `agents/book-move/index.js` (`openersFor`, `bookMoves.openers[game_id][book]` + `openers_meta`).
-- **PWA** — `index.html`: ninth tab `splits` at all seven anchors, the `renderSplitsView…renderSplitsContent` block before `renderSplitsBoard` (now a one-line delegate), `.sp-*` CSS beside `.sh-eps`, `splitsSport`/`splitsBook` state, and the health mapping now keeps `blockedRuns/blockedReason/blockedSince` (the `off` banner reads them).
-- **Tests** — `test/splits-route.test.js` (8), `test/book-move-openers.test.js` (7), one `openers` case in `test/nfl-line-move.test.js`; smoke section 17 (29 assertions).
-- **Counts:** `npm test` **359/359** (was 343), `node tools/smoke.mjs` **274/0** (was 245). Sixteen mutation checks all bite (anchor removed, `0` for a null pct/opener, consensus opener leaking into a per-book row, label removed, TTL dropped, memo dropped, `asc` flipped, `save()` used, delegate un-delegated, book passed to `splitsPair`).
+- The Plays → Splits chip repaints through `renderAgentsContent`, which has no `splitsDomSave/Restore`, so the per-book `<details>` snaps shut on each 30-s poll **there** (not on the Splits tab).
+- The per-game opener memo keeps a book whose first rows were in a lost tail chunk (D99) at `—` until kickoff+6h or a restart; a per-book re-read is the follow-up.
+
+**Before credits exist the tab shows live lines with `—` percentages** under a banner quoting the real `blockedReason` from `/health` — never a blank table, never `0%`. Credits + one redeploy is what lights it up.
 
 ## DO THIS, IN THIS ORDER
 
