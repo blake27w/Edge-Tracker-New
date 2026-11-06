@@ -480,6 +480,28 @@ ok('movementFrom stamps detected_at', /detected_at: new Date\(nowMs\)\.toISOStri
   'the in-memory row must carry the same interval the Postgres row does, or the dedupe key is a lie');
 ok('sharp runs every 5 minutes', /sharp: \{[^}]*min: 5 \}/.test(await readFile(join(root, 'edge-tracker-agents/src/config/index.js'), 'utf8')),
   'movement only changes when odds fetches; 24 reads/run at 2 min is 720/hour on line_movements');
+// Emission and the memory feed are bounded the same way the read is: the
+// emitted-set memory evicts with the slate, re-emits only on a GAINED book, and
+// a memory row off the slate or outside the window never joins the union.
+ok('sharp evicts emission memory with the slate', /if \(!slateIds\.has\(e\.game_id\)\) emitted\.delete\(k\)/.test(sharpSrc),
+  'a process-local map keyed on game|market|side|direction grows without bound unless entries leave with the game (D75)');
+ok('sharp re-emits only when a cluster gains a book', /entry\.sets\.some\(\(s\) => c\.books\.every\(\(b\) => s\.has\(b\)\)\)/.test(sharpSrc),
+  'keying on `hi` wrote a second sharp_signals row naming the same three books on every half-point tick of a live steam');
+ok('the memory feed is slate- and window-bounded before the merge', /slateIds\.has\(m\.game_id\) && m\.at >= since/.test(sharpSrc),
+  'history is already bounded by the select; a memory row for a game off the slate or older than the window would be an unbounded back door');
+ok('the dashboard maps lastResult onto the run it hands the Steam panel', /result:a\.lastResult/.test(html) && /var res=\(run&&run\.result\)\|\|''/.test(html),
+  'sigSteamFacts reads run.result; if applyAgentsBag stops mapping /health.lastResult onto it the radar can never fire and every state reads as a zero');
+// The two tests that could not be run live on demand: a scripted day through
+// the real run() on the 5-minute cadence, and the Steam panel driven with all
+// seven summaries plus an old cached payload.
+const dayTestSrc = await readFile(join(root, 'edge-tracker-agents/test/sharp-history-day.test.js'), 'utf8').catch(() => '');
+ok('sharp is proved across a scripted day', /const RUNS = 72;/.test(dayTestSrc) && /exactly two rows for the whole day/.test(dayTestSrc)
+  && /INDEPENDENT oracle/.test(dayTestSrc),
+  'the recipe admits a real steam cannot be summoned; the day test is the stand-in and must stay oracle-checked, not reader-checked');
+const panelTestSrc = await readFile(join(root, 'edge-tracker-agents/test/sig-steam-panel.test.js'), 'utf8').catch(() => '');
+ok('the Steam panel is driven with all seven summaries and the old cached sentence',
+  /BLIND = \['noFeed', 'readFailed', 'nullGap'\]/.test(panelTestSrc) && /no recent line movement/.test(panelTestSrc) && /nothing double-escaped/.test(panelTestSrc),
+  'the dashboard keys on /^blind —/; a copy edit to any of the seven strings must fail a test, not just read oddly');
 ok('the steam bound admits a real mid-tier gap, and is never wider than the emit bound',
   /hdrNum\(process\.env\.ODDS_STEAM_MAX_GAP_MIN\) \?\? 35/.test(oddsSrc)
   && /Math\.min\(\s*\n\s*MOVE_MAX_GAP_MIN,/.test(oddsSrc),
