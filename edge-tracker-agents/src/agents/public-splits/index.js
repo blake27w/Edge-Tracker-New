@@ -18,14 +18,21 @@ const SPLIT_SPORTS = new Set(['NHL', 'NBA', 'MLB', 'NFL']);
 // be judged per SIDE (the old game|market sum mixed both sides' moves).
 //   totals: net move of the game total (Over rows carry the total's line)
 //   spreads: net move of EACH TEAM's own line (side = team name)
+// A key is present ONLY when a row carried a real, finite `moved`. The old
+// `(m.moved || 0)` turned a row with no magnitude (null, '', NaN) into a 0
+// entry, i.e. "this line did not move", when the truth is "this row cannot
+// say" — and readers treat a present 0 and an absent key very differently.
+// Type-check before coercing (house rule); a row without a usable `moved`
+// adds no entry, so its absence stays visible downstream.
 function moveIndexes(moves) {
   const total = new Map(), spread = new Map();
-  for (const m of moves) {
+  for (const m of moves || []) {
+    if (!m || typeof m.moved !== 'number' || !Number.isFinite(m.moved)) continue;
     if (m.market === 'totals') {
-      if (String(m.side).toLowerCase() === 'over') total.set(m.game_id, (total.get(m.game_id) || 0) + (m.moved || 0));
+      if (String(m.side).toLowerCase() === 'over') total.set(m.game_id, (total.get(m.game_id) || 0) + m.moved);
     } else if (m.market === 'spreads') {
       const k = `${m.game_id}|${String(m.side).toLowerCase()}`;
-      spread.set(k, (spread.get(k) || 0) + (m.moved || 0));
+      spread.set(k, (spread.get(k) || 0) + m.moved);
     }
   }
   return { total, spread };
@@ -68,15 +75,16 @@ ${slate}`;
   const list = Array.isArray(json) ? json : [];
   // `movementsAll`, NOT `movements`: the latter is odds' gap-filtered STEAM
   // feed, and the question here is not simultaneity but "did the public's own
-  // number move at all". `netMove` below is `?? 0`, so a movement withheld by
-  // that filter is indistinguishable from a line that did not move — a real
-  // RLM off a mid- or idle-tier refetch would publish as a freeze. See the
-  // two-feed note in src/agents/odds/index.js.
+  // number move at all". A movement withheld by that filter would be a hole in
+  // this index, and a hole is read as "no movement data", not as a freeze — so
+  // a real RLM off a mid- or idle-tier refetch would be silently LOST rather
+  // than mis-called. See the two-feed note in src/agents/odds/index.js.
   const moves = moveIndexes(getIntel('movementsAll'));
   const byId = {}; for (const g of games) byId[g.game_id] = g;
   const now = new Date().toISOString();
 
   const rows = [];
+  let noMoveData = 0; // lopsided rows the RLM/freeze rule could not judge
   for (const r of list) {
     if (!r || !r.game_id) continue;
     const bets = num(r.bets_pct);
@@ -93,18 +101,30 @@ ${slate}`;
     // If it barely moved at all despite the crowd (freeze), books are content
     // taking that action — a weaker version of the same tell. ML has no line
     // history here, so it stays out of both.
+    //
+    // "Nothing happened" and "I cannot see it" must not look the same: a game
+    // with NO movement row is not a line that moved zero. The old `?? 0`
+    // collapsed the two, and `freeze` then published "I have no data" as a
+    // tell. When the index has no entry for the public side's number, the row
+    // says so — net_move null AND rlm/freeze null (not judged), which every
+    // reader already treats as "no tell" — and the run counts it.
     let rlm = false, freeze = false, netMove = null;
     if (lopsided && resolved) {
+      let idx = null, key = null;
       if (mk === 'total' && (resolved === 'over' || resolved === 'under')) {
-        netMove = moves.total.get(r.game_id) ?? 0;
-        // Over backers are gifted by the total DROPPING; Under backers by it rising.
-        rlm = resolved === 'over' ? netMove <= -0.5 : netMove >= 0.5;
-        freeze = !rlm && Math.abs(netMove) < 0.5;
+        idx = moves.total; key = r.game_id;
       } else if (mk === 'spread' && g && (resolved === 'home' || resolved === 'away')) {
         const team = resolved === 'home' ? g.home : g.away;
-        netMove = moves.spread.get(`${r.game_id}|${String(team).toLowerCase()}`) ?? 0;
-        // A side's own line rising = its backers get a better number = gifted.
-        rlm = netMove >= 0.5;
+        idx = moves.spread; key = `${r.game_id}|${String(team).toLowerCase()}`;
+      }
+      if (idx && !idx.has(key)) {
+        rlm = null; freeze = null; noMoveData++;
+      } else if (idx) {
+        netMove = idx.get(key);
+        // Over backers are gifted by the total DROPPING; Under backers by it
+        // rising. A spread side's own line rising = its backers get a better
+        // number = gifted.
+        rlm = mk === 'total' && resolved === 'over' ? netMove <= -0.5 : netMove >= 0.5;
         freeze = !rlm && Math.abs(netMove) < 0.5;
       }
     }
@@ -130,8 +150,8 @@ ${slate}`;
   const freezeCount = rows.filter((r) => r.freeze).length;
   const pileCount = rows.filter((r) => r.pileon).length;
   return {
-    summary: `${rows.length} splits · ${rlmCount} RLM (T1) · ${freezeCount} freeze · ${pileCount} pile-on`,
-    data: { count: rows.length, rlm: rlmCount, freeze: freezeCount, pileon: pileCount },
+    summary: `${rows.length} splits · ${rlmCount} RLM (T1) · ${freezeCount} freeze · ${pileCount} pile-on · ${noMoveData} no line data`,
+    data: { count: rows.length, rlm: rlmCount, freeze: freezeCount, pileon: pileCount, noMoveData },
   };
 }
 
