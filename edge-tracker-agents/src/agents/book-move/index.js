@@ -95,7 +95,7 @@ const MARKETS = ['spreads', 'totals'];
 // changes — the D75 property), evicted at kickoff + OPEN_KEEP_MS, so the
 // steady-state cost is new games only — but ONLY a non-empty result is
 // memoised: a lost chunk (the D68/D99 timeout path) leaves 0 rows at this
-// run, and those rows may land minutes later. A book absent from the whole
+// run, and a twice-failed chunk does not land later (D99) — it is the NEXT odds run's rows that arrive, so an empty read is retried rather than memoised. Known residual: a partially landed first run IS memoised per game, so books in a lost tail chunk read `—` until kickoff+6h; per-book re-reads are a follow-up. A book absent from the whole
 // window is ABSENT from the object — never 0, never the consensus opener.
 const OPEN_BOOK_LIMIT = 60;
 const OPEN_MARKETS = ['spreads', 'totals', 'h2h'];
