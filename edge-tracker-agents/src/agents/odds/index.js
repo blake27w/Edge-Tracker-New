@@ -996,15 +996,20 @@ export function isMissingColumn(e) {
 // have not been hand-run, PostgREST rejects the WHOLE insert on the unknown
 // columns and movement writes fail silently. Strip them once and retry, so
 // behaviour is correct either way.
+//
+// Nobody reads the inserted rows back, so ask for the minimal return (see
+// db.insert) rather than making the server aggregate them inside the timed
+// statement.
+const MINIMAL = { returning: 'minimal' };
 async function insertMovements(rows) {
   const stripped = () => rows.map(({ gap_min, baseline_source, ...rest }) => rest);
-  if (!extraCols) return db.insert('line_movements', stripped());
-  try { return await db.insert('line_movements', rows); }
+  if (!extraCols) return db.insert('line_movements', stripped(), MINIMAL);
+  try { return await db.insert('line_movements', rows, MINIMAL); }
   catch (e) {
     if (!isMissingColumn(e)) throw e;
     extraCols = false;
     logger.warn('odds', `line_movements is missing gap_min/baseline_source — run the alter table lines in scripts/schema.sql; writing without them for now (${e.message})`);
-    const res = await db.insert('line_movements', stripped());
+    const res = await db.insert('line_movements', stripped(), MINIMAL);
     // The probe above already fired reportWriteFailure, so a
     // `write|line_movements` degradation is now standing — and /data-health and
     // the watchdog would report movement writes as failing for the full 90-min
@@ -1014,6 +1019,73 @@ async function insertMovements(rows) {
     clearDegraded('write|line_movements');
     return res;
   }
+}
+
+// ── The snapshot write, chunked ─────────────────────────────────
+// A busy slate builds ~4,800 snapshot rows a run, and `db.insert` of the whole
+// array is ONE PostgREST statement into a 7M-row table with four btree indexes
+// to maintain per row (the random-placement uuid PK is the expensive one).
+// Under evening load that statement exceeded the 8s statement_timeout (57014,
+// server-side), Postgres rolled back the WHOLE batch, and the warn-only catch
+// below was the only trace: 15 of 60 runs in the 7-10pm ET window lost every
+// snapshot they took, while the summary went on reading "4800 snapshots".
+//
+// Chunk size: the failures were observed at ~1.67 ms/row (8s / 4,800), so 500
+// rows is ~0.8s a chunk; 5x worse than that is still 4s, inside the 8s timeout
+// with margin. Chunks are written SERIALLY, not Promise.all: parallel chunks
+// contend for the same pool connections and the same hot index pages, which is
+// the load that produced the timeout in the first place. Env-overridable so a
+// test can drive the size-dependent failure with a small batch.
+//
+// The knob is a loop STEP, so it is sanitized harder than the other `Number(env)
+// || default` knobs: a negative value (`-5`) is `i += -5` — the loop never
+// terminates, the odds agent hangs, and the orchestrator awaits odds before
+// every other agent; a fractional one (`0.5`) emits empty chunks and visits
+// rows twice. Anything that is not a whole number ≥ 1 collapses to the default.
+const SNAPSHOT_CHUNK = (() => {
+  const n = Math.floor(Number(process.env.ODDS_SNAPSHOT_CHUNK));
+  return Number.isFinite(n) && n >= 1 ? n : 500;
+})();
+const SNAPSHOT_WRITE_KEY = 'write|line_snapshots';
+const isStatementTimeout = (e) => e?.code === '57014';
+
+// Writes `rows` in SNAPSHOT_CHUNK pieces and reports what actually landed.
+// A chunk that times out is retried once — a timeout is load, not a fault in
+// the rows — and a retry that succeeds retracts the degradation the failed
+// first attempt fired (D73: a false `write|line_snapshots` alarm standing for
+// the full TTL while every row lands is how that channel becomes noise). A
+// chunk that fails twice, or fails for any other reason, is counted LOST and
+// the next chunk is still attempted: partial data honestly reported beats an
+// all-or-nothing batch.
+async function insertSnapshots(rows) {
+  const out = { written: 0, lost: 0, timeouts: 0, retried: 0, error: null };
+  for (let i = 0; i < rows.length; i += SNAPSHOT_CHUNK) {
+    const chunk = rows.slice(i, i + SNAPSHOT_CHUNK);
+    try {
+      await db.insert('line_snapshots', chunk, MINIMAL);
+      out.written += chunk.length;
+      continue;
+    } catch (e) {
+      if (!isStatementTimeout(e)) { out.lost += chunk.length; out.error = e; continue; }
+      out.timeouts++;
+    }
+    try {
+      await db.insert('line_snapshots', chunk, MINIMAL);
+      out.written += chunk.length;
+      out.retried++;
+    } catch (e) {
+      if (isStatementTimeout(e)) out.timeouts++;
+      out.lost += chunk.length;
+      out.error = e;
+    }
+  }
+  // The retraction is decided for the RUN, not per chunk: a chunk lost for
+  // good earns the alarm, and a later chunk landing on retry must not take it
+  // back. Clearing inside the loop did exactly that — chunk 3 lost twice, chunk
+  // 7 recovered, alarm gone, 500 rows missing with nothing standing for the
+  // watchdog. Only a run in which every row landed may call its alarm false.
+  if (out.retried && !out.lost) clearDegraded(SNAPSHOT_WRITE_KEY);
+  return out;
 }
 
 // ── Opening lines: the first line we record per game/market sticks ──
@@ -1324,8 +1396,22 @@ async function run() {
   }
 
   // Persist snapshots + movements + budget; publish games to the store.
+  // `snapshotsWritten` is what LANDED; `snapshots.length` is what was built.
+  // The two were the same number in the summary for as long as this write was
+  // one statement, which is how a run that persisted nothing read as healthy.
+  let snapshotsWritten = 0;
+  let snapshotsLost = 0;
   if (snapshots.length) {
-    try { await db.insert('line_snapshots', snapshots); } catch (e) { logger.warn('odds', `snapshot write: ${e.message}`); }
+    const w = await insertSnapshots(snapshots);
+    snapshotsWritten = w.written;
+    snapshotsLost = w.lost;
+    if (w.lost) {
+      // Error, not warn: a warn in a 100-entry ring buffer is how this went
+      // unnoticed for 15 runs. The degradation fired by db.insert stands.
+      logger.error('odds', `snapshot write: ${w.lost}/${snapshots.length} rows lost${w.timeouts ? ` after ${w.timeouts} statement timeout(s) (chunk ${SNAPSHOT_CHUNK}, retried once)` : ''} — ${w.error?.message}`);
+    } else if (w.retried) {
+      logger.warn('odds', `snapshot write: ${w.retried} chunk(s) timed out once and landed on retry (chunk ${SNAPSHOT_CHUNK})`);
+    }
   }
   if (movements.length) {
     try { await insertMovements(movements); } catch (e) { logger.warn('odds', `movement write: ${e.message}`); }
@@ -1387,10 +1473,14 @@ async function run() {
   const baselineBit = `baseline ${hydr.games}/${hydr.attempted} games → ${hydr.keys} keys rehydrated${hydr.failures ? `, ${hydr.failures} read failures` : ''}, ${stats.staleBaseline} stale-baseline${hydrateFailRuns >= HYDRATE_FAIL_RUNS ? `, reads circuit-broken after ${hydrateFailRuns} failed runs` : ''}${steamDropped ? `, ${steamDropped} too wide for steam` : ''}`;
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots, ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots (${snapshotsWritten} written${snapshotsLost ? `, ${snapshotsLost} lost` : ''}), ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
     gamesMonitored: allGames.length,
     data: {
       games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls,
+      // `snapshots` is built, `snapshotsWritten` is persisted. A loss is the
+      // difference, named here so a run that lost its batch cannot be read as
+      // one that landed it.
+      snapshotsWritten, snapshotsLost,
       // `rehydratedKeys` is keys, `rehydratedGames` is games — never compare
       // either against `games` above without knowing which is which.
       rehydratedKeys: hydr.keys, rehydratedGames: hydr.games,

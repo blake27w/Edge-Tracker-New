@@ -3,7 +3,7 @@
   "appName": "Edge Tracker",
   "webDir": "www",
   "server": {
-    "url": "https://blake27w.github.io",
+    "url": "https://blake27w.github.io/Edge-Tracker-New/",
     "cleartext": false
   },
   "ios": {
