@@ -143,7 +143,9 @@ test('a 5-hour rehydrated drift at three books is NOT published as steam', async
   // The actual consequence, through the real agent: before the filter this run
   // emitted `signal_type: 'steam', detail: "3 books moved totals Over down"`.
   const s = await sharp.run();
-  assert.equal(s.summary, 'no recent line movement', s.summary);
+  // The history reader sees the six written rows too; none is gap-eligible.
+  assert.match(s.summary, /^0 steam · /, s.summary);
+  assert.equal(s.data.clusters, 0);
   assert.equal(getIntel('sharp').length, 0);
   assert.equal(fdb.calls.insert.filter((c) => c.table === 'sharp_signals').length, 0,
     'nothing fabricated into sharp_signals either');

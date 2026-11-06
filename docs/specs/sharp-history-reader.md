@@ -1,354 +1,332 @@
 # sharp: bounded history reader for steam detection
 
-Branch `feat/sharp-history-reader`, off `main` at `fefc1dc`. **No DDL in this phase** — but see
-Risks: the two `alter table` lines HANDOFF still owes are a hard precondition for the feature doing
-anything at all.
+Branch `feat/sharp-history-reader-2`, off `origin/main` at `c075e70`. Refreshed 2026-11-05 against
+D77–D91 (two-feed split, 35-min bound, live `gap_min`, loud skips, dashboard, seasonality). **No DDL
+in this phase**, and — unlike the first draft — no DDL precondition either: `gap_min` and
+`baseline_source` are live (hand-run 2026-10-28, `edge-tracker-agents/scripts/schema.sql:889-909`).
 
 ## Problem
 
-`sharp` reads `getIntel('movements')` — the array from only the most recent odds run of *this*
-process — so every movement row older than that one run is invisible to it, which is why it has
-reported `no recent line movement` across 13,000+ runs. `line_movements` holds the same rows
-durably and nothing reads them. The fix is a bounded per-game history reader, plus the follow-up
-`odds` names in its own comments: `sharp` must check `gap_min` itself rather than trusting a
-producer to pre-filter.
+`sharp` (`edge-tracker-agents/src/agents/sharp/index.js:15`) reads `getIntel('movements')`, the
+in-memory array from only the most recent odds run of *this* process, so every row older than one
+run is invisible to it — which is why it has reported `no recent line movement` across 13,000+
+runs and why the Signal dashboard's Steam panel (`index.html:7137,7459`) renders **NOT FIRING**.
+`line_movements` holds every row durably, now self-identifying via `gap_min` (D73), and nothing
+reads it. This phase points steam detection at a bounded per-game history reader and makes `sharp`
+check `gap_min` itself — the follow-up `odds/index.js:788` names in its own comment.
 
 ## Approach
 
-### The simultaneity design (the heart of it)
+### The simultaneity test (unchanged — the heart of it)
 
-Steam is a claim about **simultaneity**. A gap filter alone is not enough: `gap_min <= 35` proves
-only that *each row's own baseline was recent*, not that three books moved *at the same time as each
-other*. Three books each with `gap_min = 30` whose `detected_at` are two hours apart satisfy every
-per-row test and are not one market move. Handing hours of rows to the existing "≥3 co-directional
-rows" logic is D77's steam-corruption bug scaled up, which is the failure mode this spec exists to
-avoid.
+Steam is a claim about **simultaneity**. A per-row gap filter proves only that *each row's own
+baseline was recent*, not that three books moved *at the same time as each other*: three books each
+with `gap_min = 30` whose `detected_at` are two hours apart pass every per-row test and are not one
+market move. Handing hours of rows to "≥3 co-directional rows" is D77's steam corruption scaled up.
 
-The true instant a book moved is unknowable from this data. What *is* knowable, exactly, is the
-interval it must have happened in:
+What the data does know exactly is the interval each move must have happened in:
 
 ```
-row interval  I(r) = [ detected_at(r) − gap_min(r) , detected_at(r) ]
+I(r) = [ detected_at(r) − gap_min(r) , detected_at(r) ]
+lo = max(detected_at − gap_min) over the cluster;  hi = min(detected_at) over the cluster
+steam  iff  lo <= hi  AND  distinct books >= STEAM_MIN_BOOKS (3)
 ```
 
-Two rows can be one market move iff their intervals overlap. So the steam test is **common
-intersection across ≥3 distinct books**:
+`lo <= hi` is literally "there exists one instant at which all of these books could have moved".
+Two filters, both necessary: (1) per-row via **`steamSafeMovements` imported from
+`../odds/index.js:800`** — the single definition of the bound (D78: 35, a literal clamped by
+`Math.min(MOVE_MAX_GAP_MIN, …)`, overridable by `ODDS_STEAM_MAX_GAP_MIN`). **This spec does not
+restate the number and `history.js` contains no bare `35`**; `STEAM_MAX_GAP_MIN` itself stays
+un-exported. (2) cross-row interval intersection over ≥3 distinct books. `hi − lo` is published in
+`detail` as the intersection width; `strength` formula untouched. Grouping key is
+`game_id|market|side|direction` — direction is in the key, not a post-hoc vote (D58's lesson).
 
-```
-lo = max over cluster of (detected_at − gap_min)
-hi = min over cluster of detected_at
-cluster is steam  iff  lo <= hi  AND  distinct books in cluster >= STEAM_MIN_BOOKS (3)
-```
+Rejected: gap-filter-only with a wider window (the bug above); a fixed `detected_at` cluster window
+(either looser than the per-row gap or rejects a genuine cluster seen across two odds runs —
+intersection is the exact condition); a synthetic "move time" `detected_at − gap/2` (invents
+precision the data lacks).
 
-`lo <= hi` is the literal statement *"there exists a single instant at which all of these books
-could have moved."* Note it **subsumes** a separate `detected_at` clustering window: non-empty
-intersection already forces the span of `detected_at` across the cluster to be ≤ the widest
-`gap_min` in it, which the per-row filter caps at 35. So there are two filters, not three, and they
-are both necessary:
+### Source routing (reconciled with D77)
 
-1. **Per-row (D78/D79):** `gap_min` present, typed, finite, `>= 0`, `<= STEAM_MAX_GAP_MIN` (35).
-   Bounds how conflated any single row may be. Reuses `steamSafeMovements` — not a reimplementation.
-2. **Cross-row:** non-empty interval intersection over ≥3 distinct books. Establishes that the books
-   moved *together*.
+- **Steam reads history, with `getIntel('movements')` merged in as a supplement.** History is
+  primary: it survives restarts and spans odds-run boundaries. The gap-filtered in-memory feed is
+  merged (deduped on a natural key) because it covers the window between detection and the insert
+  landing, and it is the only source when `db.isConnected()` is false. `sharp` still **never** reads
+  `movementsAll`.
+- **In-memory rows need a `detected_at` stamp, and today they do not have one.** Verified:
+  `movementFrom` (`odds/index.js:866-875`) returns `gap_min` and `baseline_source` but no
+  `detected_at`; `insertMovements` (`:997`) sends the row as-is and Postgres applies the
+  `default now()` (`schema.sql:79`). So the requirement **stays**: stamp
+  `detected_at: new Date(nowMs).toISOString()` in `movementFrom` (it already receives `nowMs`).
+  `detected_at` is a base-table column, so the strip path at `:998` is untouched, and the stored
+  stamp becomes the same value the memory row carries — which is what makes the dedupe key honest.
+- **`sharp` applies `steamSafeMovements` to the *union*** — history rows and memory rows alike —
+  so it is safe against any producer, which is the named follow-up.
+- **RLM stays in `public-splits`; `public-splits` is the status quo.** It already reads
+  `getIntel('movementsAll')` (`public-splits/index.js:75`) and the smoke assertion pinning that
+  (`tools/smoke.mjs:434-436`) is untouched. Nothing in this phase touches that agent or that feed.
+- **`gap_min is null` is a reader rule, not a migration risk.** Per D73 it is the exact pre-fix
+  predicate. The reader selects `gap_min`, never aggregates across null, counts those rows as
+  `preFix`, and reports them. There is no missing-column strip-and-retry in the reader: the DDL is
+  applied, and if the column ever vanished the select would fail loudly into the read-failure state
+  below rather than silently emitting zero steam.
 
-`hi − lo` is reported as the intersection width: a 3-book cluster that intersects in a 20-second
-window is far stronger evidence than one that intersects in 30 minutes. Width is published in
-`detail`; it does **not** enter `strength` (the existing formula is untouched, so no downstream
-threshold shifts).
+### Reporting: "nothing moved" must never look like "I cannot see" (aligned with D80)
 
-Grouping key is `game_id|market|side|direction` — direction is part of the key, not a post-hoc
-"dominant side" vote. Same lesson as D58 in `book-move`: two books arriving at one place from
-opposite directions are not in the same move.
+`'no recent line movement'` is deleted. Seven mutually exclusive states, every counter also in
+`data` (zeros included, the `baselineBit` precedent):
 
-**Alternatives rejected.** (a) *Gap filter only, wider window* — exactly the bug described above.
-(b) *A fixed `detected_at` cluster window (e.g. ±10 min) instead of intersection* — either looser
-than the per-row gap (admits rows that cannot overlap) or tighter (rejects a genuine 4-min-cadence
-cluster observed in two different odds runs); intersection is the exact condition, so use it.
-(c) *Collapse to a single "move time"* `detected_at − gap_min/2` and cluster on proximity —
-invents a precision the data does not have.
+| state | summary | `blocked` |
+|---|---|---|
+| no slate | `dormant — empty slate` | no (benign, D80) |
+| no DB and no memory feed | `blind — no DB and no in-memory feed` | no (`no DB` is normal locally, D80) |
+| every history read failed — the memory feed still runs and publishes | `blind — history read failed for 24/24 games[, 3 consecutive runs] · memory-only: 1 steam · 3 rows / 3 gap-eligible` | **`blocked: 'history read failed'`** once ≥ `HIST_FAIL_RUNS` (3) consecutive runs |
+| rows in window, every one `gap_min` null | `blind — 61 rows in the last 45m, none carry gap_min (writer is stripping it — see odds log)` | **`blocked: 'no row carries gap_min'`** |
+| window genuinely empty | `0 steam · 0 movement rows in the last 45m across 12 games · history+memory` | no |
+| rows, none simultaneous | `0 steam · 128 rows / 41 gap-eligible / 0 simultaneous clusters · 12 games · history+memory` | no |
+| success | `3 steam · 128 rows / 41 gap-eligible / 9 markets · 12 games · history+memory · window 45m` | no |
 
-### Source routing: steam vs RLM
+**A failed history read does not discard the memory feed.** A DB that times out must not publish
+*less* than a DB that is absent (`isConnected() === false` already publishes from memory), so the
+read-failed state runs the memory-only path, publishes whatever it yields, and reports history's
+blindness alongside — the summary still starts `blind —` (the agent cannot see `line_movements`),
+`source` is `memory`, and the counts after `memory-only:` are the memory feed's. It is one state,
+not two: pre-breaker it is blind, post-breaker it is blind *and* blocked.
 
-- **Steam reads history, with the in-memory feed merged in as a supplement.** History is primary:
-  it survives process restarts, spans odds-run boundaries, and is therefore the thing that fixes
-  13,000 runs. The in-memory `getIntel('movements')` feed is merged, not dropped, for two reasons:
-  it covers the window between `odds` detecting a move and `line_movements` accepting the insert,
-  and it is the only source when `db.isConnected()` is false. Both sources are deduped on a natural
-  key, so a row present in both is counted once.
-  To make a merge meaningful, `odds` must stamp `detected_at` on the in-memory rows (one line — see
-  file plan). Without it the memory rows have no interval and cannot be tested at all, which is a
-  worse answer than merging them.
-- **RLM is NOT moved to history and is NOT added to `sharp`.** RLM is direction versus the public;
-  `sharp` has no public data and says so in its own header — `public-splits` owns RLM and has the
-  bets%/handle% to judge it. Teaching `sharp` RLM means reading `public_splits` inside it and
-  duplicating the splits agent's resolver. Out of scope; recorded here as the deliberate answer to
-  "do steam and RLM want different sources": **yes, and the split already exists along agent lines
-  rather than along source lines.** `sharp` emits steam only, from history.
-- **`public-splits` is left alone** — stays on `getIntel('movementsAll')`. Its question is "did the
-  public's own number move at all", answered with `?? 0` over a game's whole drift, not a 45-minute
-  window; pointing it at history would change *which* aggregate it computes and would re-enter the
-  absent-vs-zero trap at a new source where "the read returned no rows" becomes a net move of zero.
-  That is a named follow-up phase, not this one. The existing smoke assertion pinning it to
-  `movementsAll` stays.
-
-### Reporting: "nothing moved" must not look like "I cannot see"
-
-That indistinguishability is what hid this bug for 13,000 runs. `'no recent line movement'` is
-deleted and replaced by mutually exclusive outcomes, every one of which also lands in `data`:
-
-| state | summary |
-|---|---|
-| no slate | `dormant — empty slate` |
-| no DB and no memory feed | `blind — no DB and no in-memory feed` |
-| every history read failed | `blind — history read failed for 24/24 games` + `reportDegraded('read\|line_movements', …)` |
-| rows exist, all `gap_min` null | `blind — N rows but no gap_min: run the alter table lines in scripts/schema.sql` + `reportDegraded` |
-| window genuinely empty | `0 steam · 0 movement rows in the last 45m across 12 games` |
-| rows, none simultaneous | `0 steam · 128 rows / 41 inside the 35m gap / 0 simultaneous clusters` |
-| success | `3 steam · 128 rows / 41 gap-eligible / 9 markets · history+memory · window 45m` |
-
-Partial read failures are always appended (`, 2 read failures`) rather than only on the all-failed
-path, and `preFix` (null-gap) rows are always counted and always printed when non-zero — zeros
-included for the counters in `data`, per the `baselineBit` precedent in `odds`.
+**No fourth reporting channel.** `sharp` makes no `reportDegraded` call of its own. The two
+"blind" states a human must act on return `blocked: '<constant literal>'` — `'history read failed'`
+and `'no row carries gap_min'`, never the summary: the orchestrator treats a *changed* reason as a
+new fault and resets the streak (`src/orchestrator/index.js:211-217`), so a reason that interpolated
+`N consecutive runs` would read `blockedRuns: 1` forever. Counts stay in the summary. The
+orchestrator (`src/orchestrator/index.js:202-245`) does the rest: `reportDegraded('sharp|blocked')`
+→ `watchdog.issues[]` as `type: 'blocked'` and `/health.system.degraded`, plus
+`blockedRuns`/`blockedReason`/`blockedSince` on `/health`, and unconditional clearing on the next
+non-blocked run. `HIST_FAIL_RUNS = 3` is a module-local streak (D76's number for the same
+table-in-distress case) because a single statement timeout is transient and `rules.blockedRunsMin`
+is 1 globally; runs 1–2 still print `blind — history read failed for N/N games` in `lastResult`,
+just without the alert. Partial failures are always appended (`, 2 read failures`). The summary
+strings are authored literals with counts interpolated — never anything from `process.env` (D80).
 
 ## Data model / API changes
 
-**No schema change. No DDL. No new index.** The query rides `line_movements_game_idx (game_id,
-detected_at desc)`, which has existed since before the 2026-07-03 `schema.sql` break and is
-therefore applied. Per D70, `line_movements_detected_idx (detected_at desc)` is **not** assumed to
-exist and this design never needs it — nothing here filters on `detected_at` without an equality on
-`game_id` first. Nothing must be hand-run for the *query*; the two owed `alter table` lines are a
-prerequisite for the *data* (see Risks).
-
-The query, exactly one per game × run:
+**No schema change, no DDL, no new index.** One query per game per run, riding
+`line_movements_game_idx (game_id, detected_at desc)` (`schema.sql:81`); nothing filters on
+`detected_at` without the `game_id` equality first, so `line_movements_detected_idx` (D70, may be
+unapplied) is never needed:
 
 ```js
 db.select('line_movements',
   'sport,game_id,market,book,side,line_open,line_current,moved,direction,gap_min,detected_at',
-  { match: { game_id },
-    gte:   { detected_at: since },          // now − STEAM_LOOKBACK_MIN
-    order: { column: 'detected_at', ascending: false },
-    limit: HIST_ROW_LIMIT })
+  { match: { game_id }, gte: { detected_at: since },
+    order: { column: 'detected_at', ascending: false }, limit: HIST_ROW_LIMIT })
 ```
 
-- `baseline_source` is **deliberately not selected** — it is hand-run DDL and naming it would make
-  PostgREST reject the whole select on an un-migrated DB (the exact hazard commented in
-  `hydrateBaseline` about `last_update`). `gap_min` *is* named because the feature is worthless
-  without it, and is protected by the existing `isMissingColumn` strip-and-retry idiom: on that
-  error, latch a module flag, retry without `gap_min`, and from then on report the
-  `blind — … run the alter table lines` state rather than silently emitting zero steam.
-- `match` on `game_id` plus `detected_at desc` is a full index-prefix equality + ordered range.
-  `side`/`market`/direction are filtered and grouped **in JS** so the prefix stays an equality
-  match — `book-move`'s and `hydrateBaseline`'s proven idiom, not a new access pattern. An
-  `in: { game_id: [...] }` whole-slate query is rejected for D71's reason: ordering across many
-  `game_id`s cannot use that index.
+`baseline_source` is not selected (not needed; and naming hand-run columns in a projection is the
+hazard `hydrateBaseline` documents at `odds/index.js:423-425` of smoke). `market`/`side`/`direction`
+are filtered and grouped in JS so the index prefix stays an equality. `in: { game_id: [...] }` is
+rejected per D71.
 
-**Bounds and worst case.** `HIST_MAX_GAMES = 24` (`SHARP_HIST_MAX_GAMES`), slate filtered to
-kickoff in `[now − 3h, now + 24h]`, upcoming first then started freshest-first — `book-move`'s
-ordering, same reason. `HIST_ROW_LIMIT = 400` (`SHARP_HIST_ROW_LIMIT`): a total "everything moved"
-event is 11 books × 2 markets × 2 sides = 44 rows, so 400 covers ~9 such events in 45 minutes.
-Worst case **24 queries and ≤9,600 rows per run**; typical is a few hundred rows. `truncated` is
-counted and reported when any game hits the limit, so a clipped window is visible rather than
-assumed (`book-move`'s `truncated_queries` precedent).
+**Bounds — exact.** `HIST_MAX_GAMES = 24` (`SHARP_HIST_MAX_GAMES`), slate filtered to kickoff in
+`[now − 3h, now + 36h]` — the forward edge is `odds`' fetch horizon (`fetchOdds` `commenceTimeTo`,
+`SLATE_AHEAD_H` in `history.js` names the coupling, D95): a three-book move on a game 24–36h out is
+written to `line_movements` the moment `odds` sees it, and a 24h slate would admit the game only
+once those rows were older than the window (Saturday steam on Sunday 1pm NFL was never steam).
+Upcoming soonest-first then started freshest-first (`book-move/index.js:370-381`'s ordering), so
+near games always win the cap. `HIST_ROW_LIMIT = 400` (`SHARP_HIST_ROW_LIMIT`); a whole-market move is
+11 books × 2 markets × 2 sides = 44 rows, so 400 covers ~9 events in the window; `truncated` is
+counted and printed. **Worst case per run: 24 `db.select` + at most 1 `db.insert`
+(`sharp_signals`) = 25 statements, ≤ 9,600 rows.** It is 24 and not 48: the first draft's one-time
+missing-column retry is gone, and the 48/run figure belongs to `odds`' steady-state hydration, a
+different agent. Breaker: after `HIST_FAIL_RUNS` all-failed runs, the reader probes
+`HIST_PROBE_GAMES = 1` game per run until one read succeeds (D76 idiom), so a distressed table sees
+1 select / 5 min from `sharp`, not 24.
 
-**Window.** `STEAM_LOOKBACK_MIN = 45` (`SHARP_HIST_LOOKBACK_MIN`). Derived, not arbitrary: an
-admissible cluster spans at most 35 minutes, plus one cadence tick so a cluster is not sliced by the
-window edge. Wider buys nothing — a row that cannot join a cluster inside 35 minutes cannot become
-steam later — and wider is precisely the D77 hazard.
+**Window.** `STEAM_LOOKBACK_MIN = 45` (`SHARP_HIST_LOOKBACK_MIN`): an admissible cluster spans at
+most the per-row bound (35) plus one cadence tick so the window edge never slices a cluster. Wider
+buys nothing — a row that cannot join a cluster inside the bound cannot become steam later.
 
-**Cost and cadence.** `sharp`'s interval moves **2 → 5 minutes** in `AGENT_DEFS`
-(`INTERVAL_SHARP` still overrides), matching `sharp-divergence`, `key-number` and `stale-line`. At
-24 queries / 5 min that is 288 queries/hour against `line_movements`, the same order as `book-move`
-(192/hour) and `odds`' steady-state hydration (48/run). At the old 2-minute cadence it would be
-720/hour against a table `/data-health` has a documented history of timing out on; 2 minutes bought
-nothing anyway, since movement only changes when `odds` runs (4–30 min). Zero Odds API spend — no
-`fetch(` in either file, pinned by smoke.
+**Cadence — re-verified.** `config/index.js:180` has `sharp: { min: 2 }`; `odds` wakes every 3 min
+on starter (`:170`) with per-key refetch at strike 4 / near 10 / mid 30 / idle 180 (`:166-169`), and
+seasonality (#139, D89) changes denominator membership, not cadence. Movement rows only change when
+`odds` fetches, so 2 min bought nothing and would be 720 selects/hour against a table `/data-health`
+has timed out on (D68). **`sharp` moves to 5 min** (`INTERVAL_SHARP` still overrides), matching
+`stale-line`/`sharp-divergence`/`key-number`: 24 × 12 = **288 selects/hour**, the same order as
+`book-move` (192/hour). Consequence: `AGENT_STALE_MS.sharp` in `index.html:6055` is `300000` and the
+Steam panel's `SIG_STEAM_BOUND` is 2× it, so it must become `600000` like the other 5-min agents or
+the dashboard flags `sharp` stale between runs. Zero Odds API spend — no `fetch(` in either sharp
+file, pinned by smoke.
 
-**Signal shape.** `sharp_signals` rows unchanged (no provenance column, no DDL): provenance and
-intersection width go in `detail`, e.g.
-`3 books moved totals Over down (avg 0.5) within 2m · history`. `strength` formula unchanged.
+**Signal shape.** `sharp_signals` rows unchanged. Provenance and width go in `detail`:
+`3 books moved totals Over down (avg 0.5) within 2m · history`. `detected_at` on the signal stays
+the run time (existing behaviour); the cluster's `hi` is in `detail`.
 
-**Re-emission.** `sharp` now re-derives the same cluster on every run for the life of the window.
-A process-local `Set` of emitted cluster keys
-(`game_id|market|side|direction|<sorted books>|<cluster hi ms>`) suppresses duplicate inserts;
-entries are evicted when the game leaves the slate (D75's eviction idiom). A cluster that *gains* a
-book changes its key and is re-emitted — intended, it is a strictly stronger claim. A restart
-re-emits each live cluster once; accepted, because the alternative is a unique index, i.e. DDL.
+**Re-emission.** The same cluster is re-derived every run for the life of the window. A
+process-local map keyed `game_id|market|side|direction` → the book sets already written suppresses
+duplicate inserts; entries evict when the game leaves the slate (D75). A cluster re-emits only when
+its book set *gains* a member — a strictly stronger claim. `hi` is deliberately not in the key: it
+moves whenever a member book ticks again inside the stab point, and keying on it would insert a
+second `sharp_signals` row naming the same books on every half-point tick of a live steam. A restart re-emits each live
+cluster once (the alternative is a unique index, i.e. DDL). `setIntel('sharp', …)` is republished
+every run regardless, so the dashboard and `/plays` see the live set.
 
 ## File-by-file plan
 
-1. **`edge-tracker-agents/src/agents/sharp/history.js`** — NEW. The reader plus the pure logic, all
-   exported for test:
-   - `readMovementHistory(games, { now })` → `{ rows, queried, failures, truncated, preFix }`.
-     Bounded slate selection, the per-game query above, `isMissingColumn` strip-and-retry latch,
-     per-game `try/catch` that counts a failure instead of aborting the run (`hydrateBaseline`'s
-     rule), `logger.warn` per failure.
-   - `normalizeRow(r)` — Postgres hands numerics back as strings and timestamps in `+00:00`;
-     `Number()`/`Date.parse()` with explicit presence checks before coercion, never
-     `Number.isFinite` as a presence check (house rule, D79).
-   - `mergeMovements(histRows, memRows)` — union deduped on
-     `game_id|book|market|side|line_open|line_current|detected_at(ms)`.
-   - `intervalOf(row)` → `{ lo, hi }` or `null`.
-   - `findSteamClusters(rows, { minBooks })` → clusters with `{ books, lo, hi, widthMin, rows }`.
-     Interval stabbing: group by `game_id|market|side|direction`, sort by `hi`, sweep candidate
-     points, keep the maximal set of **distinct books** whose intervals all contain one point; one
-     row per book (widest-fitting) so a book that hopped twice counts once.
-   - Imports `{ steamSafeMovements, STEAM_MAX_GAP_MIN }` from `../odds/index.js` — the bound must
-     have exactly one definition (D55's principle; two copies is how 30-vs-35 drift happens). No
-     `35` literal anywhere in this file.
-2. **`edge-tracker-agents/src/agents/sharp/index.js`** — rewrite `run()` around the above: slate →
-   read → merge → `steamSafeMovements` → `findSteamClusters` → emitted-set filter → insert →
-   `setIntel('sharp', …)` → the reporting table. Header comment rewritten to state what steam
-   means here and why the interval test exists. Keeps `STEAM_MIN_BOOKS = 3` and the `strength`
-   formula. Still reads `getIntel('movements')` (the gap-filtered feed) and **never**
-   `movementsAll`.
-3. **`edge-tracker-agents/src/agents/odds/index.js`** — two small changes: `export` on
-   `const STEAM_MAX_GAP_MIN`, and `detected_at: new Date().toISOString()` on each row returned by
-   `movementFrom` (the base-table column, *not* hand-run DDL, so `insertMovements`' strip path is
-   untouched). Comment why: the in-memory feed must carry the same interval the Postgres rows do.
-4. **`edge-tracker-agents/src/config/index.js`** — `sharp` `min: 2` → `min: 5`, with the reason in a
-   comment.
-5. **`tools/smoke.mjs`** — in the movement-feed section (~line 349–445). **Replace** the now-false
-   `sharp still reads the gap-filtered feed` assertion (it currently requires `movementsAll` to be
-   absent from `sharp/index.js`, which stays true, but its stated rationale is superseded) with:
-   `sharp reads bounded history` (`db.select('line_movements'` + `match: { game_id` in
-   `history.js`); `sharp bounds its slate` (`HIST_MAX_GAMES`/`slice(0,`); `steam requires interval
-   intersection` (`findSteamClusters` present and `lo <= hi` logic, plus `direction` in the grouping
-   key); `one definition of the simultaneity bound` (`history.js` imports `STEAM_MAX_GAP_MIN` and
-   contains no bare `35`); `sharp drops null-gap rows and counts them` (`preFix`);
-   `sharp distinguishes blind from empty` (`/blind —/` and `/0 movement rows/` both present);
-   `sharp never reads the complete feed` (`!/movementsAll/` across both sharp files);
-   `sharp spends nothing` (`!/\bfetch\s*\(/` across both sharp files);
-   `the history query does not name baseline_source`. Use the existing `ok()`/`skip()` helpers; no
-   new harness.
-6. **`edge-tracker-agents/test/sharp-history.test.js`** — NEW, `node:test` + `mock.module` +
-   `helpers/fake-db.js`, same shape as `test/odds-steam-gap.test.js`. Cases in the Test plan.
-7. **`edge-tracker-agents/test/odds-steam-gap.test.js`** — **must be amended**: line 146 asserts
-   `s.summary === 'no recent line movement'`, a string this change deletes. Re-point it at the new
-   zero-steam summary and at `res.data.clusters === 0`; the *behaviour* it pins (a 300-minute drift
-   at three books is not steam) is unchanged and must keep passing, now through the history path as
-   well as the memory path.
-8. **`DECISIONS.md`** — append D80 (interval intersection as the simultaneity rule, and why a gap
-   filter alone is insufficient), D81 (steam reads history, RLM stays with `public-splits`,
-   `public-splits` untouched), D82 (cadence 2 → 5 and the query arithmetic).
-9. **`HANDOFF.md`** — rewritten at `/wrap`.
+1. **`edge-tracker-agents/src/agents/sharp/history.js`** — NEW, all exported for test:
+   `selectSlate(games, now)`; `readMovementHistory(slate, { now })` →
+   `{ rows, queried, failures, truncated, preFix }` with per-game `try/catch` counting a failure
+   instead of aborting (`hydrateBaseline`'s rule, `odds/index.js:893`) and `logger.warn` per failure;
+   `normalizeRow(r)` (Postgres numerics arrive as strings, timestamps as `+00:00`; presence-check
+   before `Number()`/`Date.parse()`, never `Number.isFinite` as a presence check — D79);
+   `mergeMovements(hist, mem)` deduped on `game_id|book|market|side|line_open|line_current|detected_at ms`;
+   `intervalOf(row)` → `{ lo, hi } | null`; `findSteamClusters(rows, { minBooks })` → interval
+   stabbing per `game_id|market|side|direction` group, maximal set of distinct books whose intervals
+   share a point, one row per book, returns `{ books, lo, hi, widthMin, rows }`. Imports
+   `{ steamSafeMovements }` from `../odds/index.js` only.
+2. **`edge-tracker-agents/src/agents/sharp/index.js`** — rewrite `run()`: slate → read (with the
+   `HIST_FAIL_RUNS` streak + probe) → merge memory feed → `steamSafeMovements` → `findSteamClusters`
+   → emitted-set filter → insert → `setIntel('sharp', …)` → the seven-state table, returning
+   `blocked: true` on the two marked rows. Header comment rewritten to state what steam means and
+   why the interval test exists. Keeps `STEAM_MIN_BOOKS = 3`, the `strength` formula, and
+   `getIntel('movements')`; never `movementsAll`; no `fetch(`.
+3. **`edge-tracker-agents/src/agents/odds/index.js:866-875`** — add
+   `detected_at: new Date(nowMs).toISOString()` to the `move` object in `movementFrom`, with a
+   one-line comment: the in-memory row must carry the same interval the Postgres row does. Nothing
+   else in `odds` changes.
+4. **`edge-tracker-agents/src/config/index.js:180`** — `sharp: { …, min: 5 }` with the reason
+   (movement only changes when odds fetches; 24 reads/run at 2 min is 720/hour on `line_movements`).
+5. **`index.html`** — three small edits: `:6055` `sharp:300000` → `sharp:600000`; `:7137`
+   `notFiring:/no recent line movement/.test(res)` → `/^blind —/.test(res)` so the radar means
+   "the agent says it cannot see", not "the agent used a string we deleted"; `:7452` stale copy
+   `'10m (2× …)'` → `'20m (2× …)'`; `:7459` banner text quotes `res` instead of the fixed sentence
+   (keep the `NOT FIRING —` prefix: smoke `:669-680` pins that copy in `sigBanner`).
+6. **`tools/smoke.mjs`** — in the `:357-447` feed section, keep `sharp still reads the gap-filtered
+   feed` (`:437-439`, still true; reword its rationale to "and merges it over history") and add:
+   `sharp reads bounded history` (`db.select('line_movements'` + `match: { game_id` in `history.js`);
+   `sharp bounds its slate` (`HIST_MAX_GAMES` + `slice(0,`); `steam requires interval intersection`
+   (`findSteamClusters`, `lo <= hi`, `direction` in the key); `one definition of the simultaneity
+   bound` (`history.js` imports `steamSafeMovements` and contains no `\b35\b`); `sharp counts null-gap
+   rows` (`preFix`); `sharp distinguishes blind from empty` (`/blind —/` and `/0 movement rows/`);
+   `sharp never reads the complete feed` (`!/movementsAll/` over both files); `sharp spends nothing`
+   (`!/\bfetch\s*\(/` over both files); `a persistent read failure is blocked, not bespoke`
+   (`blocked: true` present, `reportDegraded` absent from both sharp files); `the history query does
+   not name baseline_source`; `the Steam radar keys on blind` (`/\^blind —\//` in `sigSteamFacts`);
+   `movementFrom stamps detected_at`. `ok()`/`skip()` only; no new harness.
+7. **`edge-tracker-agents/test/sharp-history.test.js`** — NEW. Model on
+   `test/odds-steam-gap.test.js:67-103` (`mock.module` for config/db/utils, `fakeDb` from
+   `test/helpers/fake-db.js` which records `select` calls with `cols` and `opts`, real store). For
+   the `blocked` cases, drive through the real orchestrator the way `test/agent-blocked.test.js:25-70`
+   does. Cases in the Test plan.
+8. **`edge-tracker-agents/test/odds-steam-gap.test.js:146`** — asserts
+   `s.summary === 'no recent line movement'`; re-point at `/^0 steam · /` and `s.data.clusters === 0`.
+   The behaviour it pins (a 300-min drift at three books is not steam) must keep passing through
+   both paths. Line 133's shape check gains nothing to change (`detected_at` is additive).
+9. **`DECISIONS.md`** — append **D92** (interval intersection is the simultaneity rule; why a gap
+   filter alone is insufficient), **D93** (steam reads history + the memory feed; RLM stays with
+   `public-splits`, which is unchanged on `movementsAll`), **D94** (cadence 2 → 5 with the query
+   arithmetic, and read-failure surfacing via `blocked` rather than a fourth channel).
+10. **`HANDOFF.md`** — rewritten at `/wrap`.
 
 ## Risks & open questions
 
-1. **BLOCKING, for Blake: the two `alter table` lines in HANDOFF are still un-run.** Until they are,
-   every `line_movements` row lands without `gap_min`, the per-row filter correctly drops all of
-   them, and this feature emits **zero steam** — reported as `blind — N rows but no gap_min`, which
-   is the honest answer but is not the feature working. Running them is step 2 of the manual check
-   and the precondition for steps 4–6.
-2. **`detected_at` is when *we observed* the move, not when the book moved.** The interval
-   formulation is the tightest honest bound available; the data cannot support anything finer. Two
-   books that genuinely moved together but were observed in odds runs 40 minutes apart will not
-   intersect and will not be called steam. **That is a deliberate false-negative bias** — under-
-   calling steam costs a missed signal, over-calling it writes fiction into `sharp_signals` and on
-   into `corroborate`, `public-fade`, `sharp-divergence` and `export`.
-3. **Client-stamped `detected_at` assumes one writer process.** Stamping in `odds` rather than
-   taking the DB `now()` default introduces process-clock skew if Edge Tracker is ever run as more
-   than one instance. True today (single Railway service); worth stating because the interval test
-   is only as good as that stamp.
-4. **`sharp` now depends on the in-memory slate for its query bound.** A process with no slate
-   (budget exhausted, or before the first `odds` run) reports `dormant — empty slate` and sees
-   nothing. Correct and loud, but it means history does not make `sharp` fully independent of
-   `odds`. Deriving game ids from `line_movements` itself would need an unbounded query and is
-   rejected.
-5. **Duplicate `sharp_signals` rows across restarts.** Suppression is process-local; the clean fix
-   is a unique constraint on `(game_id, market, side, signal_type, detected_at)`, i.e. DDL. Blake's
-   call whether that is worth another hand-run statement given this repo's record (D69/D70).
-6. **The window is tuned for STRIKE/NEAR cadence.** On MID/IDLE sports most rows carry
-   `gap_min > 35` and will never be steam-eligible. That is the correct reading of the data, not a
-   gap to patch, but expect the honest answer on idle slates to be `0 steam · N rows / 0 inside the
-   35m gap`.
+1. **`detected_at` is when we observed the move, not when the book moved.** Two books that moved
+   together but were observed in odds runs 40 minutes apart will not intersect. Deliberate
+   false-negative bias: a missed signal costs less than fiction flowing into `corroborate`,
+   `public-fade`, `sharp-divergence` and `export`.
+2. **Client-stamped `detected_at` assumes one writer process** (true today — one Railway service).
+   Stated because the interval test is only as good as that stamp.
+3. **`sharp` depends on the in-memory slate for its bound.** Before the first `odds` run, or with
+   the budget exhausted, it reports `dormant — empty slate`. Deriving game ids from
+   `line_movements` would need an unbounded query; rejected.
+4. **Duplicate `sharp_signals` rows across restarts.** Process-local suppression; the clean fix is
+   a unique constraint, i.e. hand-run DDL. **Blake's call** given D69/D70.
+5. **Threshold choice for `blocked`.** `HIST_FAIL_RUNS = 3` (≈15 min at 5-min cadence) trades
+   alert latency for immunity to one transient timeout. **Blake's call** if 1 is preferred — then
+   `rules.blockedRunsMin` already does the counting and the local streak collapses to a probe gate.
+6. **Idle-tier slates will honestly read `0 steam · N rows / 0 gap-eligible`.** Not a gap to patch.
+7. **The `null`-gap "writer is stripping it" state is now near-unreachable** (DDL live). Kept because
+   `extraCols` in `odds` still latches off on a missing-column error and the rows it then writes are
+   exactly the non-authoritative ones D73 warns about.
 
 ## Test plan
 
-**`test/sharp-history.test.js`** (stubbed `db` via `helpers/fake-db.js`, assert on query *shape* as
-well as results, per D22):
+**`test/sharp-history.test.js`** — assert on query *shape* as well as results (test/README.md):
 
-- *Query shape:* one select per game, `table === 'line_movements'`, `opts.match.game_id` set,
-  `opts.gte.detected_at` present (a missing lower bound is the D11 bug shape), `ascending: false`,
-  `limit` set, slate capped at `HIST_MAX_GAMES` with a 40-game slate, and `cols` must **not**
-  contain `baseline_source`.
-- *The decisive negative:* three books, each `gap_min = 30`, `detected_at` two hours apart →
-  **no steam**, `clusters === 0`. Mutation check: delete the intersection test and this case must
-  fail. This is the test that stops D77 scaled up.
-- *The decisive positive:* three books, `gap_min = 10`, `detected_at` within 3 minutes → one steam
-  signal, `books.length === 3`, `widthMin` reported, inserted into `sharp_signals` once.
-- *Boundary:* intervals touching at exactly one instant (`lo === hi`) → steam; one second apart →
-  not.
-- *Per-row filter still governs:* three books, `detected_at` identical, `gap_min = 300` → no steam
-  (intersection alone must not rescue a conflated row).
-- *Two books only* → no steam. *Two books plus one at the opposite `direction`* → no steam
-  (direction is in the grouping key).
-- *Null/junk gaps:* `gap_min` null, `''`, `'  '`, `[]`, `false`, `true`, `-5`, `'soon'` → dropped,
-  `preFix` counted, and an all-null window produces the `blind — … no gap_min` summary plus a
-  `read|line_movements` degradation entry.
-- *Read failure:* `fail['select:line_movements']` → `blind — history read failed for N/N`, degraded
-  entry, and the run does **not** throw; one game failing out of three → signals still emitted and
-  `2 read failures` in the summary.
-- *Missing column:* a `column "gap_min" … does not exist` error → one retry without `gap_min`, the
-  latch set, the un-run-DDL summary, and no crash.
-- *Merge and dedupe:* the same movement present in both history and `getIntel('movements')` counts
-  once; a memory-only row still forms a cluster when the DB is unreachable
-  (`isConnected() === false` → `source: 'memory'`).
-- *Re-emission:* two consecutive runs over an unchanged window insert `sharp_signals` **once**; a
-  fourth book joining re-emits.
-- *Messages:* each of the seven summary states is asserted as a distinct string — "nothing moved"
-  and "I cannot see movement" must not match the same regex.
+- *Query shape:* one select per game; `table === 'line_movements'`; `opts.match.game_id` set;
+  `opts.gte.detected_at` present; `ascending: false`; `limit` set; 40-game slate → exactly 24
+  selects; `cols` does not contain `baseline_source`; `cols` does contain `gap_min`.
+- *The decisive negative:* three books, `gap_min = 30` each, `detected_at` two hours apart → no
+  steam, `clusters === 0`, no insert. Mutation: delete the intersection test and this must fail.
+- *The decisive positive:* three books, `gap_min = 10`, `detected_at` within 3 min → one signal,
+  `books.length === 3`, `widthMin` reported, one `sharp_signals` insert, `detail` ends `· history`.
+- *Boundary:* `lo === hi` → steam; one second apart → not.
+- *Per-row filter governs the union:* identical `detected_at`, `gap_min = 300` → no steam. Mutation:
+  bypass `steamSafeMovements` → fails.
+- *Two books* → none. *Two plus one opposite `direction`* → none. Mutation: drop `direction` from
+  the key → fails.
+- *Null/junk gaps:* `null`, `''`, `'  '`, `[]`, `false`, `true`, `-5`, `'soon'` dropped and
+  `preFix` counted; an all-null window → the `none carry gap_min` summary and `blocked === true`.
+  Mutation: treat null as `0` → fails.
+- *Read failure:* `fail['select:line_movements']` → runs 1–2 return `blind — history read failed`
+  with no `blocked`; run 3 returns `blocked: 'history read failed'`; through the orchestrator,
+  `getDegraded()` contains key `sharp|blocked` with `type: 'blocked'` in the watchdog's view, and
+  the next successful run clears it. Run 4 issues exactly `HIST_PROBE_GAMES` selects. One game
+  failing of three → signals still emitted and `, 1 read failure` in the summary.
+- *Merge and dedupe:* the same move in both history and `getIntel('movements')` counts once; a
+  memory-only row forms a cluster with `isConnected() === false`, summary ends `· memory`.
+- *`movementFrom` stamps `detected_at`* equal to `new Date(nowMs).toISOString()`.
+- *Re-emission:* two runs over an unchanged window insert once; a member book re-ticking (same
+  book set, different `hi`) does not re-insert; a fourth book re-emits once.
+- *Blocked reason is constant:* ≥3 consecutive failed runs through the real orchestrator →
+  `blockedRuns` climbs and `blockedSince` stays pinned.
+- *Memory survives a failed history read:* all reads fail, three memory rows → one signal inserted,
+  summary `blind — … · memory-only: 1 steam …`, `blocked` only past the breaker.
+- *Slate horizon:* a game at +30h with three co-directional rows inside 45m → steam.
+- *Probe-run summary:* the run that closes the breaker says `across 1 of 3 games (probe)`.
+- *Messages:* all seven summaries asserted as distinct strings; no single regex matches both a
+  "nothing moved" and a "blind" state.
 
-**Mutation-test before trusting any of it** (D21): (a) remove the interval intersection → the
-two-hours-apart case must fail; (b) replace `steamSafeMovements` with a pass-through → the
-`gap_min = 300` case must fail; (c) drop `direction` from the grouping key → the opposite-direction
-case must fail; (d) treat a null gap as `0` → the null-gap case must fail; (e) remove the
-`gte: { detected_at }` bound → the query-shape case must fail.
+**Whole suite:** `npm ci && npm test` in `edge-tracker-agents/` must be **0 failures** (D82 —
+baseline 231, count rises); `node tools/smoke.mjs` from the root must be `0 failed` (baseline 202,
+count rises) with every skip naming its reason.
 
-**Whole-suite expectation:** `npm test` from `edge-tracker-agents/` must stay at 3 failures and
-those must remain the pre-existing environmental `degradation-channel` trio (`node_modules` absent
-in this worktree); total count rises from 111. `node tools/smoke.mjs` must be
-`0 failed`, and every skip must print with a named reason.
+### Manual check recipe (Blake, verifier of record)
 
-## Manual check recipe (Blake, verifier of record)
-
-1. `lsof -nP -iTCP -sTCP:LISTEN` — a Pool Room Pro Electron process holds 4317-4318 and Vantyx
-   holds 3000; `npx serve` silently falls back to a random port, so note the port it prints.
-   *Proves nothing about this feature; it stops you reading another app's output as ours.*
-2. In the Supabase SQL editor run the two owed lines (idempotent):
-   `alter table line_movements add column if not exists gap_min numeric;`
-   `alter table line_movements add column if not exists baseline_source text;`
-   Then `select count(*) from line_movements where gap_min is not null;` — **this must be non-zero
-   before step 4 can mean anything.** *Proves the DDL is applied and forward rows are
-   self-identifying; proves nothing about `sharp`.*
-3. `cd edge-tracker-agents && npm test`, and `node tools/smoke.mjs` from the repo root. *Proves the
-   logic is pinned against stubs. It does not prove the live query uses the index, returns rows, or
-   that the slate is populated.*
-4. **DECISIVE — the positive.** Pick a `game_id` on the live slate from `/health` or
-   `/data-health`. Insert three rows into `line_movements` by hand for one `market`/`side`, three
-   different `book` values, the same `direction`, `gap_min = 10`, and `detected_at` values inside a
-   3-minute span ending `now()`. Wait for the next `sharp` run and read its summary. It must report
-   `1 steam` with `within <N>m · history`, and `select * from sharp_signals order by detected_at
-   desc limit 5` must show the row with three books. **This is the only step that proves `sharp` can
-   see history at all** — nothing before it does.
-5. **DECISIVE — the negative, and the more important of the two.** Repeat step 4 with the same three
-   rows but `detected_at` spread over two hours (`gap_min` still 10). `sharp` must report
-   `0 steam · 3 rows / 3 inside the 35m gap / 0 simultaneous clusters` and must write **nothing** to
-   `sharp_signals`. If step 4 passes and this one does not, the feature is D77 scaled up and must
-   not merge.
-6. Watch three consecutive `sharp` summaries on the live slate with no hand-seeded rows. You are
-   checking that the *state* it reports is the true one: `0 movement rows in the last 45m` on a
-   quiet slate, a non-zero `rows` count on a live one, and never `blind —` once step 2 is done.
-   *Proves the reporting distinguishes empty from blind. It does not prove the cluster logic — only
-   steps 4 and 5 do — and a quiet slate will look identical whether clustering works or not.*
+1. `lsof -nP -iTCP -sTCP:LISTEN` — Pool Room Pro holds 4317-4318, node holds 3000 and 5173,
+   ControlCenter 5000 and 7000; `npx serve .` falls back silently, so use the port it prints.
+   *Proves nothing about the feature; it stops you reading another app's output as ours.*
+2. `cd edge-tracker-agents && npm ci && npm test`; `node tools/smoke.mjs` from the root. *Proves the
+   logic against stubs only — not that the live query returns rows or that the slate is populated.*
+3. Deploy, then read `/health` → `agents[name=sharp].lastResult`. **Decisive observable A:** it is
+   no longer `no recent line movement` and is one of the seven strings. On a live slate it should be
+   `0 steam · N rows / k gap-eligible / 0 simultaneous clusters …` with **N > 0** — that single
+   line proves the reader read real rows out of `line_movements`, and it is distinguishable from
+   `blind —` by construction. *This is how the reader is proved without waiting for steam.*
+   `dormant — empty slate` means odds has not populated the slate yet; wait one odds run.
+4. Open the PWA → Signal → Steam. **Decisive observable B:** the radar/NOT FIRING banner is gone
+   and the panel shows `Feed answered.` with the agent's own line underneath, or signals. The
+   Agents tab must not mark `sharp` stale between 5-min runs (that is the `AGENT_STALE_MS` edit).
+5. Optional, strongest — the positive and the negative, hand-seeded. Pick a `game_id` from
+   `/health`'s slate. In the Supabase SQL editor insert three `line_movements` rows for one
+   `market`/`side`, books `check-a`/`check-b`/`check-c`, same `direction`, `gap_min = 10`,
+   `detected_at` inside a 3-min span ending `now()`. Next `sharp` run must say `1 steam …` and
+   `sharp_signals` must show one row with those three books. Then delete them and repeat with
+   `detected_at` spread over two hours: it must say `0 steam · 3 rows / 3 gap-eligible / 0
+   simultaneous clusters` and write nothing. **If the positive passes and the negative does not,
+   the feature is D77 scaled up and must not merge.** Clean up:
+   `delete from line_movements where book like 'check-%'` and the seeded `sharp_signals` row.
+   *This is the only step that proves the cluster logic against the live table.*
+6. Seeing a *real* steam signal is opportunistic: it needs ≥3 books to move within the 35-min bound
+   on a game the slate holds, which cannot be summoned. If one appears, check `detail` reads
+   `within <N>m · history` and the width is plausible (seconds to a few minutes, not 35).
+7. The `blocked` path is proved by tests only; do not try to break the live table to see it.
 
 ## Follow-up phases
 
-- **Open→close movement for all 12 sports.** Spec already written at
-  `docs/specs/line-move-all-sports.md`, with the store-shape and rename decisions made. Independent
-  of this phase: it reads `opening_lines` and consensus, not `line_movements`.
+- **Open→close movement for all 12 sports** — `docs/specs/line-move-all-sports.md`, independent of
+  this phase (reads `opening_lines` and consensus, not `line_movements`).
 - **Teach `public-splits` absent-vs-zero.** `netMove = moves.total.get(id) ?? 0` cannot tell "no
-  row" from "no movement", which is why D77 had to split the feeds rather than fix the consumer.
-  Make the absent case `null` and carry it through `rlm`/`freeze` so any future consumer — including
-  a history-backed one — inherits a safe default instead of a silent zero.
-- **Add `book_move_log` to the watchdog's schema probes.** One line, and those probes exist to catch
-  exactly the failure this repo keeps having: an agent shipping with DDL nobody ran (D69).
+  row" from "no movement"; D77 split the feeds around it rather than fixing it. Make the absent case
+  `null` and carry it through `rlm`/`freeze`.
+- **Zero-recipient watchdog.** Everything this and #137 make loud terminates at `notifyAll` with no
+  `ALERT_NUMBERS`/`SMTP_*`; `sharp|blocked` is readable on `/health`, not pushed, until that is set.
+- (Shipped, no longer follow-ups: the Signal dashboard #138, automatic seasonality #139.)

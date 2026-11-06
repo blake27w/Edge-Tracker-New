@@ -6052,7 +6052,7 @@ var AGENTS_META=[
   {name:'pred-market',icon:'🔮',label:'Prediction Markets (Poly/Kalshi)',cadence:'every 10m (if enabled)'},
   {name:'digest',icon:'📰',label:'Daily Digest',cadence:'daily 9:00'}
 ];
-var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:300000,power:345600000,'public-splits':14400000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'book-move':1800000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-live':180000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
+var AGENT_STALE_MS={odds:600000,injury:1800000,weather:2700000,sharp:600000,power:345600000,'public-splits':14400000,'schedule-spot':1800000,'mlb-context':3600000,signal:600000,'prop-engine':28800000,clv:900000,grading:1800000,'tennis-ingest':93600000,'tennis-fatigue':28800000,'tennis-surface':7200000,'tennis-signal':600000,'tennis-close':3600000,'ev-scanner':600000,'arb-scanner':600000,'backtest':3600000,'stale-line':600000,'sharp-divergence':600000,'key-number':600000,'fair-line':5400000,'opp-grading':3600000,'book-edges':3600000,'book-move':1800000,'combat-market':1800000,'combat-weighin':14400000,'combat-signal':600000,'combat-derivatives':1800000,'public-fade':600000,'nfl-power':172800000,'nfl-win-totals':93600000,'nfl-schedule':172800000,'nfl-props':172800000,'nfl-totals':93600000,'nfl-inactives':1800000,'nfl-live':180000,'nfl-line-move':5400000,'nfl-derivatives':3600000,'nfl-pace':172800000,'nfl-qb':3600000,'nfl-style':172800000,'mlb-umpire':21600000,'mlb-lineup':600000,'mlb-bullpen':21600000,'weather-change':900000,'pred-market':600000,'watchdog':600000,'digest':93600000};
 
 var _agentsPoll=null;
 function startAgentsPoll(){if(_agentsPoll)return;_agentsPoll=setInterval(function(){loadAgentsData()},30000)}
@@ -7134,7 +7134,7 @@ function sigSteamFacts(){
   var loaded=!!(src.at||state.agentsCachedAt||state.agentsLastLoad);
   var run=null;(state.agentsHealth||[]).forEach(function(r){if(r&&r.name==='sharp'&&!run)run=r;});
   var res=(run&&run.result)||'';
-  return {sg:sg,src:src,latest:latest,run:run,res:res,notFiring:/no recent line movement/.test(res),
+  return {sg:sg,src:src,latest:latest,run:run,res:res,notFiring:/^blind —/.test(res),
     st:sigState(src,loaded?sg:null,sg.length,SIG_STEAM_BOUND,latest)};
 }
 // One sub-status per chip. `off` tints the line wine, `warn` brass. When the
@@ -7438,25 +7438,25 @@ function sigEpisodeCard(m,hud){
 }
 
 // ── Panel 4 · STEAM ──────────────────────────────────────────────
-// This panel is EXPECTED to be empty today, and the empty state has to say why.
-// The sharp agent reads only the most recent odds run's in-memory movement
-// array, so with the odds run detecting nothing there is nothing to group —
-// which is the bug the shelved history reader fixes. An unexplained blank here
-// is exactly how that went unnoticed for 13,000+ runs.
+// Usually empty, and the empty state has to say why. The sharp agent reads
+// bounded line_movements history and reports one of seven states; only a
+// summary starting "blind —" (it cannot see the table) earns the radar. A
+// "0 steam · N rows …" line is a real zero. An unexplained blank here is
+// exactly how the old in-memory-only reader went unnoticed for 13,000+ runs.
 function renderSigSteam(){
   var F=sigSteamFacts(),sg=F.sg,src=F.src,latest=F.latest,st=F.st,run=F.run,res=F.res;
   var h='';
   var meta='sharp'+(run?' · last run '+agentAgo(run.finished_at||run.lastRunAt)+' · '+esc(agentStatus(run,'sharp').label.toLowerCase()):'');
   if(st==='failed')h+=sigBanner('failed',sigFailOpts('/plays',src));
   if(st==='loading')return sigPanel('Steam',meta,h+sigBanner('loading',{}));
-  if(st==='stale')h+=sigBanner('stale',{ago:latest?sigDur(latest):'—',bound:'10m (2× the sharp agent\'s cadence)'});
+  if(st==='stale')h+=sigBanner('stale',{ago:latest?sigDur(latest):'—',bound:'20m (2× the sharp agent\'s cadence)'});
 
   if(st==='nodata'){
     // A zero and a dead mechanism are different claims. The agent's own run
     // summary is the only thing that can tell them apart, so read it. Only the
     // proven-dead case earns the radar: a sweep over a feed that merely found
     // nothing would dress a zero up as a diagnosis.
-    if(F.notFiring)h+='<div class="sh-radar">'+sigRadar()+'<div>'+sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "no recent line movement". It reads only the most recent odds run\'s in-memory array; expect this to stay empty until the history reader lands (docs/specs/sharp-history-reader.md).'})+'</div></div>';
+    if(F.notFiring)h+='<div class="sh-radar">'+sigRadar()+'<div>'+sigBanner('off',{text:'Steam: NOT FIRING — the sharp agent reports "'+res+'". It cannot see line_movements (no DB, every history read failed, or the writer is stripping gap_min); a zero would read "0 steam" instead.'})+'</div></div>';
     else h+=sigBanner('nodata',{things:'steam signals',at:sigAt((run&&(run.finished_at||run.lastRunAt))||state.agentsLastLoad)});
   }
   // The agent's own line is shown whatever the state: it is the evidence for

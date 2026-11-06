@@ -871,6 +871,8 @@ export function movementFrom(prev, cur, nowMs) {
       direction: cl > pl ? 'up' : 'down',
       gap_min: Math.round((gapMs / 60_000) * 10) / 10,
       baseline_source: prev.source || 'in-process',
+      // The in-memory row must carry the same interval the Postgres row does.
+      detected_at: new Date(nowMs).toISOString(),
     },
   };
 }

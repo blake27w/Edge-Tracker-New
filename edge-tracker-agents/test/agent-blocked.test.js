@@ -821,7 +821,7 @@ test('with the key present, both agents stop reporting and the entry is retracte
   }
 });
 
-test('no OTHER agent opts in by accident, so the alert surface is exactly two', async () => {
+test('no OTHER agent opts in by accident, so the alert surface is exactly three', async () => {
   // The anti-noise property at the level of the whole fleet. ~60 of the ~70
   // skip sites are benign and must stay silent; if a future edit adds `blocked`
   // to one of them (a budget pause, an offseason, `no DB` in local dev) this is
@@ -848,6 +848,11 @@ test('no OTHER agent opts in by accident, so the alert surface is exactly two', 
     const code = codeOnly(await readFile(new URL(`../src/agents/${name}/index.js`, import.meta.url), 'utf8'));
     if (/(^|[^\w.])blocked:/.test(code)) optedIn.push(name);
   }
-  assert.deepEqual(optedIn.sort(), [...OPTED_IN].sort(),
-    'exactly the two agents the spec opted in — a third would be a new alert source');
+  // `sharp` opted in with the history reader (D94): its two "blind" states —
+  // every history read failing for 3 runs, or a window where no row carries
+  // gap_min — are conditions a human must act on, routed through this same
+  // channel rather than a bespoke one. It is not Claude-gated, so it is not in
+  // OPTED_IN above.
+  assert.deepEqual(optedIn.sort(), [...OPTED_IN, 'sharp'].sort(),
+    'exactly the three agents the specs opted in — a fourth would be a new alert source');
 });
