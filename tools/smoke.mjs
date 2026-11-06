@@ -289,6 +289,31 @@ ok('moved_at is non-null in the schema', /moved_at\s+timestamptz not null/.test(
 ok('the new table is indexed', /book_move_log_book_idx/.test(schema) && /book_move_log_game_idx/.test(schema));
 const migrate = await readFile(join(root, 'edge-tracker-agents/scripts/migrate.js'), 'utf8');
 ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
+
+// The watchdog's schema probes are the ONE runtime tell for a table whose DDL
+// nobody ran (D69/D70) — and book_move_log, hand-run 2026-10-28, was not in
+// them. The list is hand-maintained, so this pins it structurally: every table
+// schema.sql declares must be probed, except the ones that pre-date the probe
+// (frozen below — do not add to it; add the probe instead).
+const watchdogSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/watchdog/index.js'), 'utf8');
+ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+'\]/.test(watchdogSrc));
+{
+  const declared = [...schema.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
+  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const probed = new Set([...probeBlock.matchAll(/\['(\w+)',/g)].map((m) => m[1]));
+  const PRE_PROBE = new Set([
+    'scan_runs', 'api_usage', 'opening_lines', 'line_movements', 'injury_updates', 'game_weather',
+    'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots', 'mlb_context', 'player_usage',
+    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
+    'tennis_matchups', 'subscribers', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
+    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
+    'nfl_inactives', 'nfl_line_moves', 'nfl_derivatives', 'nfl_pace',
+  ]);
+  const unprobed = declared.filter((t) => !probed.has(t) && !PRE_PROBE.has(t));
+  ok('every table schema.sql declares is probed by the watchdog', unprobed.length === 0,
+    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
+  ok('the probe parser saw the list', probed.size >= 14, `parsed ${probed.size} probed tables`);
+}
 ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
   'an unbounded count on that table is what already times out the page');
@@ -358,6 +383,9 @@ const envExample = await readFile(join(root, 'edge-tracker-agents/.env.example')
 // key is the invariant, not a detail (D74).
 const splitsSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-splits/index.js'), 'utf8');
 const sharpSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/sharp/index.js'), 'utf8');
+const histSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/sharp/history.js'), 'utf8').catch(() => '');
+// Comments stripped: both sharp files document WHY they never touch movementsAll.
+const sharpCode = codeOnly(sharpSrc) + '\n' + codeOnly(histSrc);
 const hydrateFn = (oddsSrc.match(/async function hydrateBaseline[\s\S]*?\n\}\n/) || [''])[0];
 
 ok('the baseline is rehydrated from line_snapshots', /db\.select\('line_snapshots'/.test(hydrateFn),
@@ -435,8 +463,70 @@ ok('public-splits reads the complete feed, not the steam feed',
   /getIntel\('movementsAll'\)/.test(splitsSrc) && !/getIntel\('movements'\)/.test(splitsSrc),
   'the two consumers ask different questions of the same rows: simultaneity for sharp, did-it-move for public-splits');
 ok('sharp still reads the gap-filtered feed',
-  /getIntel\('movements'\)/.test(sharpSrc) && !/movementsAll/.test(sharpSrc),
-  'routing sharp at the complete feed restores the steam corruption this branch fixed — an afternoon of drift at three books republished as coordinated money');
+  /getIntel\('movements'\)/.test(sharpCode) && !/movementsAll/.test(sharpCode),
+  'the in-memory feed is merged over history for the window between detection and the insert landing; routing sharp at the complete feed restores the steam corruption #136 fixed — an afternoon of drift at three books republished as coordinated money');
+
+// ── sharp: bounded history reader + the simultaneity test (D92-D94) ──
+// The old agent read only the most recent odds run's array and said `no recent
+// line movement` for 13,000+ runs. The reader must be BOUNDED (one indexed
+// select per game, capped), the test must be INTERSECTION (not a per-row gap
+// filter, which at history scale is D77 again), and the empty states must be
+// distinguishable from the blind ones — the indistinguishability is what hid
+// the bug.
+const histFn = (histSrc.match(/export async function readMovementHistory[\s\S]*?\n\}\n/) || [''])[0];
+ok('sharp reads bounded history', /db\.select\('line_movements'/.test(histFn) && /match:\s*\{\s*game_id/.test(histFn)
+  && /gte:\s*\{\s*detected_at/.test(histFn) && /ascending:\s*false/.test(histFn) && /limit:\s*HIST_ROW_LIMIT/.test(histFn),
+  'one select per game riding line_movements_game_idx (game_id, detected_at desc), newest-first, with a limit');
+ok('the history read never uses in(game_id, [...])', !/\bin:\s*\{/.test(codeOnly(histSrc)),
+  'ordering across many game_ids cannot use the composite index — an unbounded sort on a 530k-row table (D71)');
+ok('sharp bounds its slate', /HIST_MAX_GAMES/.test(histSrc) && /\.slice\(0,\s*max\)/.test(histSrc)
+  && /selectSlate\(getGames\(\), now, HIST_MAX_GAMES\)/.test(sharpSrc),
+  '24 selects per run is the whole query budget; an uncapped slate is 150 on a football Sunday');
+ok('steam requires interval intersection', /export function findSteamClusters/.test(histSrc)
+  && /lo <= hi/.test(histSrc) && /\$\{r\.direction\}`/.test(histSrc) && /findSteamClusters\(rows/.test(sharpSrc),
+  'a per-row gap filter proves each row\'s own baseline was recent, not that three books moved at the same time as each other; direction is in the key, not a post-hoc vote (D58)');
+ok('one definition of the simultaneity bound', /import \{ steamSafeMovements \} from '\.\.\/odds\/index\.js'/.test(histSrc)
+  && !/\b35\b/.test(histSrc) && /steamSafeMovements\(rows\)/.test(sharpSrc),
+  'the bound lives in odds (STEAM_MAX_GAP_MIN, overridable); a restated literal in sharp would drift');
+ok('sharp counts null-gap rows', /preFix/.test(histSrc) && /preFix/.test(sharpSrc) && /none carry gap_min/.test(sharpSrc),
+  'gap_min null is the pre-fix predicate (D73): never aggregated across, counted and reported — not silently dropped');
+ok('sharp distinguishes blind from empty', /blind —/.test(sharpSrc) && /0 movement rows/.test(sharpSrc)
+  && /0 simultaneous clusters/.test(sharpSrc) && !/no recent line movement/.test(sharpCode),
+  '"nothing moved" and "I cannot see it" rendered the same sentence for 13,000 runs');
+ok('sharp never reads the complete feed', !/movementsAll/.test(sharpCode),
+  'that feed belongs to public-splits (D74)');
+ok('sharp spends nothing', !/\bfetch\s*\(/.test(sharpCode), 'the reader is Postgres only — zero Odds API credits');
+ok('a persistent read failure is blocked, not bespoke', /blocked: (streak \? )?BLOCKED_\w+/.test(sharpSrc) && /HIST_FAIL_RUNS/.test(sharpSrc)
+  && !/reportDegraded/.test(sharpCode),
+  'the orchestrator\'s existing D80 path reports it; a fourth channel would be one more thing to retract');
+ok('the history query does not name baseline_source', !/baseline_source/.test(codeOnly(histSrc)),
+  'naming a hand-run column in a projection makes PostgREST reject the whole select (D69/D70)');
+ok('movementFrom stamps detected_at', /detected_at: new Date\(nowMs\)\.toISOString\(\)/.test(oddsSrc),
+  'the in-memory row must carry the same interval the Postgres row does, or the dedupe key is a lie');
+ok('sharp runs every 5 minutes', /sharp: \{[^}]*min: 5 \}/.test(await readFile(join(root, 'edge-tracker-agents/src/config/index.js'), 'utf8')),
+  'movement only changes when odds fetches; 24 reads/run at 2 min is 720/hour on line_movements');
+// Emission and the memory feed are bounded the same way the read is: the
+// emitted-set memory evicts with the slate, re-emits only on a GAINED book, and
+// a memory row off the slate or outside the window never joins the union.
+ok('sharp evicts emission memory with the slate', /if \(!slateIds\.has\(e\.game_id\)\) emitted\.delete\(k\)/.test(sharpSrc),
+  'a process-local map keyed on game|market|side|direction grows without bound unless entries leave with the game (D75)');
+ok('sharp re-emits only when a cluster gains a book', /entry\.sets\.some\(\(s\) => c\.books\.every\(\(b\) => s\.has\(b\)\)\)/.test(sharpSrc),
+  'keying on `hi` wrote a second sharp_signals row naming the same three books on every half-point tick of a live steam');
+ok('the memory feed is slate- and window-bounded before the merge', /slateIds\.has\(m\.game_id\) && m\.at >= since/.test(sharpSrc),
+  'history is already bounded by the select; a memory row for a game off the slate or older than the window would be an unbounded back door');
+ok('the dashboard maps lastResult onto the run it hands the Steam panel', /result:a\.lastResult/.test(html) && /var res=\(run&&run\.result\)\|\|''/.test(html),
+  'sigSteamFacts reads run.result; if applyAgentsBag stops mapping /health.lastResult onto it the radar can never fire and every state reads as a zero');
+// The two tests that could not be run live on demand: a scripted day through
+// the real run() on the 5-minute cadence, and the Steam panel driven with all
+// seven summaries plus an old cached payload.
+const dayTestSrc = await readFile(join(root, 'edge-tracker-agents/test/sharp-history-day.test.js'), 'utf8').catch(() => '');
+ok('sharp is proved across a scripted day', /const RUNS = 72;/.test(dayTestSrc) && /exactly two rows for the whole day/.test(dayTestSrc)
+  && /INDEPENDENT oracle/.test(dayTestSrc),
+  'the recipe admits a real steam cannot be summoned; the day test is the stand-in and must stay oracle-checked, not reader-checked');
+const panelTestSrc = await readFile(join(root, 'edge-tracker-agents/test/sig-steam-panel.test.js'), 'utf8').catch(() => '');
+ok('the Steam panel is driven with all seven summaries and the old cached sentence',
+  /BLIND = \['noFeed', 'readFailed', 'nullGap'\]/.test(panelTestSrc) && /no recent line movement/.test(panelTestSrc) && /nothing double-escaped/.test(panelTestSrc),
+  'the dashboard keys on /^blind —/; a copy edit to any of the seven strings must fail a test, not just read oddly');
 ok('the steam bound admits a real mid-tier gap, and is never wider than the emit bound',
   /hdrNum\(process\.env\.ODDS_STEAM_MAX_GAP_MIN\) \?\? 35/.test(oddsSrc)
   && /Math\.min\(\s*\n\s*MOVE_MAX_GAP_MIN,/.test(oddsSrc),
@@ -599,9 +689,11 @@ ok('both opted-in agents are driven on BOTH sides of their gate',
   /with no key, both opted-in agents produce the blocked condition end to end/.test(blockedTestSrc)
   && /with the key present, both agents stop reporting and the entry is retracted/.test(blockedTestSrc),
   'the rest of the suite runs stub agents; without these two the only coverage of the real opt-ins is the source grep above, which cannot tell whether the field is reachable or whether it disappears once the key is present');
-ok('the opt-in set is asserted against the wired fleet, not just the two files',
-  /exactly the agents a spec opted in/.test(blockedTestSrc) && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc),
-  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb');
+ok('the opt-in set is asserted against the wired fleet, not just the opted-in files',
+  /exactly the agents the specs opted in/.test(blockedTestSrc)
+  && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc)
+  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95) and sharp (D94).');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a
@@ -656,6 +748,19 @@ ok('loadAgentsData rerender includes signal', /rerender\s*=[\s\S]{0,400}?homeTab
   "and it must come FIRST in the chain: 'signal' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
 
 const sigBlock = html.slice(html.indexOf('function renderSignalContent'), html.indexOf('function agentPlayKey'));
+
+// The Steam radar keys on the agent SAYING it cannot see, not on a sentence
+// that no longer exists: `/no recent line movement/` would read NOT FIRING
+// forever once sharp stopped emitting it.
+const steamFactsFn = (sigBlock.match(/function sigSteamFacts\(\)\{[\s\S]*?\n\}/) || [''])[0];
+ok('the Steam radar keys on blind', /notFiring:\/\^blind —\/\.test\(res\)/.test(steamFactsFn)
+  && !/no recent line movement/.test(sigBlock),
+  'the radar means "the agent says it cannot see", and every one of those summaries starts "blind —"');
+ok('the Steam stale bound follows the 5-min cadence', /sharp:600000/.test(html) && /20m \(2× the sharp agent/.test(sigBlock),
+  'AGENT_STALE_MS.sharp at 300000 flags a 5-min agent stale between runs, and the banner copy must say the bound it uses');
+ok('the NOT FIRING banner quotes the agent, escaped once', /NOT FIRING — the sharp agent reports "'\+res\+'"/.test(sigBlock)
+  && !/reports "'\+esc\(res\)/.test(sigBlock),
+  'the blind reason is the agent\'s own line, not a fixed sentence about a deleted string; sigBanner escapes the whole text, so a pre-escaped res would render &amp;quot;');
 ok('signal block found', sigBlock.length > 2000, `${sigBlock.length} chars`);
 
 // The whole design premise: the dashboard reads the bag the Agents tab already
@@ -1002,6 +1107,20 @@ ok('the schema latch rides every exit of nfl-line-move, not only the main return
     && /update nfl_line_moves set sport = 'NFL' where sport is null/.test(schemaSql),
     'the DDL is hand-run; the file is the record of what to run');
 }
+// ── 16. CLV alarm population ────────────────────────────────────
+// Production 2026-11-06: "15 plays past close with only one snapshot batch"
+// on every run while line_snapshots took 60k rows in three hours. Seven of
+// the fifteen were in-game plays (`monitor_scores.live`) that run() never
+// read — not even in the projection — so a bet with no close to beat (D37)
+// was counted as a coverage failure. The projection and the exclusion are
+// pinned together: one without the other is the same bug.
+const clvSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/clv-tracker/index.js'), 'utf8');
+ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of the coverage alarm',
+  /db\.select\('monitor_scores', '[^']*\blive\b[^']*'/.test(clvSrc)
+  && /if \(p\.live\) \{ inPlay\+\+; continue; \}/.test(clvSrc)
+  && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
+  && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
+  'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);

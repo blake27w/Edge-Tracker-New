@@ -177,7 +177,10 @@ const AGENT_DEFS = {
   // inactives that drop close to game time. Override with INTERVAL_INJURY.
   injury: { label: 'Injury Intelligence', emoji: '🏥', min: 30 },
   weather: { label: 'Weather Intelligence', emoji: '🌦️', min: 45 },
-  sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 2 },
+  // 5 (was 2): movement rows only change when odds fetches, and sharp now
+  // reads 24 bounded selects per run from line_movements — at 2 min that is
+  // 720/hour against a table /data-health has timed out on; at 5 it is 288.
+  sharp: { label: 'Sharp Money Detection', emoji: '💰', min: 5 },
   power: { label: 'Power Ratings', emoji: '📊', times: ['08:00'], days: [1, 4] },
   // 4h (was 8h): RLM/freeze/pile-on are TIMING tells — 8h was blind most of the
   // day. Cost is one Claude web-search call per run (~6/day, pennies).

@@ -50,10 +50,36 @@ function ensure() {
 }
 
 // Insert rows (array or single). Returns inserted rows.
-export async function insert(table, rows) {
+//
+// options.returning: 'minimal' skips the `.select()` — and with it the
+// `Prefer: return=representation` header that is the ONLY thing supabase-js
+// (2.108) adds to an insert to ask for rows back; there is no `returning`
+// option on `.insert()` itself. Without it PostgREST defaults to
+// `return=minimal`, so the server no longer runs `INSERT … RETURNING *`
+// wrapped in a `json_agg` of every row inside the same timed statement. For
+// a 500-row chunk into a 7M-row table nobody reads that back, and the
+// aggregation is paid for inside the statement_timeout budget. `data` is
+// null in that mode and `count` is the row count SENT — PostgREST applies a
+// batch insert as one statement, so it is all-or-nothing. The default stays
+// representation: research, book-edge and the orchestrator read `data[0]`.
+//
+// The thrown error keeps `.code` and `.missing` (as `count` does) so a caller
+// can retry a 57014 statement timeout honestly instead of regexing the
+// message; the message shape is unchanged for the 90-odd existing callers.
+export async function insert(table, rows, options = {}) {
   if (config.dryRun || !client) return { skipped: true, count: Array.isArray(rows) ? rows.length : 1 };
-  const { data, error } = await ensure().from(table).insert(rows).select();
-  if (error) { reportWriteFailure('insert', table, error); throw new Error(`insert ${table}: ${error.message}`); }
+  const minimal = options.returning === 'minimal';
+  let q = ensure().from(table).insert(rows);
+  if (!minimal) q = q.select();
+  const { data, error } = await q;
+  if (error) {
+    reportWriteFailure('insert', table, error);
+    const err = new Error(`insert ${table}: ${error.message}`);
+    err.code = error.code;
+    err.missing = isMissingRelation(error);
+    throw err;
+  }
+  if (minimal) return { data: null, count: Array.isArray(rows) ? rows.length : 1 };
   return { data, count: data?.length ?? 0 };
 }
 

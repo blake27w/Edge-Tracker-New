@@ -852,6 +852,11 @@ test('no OTHER agent opts in by accident, so the alert surface is exactly the op
     const code = codeOnly(await readFile(new URL(`../src/agents/${name}/index.js`, import.meta.url), 'utf8'));
     if (/(^|[^\w.])blocked:/.test(code)) optedIn.push(name);
   }
-  assert.deepEqual(optedIn.sort(), [...OPTED_IN, ...OPTED_IN_ELSEWHERE].sort(),
-    'exactly the agents a spec opted in — one more would be a new alert source');
+  // `sharp` opted in with the history reader (D94): its two "blind" states —
+  // every history read failing for 3 runs, or a window where no row carries
+  // gap_min — are conditions a human must act on, routed through this same
+  // channel rather than a bespoke one. It is not Claude-gated, so it is not in
+  // OPTED_IN above. OPTED_IN_ELSEWHERE carries nfl-line-move (D95) the same way.
+  assert.deepEqual(optedIn.sort(), [...OPTED_IN, ...OPTED_IN_ELSEWHERE, 'sharp'].sort(),
+    'exactly the agents the specs opted in — one more would be a new alert source');
 });

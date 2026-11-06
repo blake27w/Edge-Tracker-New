@@ -101,7 +101,11 @@ async function run() {
       ['pred_market_edges', 'id'], ['umpire_runs', 'umpire'], ['pitcher_changes', 'id'],
       ['weather_changes', 'id'], ['nfl_qb_status', 'id'],
       ['clv_records', 'clv_odds'], ['clv_records', 'suspect'],
+      ['book_move_log', 'id'],
     ];
+    // tools/smoke.mjs cross-checks this list against schema.sql: a table added
+    // there without a probe here fails the build. Hand-run DDL is how this repo
+    // ships a table nobody created (D69/D70), and this is the probe for it.
     const missing = [];
     for (const [t, c] of probes) {
       try { await db.select(t, c, { limit: 1 }); }
