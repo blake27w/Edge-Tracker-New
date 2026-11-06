@@ -1,6 +1,6 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-05 — **all three PRs merged (#137 loud blocked agents, #138 Signal dashboard + restyle, #139 automatic seasonality). `main` is at `c075e70`, zero open PRs, 231 tests / 202 smoke, no failures.** Nothing is deployed yet: Vercel auto-deploys `main` for the PWA, but the backend changes need a Railway deploy, and the two env blocks below are still unset.
+Last updated: 2026-11-05 — **all three PRs merged (#137 loud blocked agents, #138 Signal dashboard + restyle, #139 automatic seasonality). `main` is at `c075e70`, zero open PRs, 231 tests / 202 smoke, no failures.** Nothing is deployed yet: GitHub Pages auto-deploys `main` for the PWA (NOT Vercel — see Next steps 1), but the backend changes need a Railway deploy, and the two env blocks below are still unset.
 
 ## OWED NOW — Railway env (both Blake's, neither is code)
 
@@ -65,9 +65,11 @@ everything is 0-fail (D82). Any failure is real.
 
 ## Next steps
 
-1. **Confirm the Vercel deploy of `main` went out** and open the app on the phone — the PWA picks it up on next
-   open (network-first SW with `skipWaiting`, `no-cache` on `index.html`; no reinstall). The 📡 Signal tile should be
-   on the home grid in the mint/JetBrains look.
+1. **The frontend is GitHub Pages, not Vercel** — `https://blake27w.github.io/Edge-Tracker-New/`, built from `main`
+   on every merge (the repo's `vercel.json` has never produced a Vercel deployment; the GitHub deployments list shows
+   only `github-pages` and Railway). Verified serving the current build on 2026-11-06. The PWA picks up each merge on
+   next open (network-first SW with `skipWaiting`, `no-cache` on `index.html`; no reinstall). Add to Home Screen from
+   Safari → Share → Add to Home Screen.
 2. **Deploy the backend on Railway** (seasonality, loud skips, `getOddsCeilings()` are all server-side) and set the
    two env blocks above. The dashboard's Budget panel shows *"Ceilings unavailable"* until that build is live.
 3. **Watch three things after deploy:** `public-splits` flips off `"skipped — no Claude"` and the `blocked`
