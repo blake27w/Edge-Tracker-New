@@ -26,11 +26,12 @@ const game = (sport, id, { total, spread, ml, kick = 180 } = {}) => {
 // Postgres hands numerics back as STRINGS — the fixture does too.
 const opener = (game_id, market, line) => ({ game_id, market, line: line == null ? null : String(line) });
 
-let db, slate, published, mod, OPENERS_BLOCKED, SCHEMA_BLOCKED;
+let db, slate, published, mod, OPENERS_BLOCKED, SCHEMA_BLOCKED, warns;
 
 before(async () => {
   db = fakeDb();
-  const { logger } = fakeLogger();
+  const { logger, lines } = fakeLogger();
+  warns = lines.warn;
   mock.module(import.meta.resolve('../src/db/index.js'), { defaultExport: db, namedExports: { isConnected: db.isConnected, isMissingRelation: db.isMissingRelation } });
   mock.module(import.meta.resolve('../src/utils/index.js'), { namedExports: { logger } });
   mock.module(import.meta.resolve('../src/store/index.js'), {
@@ -41,7 +42,8 @@ before(async () => {
 });
 after(() => mock.reset());
 beforeEach(() => {
-  slate = []; published = undefined; db.fail = {};
+  mod.__resetState();
+  slate = []; published = undefined; db.fail = {}; warns.length = 0;
   db.setRows('opening_lines', []); db.setRows('nfl_line_moves', []);
   for (const k of Object.keys(db.calls)) db.calls[k].length = 0;
 });
@@ -118,11 +120,63 @@ test('history rows with a null total_move do not count toward total_down_pct or 
   assert.equal(published.agg.ml_avg_abs, null);
 });
 
-test('legacy history rows with no sport are bucketed as NFL', async () => {
+test('history is read per sport (match on sport); legacy sportless rows are the schema.sql backfill\'s job', async () => {
   slate = [game('NFL', 'x', { total: 40 })];
-  db.setRows('nfl_line_moves', [{ total_move: -1, spread_move: 1, captured_at: DAYS(1) }]);
+  db.setRows('nfl_line_moves', [
+    { total_move: -1, spread_move: 1, captured_at: DAYS(1) },                 // legacy, no sport
+    { sport: 'NFL', total_move: -1, spread_move: 1, captured_at: DAYS(1) },
+  ]);
   await mod.default.run();
   assert.deepEqual(published.bySport.map((b) => b.sport), ['NFL']);
+  assert.equal(published.bySport[0].n, 1, 'an eq filter cannot see a null sport — the backfill labels those rows');
+  const hist = selectsOn('nfl_line_moves').filter((c) => c.opts.order);
+  assert.ok(hist.length >= 12, `one bounded query per roster sport (${hist.length})`);
+  for (const c of hist) assert.ok(c.opts.match && c.opts.match.sport, 'every history read is sport-scoped');
+});
+
+// ── Finding 4: "180d" was a label; the span is the oldest row returned, and a
+// dormant sport is not evicted by a busy one ─────────────────────────────────
+test('a sport whose rows are all older than another sport\'s newest 4000 still has a bySport entry; the span is derived', async () => {
+  slate = [game('NBA', 'live1', { total: 220 })];
+  const rows = Array.from({ length: 4100 }, () => ({ sport: 'NBA', total_move: -1, spread_move: null, ml_move: null, captured_at: DAYS(1) }));
+  for (let i = 0; i < 10; i++) rows.push({ sport: 'NCAAF', total_move: 2, spread_move: null, ml_move: null, captured_at: DAYS(60) });
+  db.setRows('nfl_line_moves', rows);
+  await mod.default.run();
+  const ncaaf = published.bySport.find((b) => b.sport === 'NCAAF');
+  assert.ok(ncaaf, 'the dormant sport is on the board');
+  assert.equal(ncaaf.n, 10);
+  assert.ok(ncaaf.days >= 59 && ncaaf.days <= 61, `NCAAF span ${ncaaf.days}d`);
+  const nba = published.bySport.find((b) => b.sport === 'NBA');
+  assert.ok(nba.n <= 4000 && nba.n >= 300, `per-sport bound (${nba.n})`);
+  assert.ok(published.agg.n <= 4000, 'aggregate stays bounded');
+  assert.ok(published.history_days >= 59 && published.history_days <= 61, `overall span is the oldest row (${published.history_days}d), not the 180d window`);
+  assert.equal(published.history_from, ncaaf.from);
+  assert.equal(published.history_capped, false);
+});
+
+// ── Finding 6: PostgREST max-rows guard ──────────────────────────
+test('postgrestCapped flags a >1000 limit answered by exactly 1000 rows, and nothing else', () => {
+  const rows = (n) => Array.from({ length: n }, () => ({}));
+  assert.equal(mod.postgrestCapped(4000, rows(1000)), true);
+  assert.equal(mod.postgrestCapped(4000, rows(999)), false);
+  assert.equal(mod.postgrestCapped(1000, rows(1000)), false, 'a limit of exactly 1000 satisfied is not a clamp');
+  assert.equal(mod.postgrestCapped(333, rows(333)), false);
+});
+
+// ── Finding 3: the live cap is per sport ─────────────────────────
+test('a 150-game Saturday slate cannot evict Sunday NFL from live', async () => {
+  slate = [
+    ...Array.from({ length: 150 }, (_, i) => game('NCAAB', `cb${i}`, { total: 140, kick: 120 + i })),
+    ...Array.from({ length: 16 }, (_, i) => game('NFL', `nfl${i}`, { total: 44, kick: 1500 + i })),
+  ];
+  await mod.default.run();
+  const nfl = published.live.filter((g) => g.sport === 'NFL');
+  const cb = published.live.filter((g) => g.sport === 'NCAAB');
+  assert.equal(nfl.length, 16, 'every NFL game present');
+  assert.equal(cb.length, 32, 'the busy sport is capped, not the slate');
+  for (let i = 1; i < published.live.length; i++) {
+    assert.ok(new Date(published.live[i - 1].commence_time) <= new Date(published.live[i].commence_time), 'merged by kickoff');
+  }
 });
 
 // ── 4. Query shape ──────────────────────────────────────────────
@@ -145,16 +199,31 @@ test('history query is bounded (gte captured_at, desc, limit ≤ 4000); openers 
   assert.equal(selectsOn('line_movements').length, 0);
 });
 
-// ── 5. Openers unreadable → blocked, constant literal ───────────
-test('opening_lines unreadable → blocked === OPENERS_BLOCKED and the store is cleared', async () => {
+// ── 5. Openers unreadable: one failure is a blip, three in a row is blocked ──
+test('a lone opening_lines failure is reported, clears the store, and is NOT blocked', async () => {
   slate = [game('NBA', 'n', { total: 220 })];
   published = { stale: true };
   db.fail['select:opening_lines'] = new Error('fetch failed');
   const r = await mod.default.run();
-  assert.equal(r.blocked, OPENERS_BLOCKED);
-  assert.equal(OPENERS_BLOCKED, 'opening_lines could not be read');
+  assert.equal(r.blocked, undefined, 'a network blip is not a standing block (D80)');
+  assert.match(r.summary, /opening_lines unreadable/);
   assert.equal(published, null);
   assert.equal(db.calls.insert.length, 0);
+});
+
+test('three consecutive opening_lines failures → blocked === OPENERS_BLOCKED; one success resets the streak', async () => {
+  slate = [game('NBA', 'n', { total: 220 })];
+  db.fail['select:opening_lines'] = new Error('fetch failed');
+  assert.equal((await mod.default.run()).blocked, undefined);
+  assert.equal((await mod.default.run()).blocked, undefined);
+  const r3 = await mod.default.run();
+  assert.equal(r3.blocked, OPENERS_BLOCKED);
+  assert.equal(OPENERS_BLOCKED, 'opening_lines could not be read');
+  assert.equal((await mod.default.run()).blocked, OPENERS_BLOCKED, 'stays blocked while it keeps failing');
+  delete db.fail['select:opening_lines'];
+  assert.equal((await mod.default.run()).blocked, undefined);
+  db.fail['select:opening_lines'] = new Error('fetch failed');
+  assert.equal((await mod.default.run()).blocked, undefined, 'the streak restarted from zero');
 });
 
 // ── 6. Missing columns → strip-and-retry, blocked === SCHEMA_BLOCKED ──
@@ -181,6 +250,50 @@ test('a "column does not exist" insert error retries once without the four new c
   } finally { db.insert = realInsert; }
 });
 
+// ── Finding 1: the stripped retry may only write NFL ────────────
+test('pre-DDL, the stripped retry writes the NFL row and DROPS the NBA row — counted and named', async () => {
+  slate = [game('NFL', 'k', { total: 47, kick: 10 }), game('NBA', 'b', { total: 225, kick: 10 })];
+  db.setRows('opening_lines', [opener('k', 'total', 45), opener('b', 'total', 221)]);
+  let n = 0;
+  const realInsert = db.insert;
+  db.insert = async (t, rows) => {
+    db.calls.insert.push({ table: t, rows });
+    if (++n === 1) throw new Error('column "sport" of relation "nfl_line_moves" does not exist');
+    return realInsert.call(db, t, rows);
+  };
+  try {
+    const r = await mod.default.run();
+    assert.equal(r.blocked, SCHEMA_BLOCKED);
+    const retry = db.calls.insert[1].rows;
+    assert.equal(retry.length, 1, 'only the NFL row is retried');
+    assert.equal(retry[0].game_id, 'k');
+    assert.ok(!('sport' in retry[0]));
+    assert.ok(!db.rows('nfl_line_moves').some((x) => x.game_id === 'b'), 'the NBA close never lands sportless');
+    assert.equal(r.data.dropped, 1); assert.equal(r.data.closed, 1);
+    assert.match(r.summary, /1 new closes, 1 dropped — schema/);
+    assert.ok(warns.some((w) => /1 non-NFL close\(s\) NOT written \(NBA\)/.test(w)), `the loss is named: ${warns}`);
+  } finally { db.insert = realInsert; }
+});
+
+// ── Finding 2: the missing-schema state latches ─────────────────
+test('schema blocked → a run with no new close is STILL blocked; a full-column insert succeeding clears it', async () => {
+  slate = [game('NFL', 'k', { total: 47, kick: 10 })];
+  db.setRows('opening_lines', [opener('k', 'total', 45)]);
+  db.fail['insert:nfl_line_moves'] = new Error('column "sport" of relation "nfl_line_moves" does not exist');
+  assert.equal((await mod.default.run()).blocked, SCHEMA_BLOCKED);
+  delete db.fail['insert:nfl_line_moves'];
+  const before = db.calls.insert.length; // the first attempt and its NFL retry both failed
+  slate = [game('NFL', 'u', { total: 47 })]; // upcoming only → nothing to insert
+  const r2 = await mod.default.run();
+  assert.equal(r2.blocked, SCHEMA_BLOCKED, 'an empty run must not unblock — the DDL is still missing');
+  assert.equal(db.calls.insert.length, before, 'nothing was inserted on the empty run');
+  slate = [game('NFL', 'k2', { total: 47, kick: 10 })];
+  db.setRows('opening_lines', [opener('k2', 'total', 45)]);
+  const r3 = await mod.default.run();
+  assert.equal(r3.blocked, undefined, 'the DDL landed — an insert with the new columns succeeded');
+  assert.equal(db.rows('nfl_line_moves').at(-1).sport, 'NFL');
+});
+
 test('a non-column insert error is logged, not retried, and does not block', async () => {
   slate = [game('NFL', 'k2', { total: 47, kick: 10 })];
   db.setRows('opening_lines', [opener('k2', 'total', 45)]);
@@ -200,6 +313,22 @@ test('a close is persisted once with sport and the ML leg; a second run does not
   assert.ok(row.ml_move < 0, '+130 → +150 is home lengthening');
   await mod.default.run();
   assert.equal(db.calls.insert.length, 1, 'in-memory dedup');
+});
+
+// ── Finding 7: dedup spans the slate horizon, not the UTC day ───
+test('a close written 2h ago on the previous UTC date is not re-inserted; one from 40h ago is', async () => {
+  slate = [game('NHL', 'h', { total: 6.5, kick: 5 })];
+  db.setRows('opening_lines', [opener('h', 'total', 6)]);
+  db.setRows('nfl_line_moves', [{ sport: 'NHL', game_id: 'h', total_move: 0.5, captured_at: new Date(Date.now() - 2 * 3600_000).toISOString() }]);
+  await mod.default.run();
+  assert.equal(db.calls.insert.length, 0, 'dedup window reached back across midnight');
+  const dedup = selectsOn('nfl_line_moves').find((c) => c.cols === 'game_id');
+  const lower = new Date(dedup.opts.gte.captured_at).getTime();
+  assert.ok(Math.abs(Date.now() - 36 * 3600_000 - lower) < 60_000, 'lower bound is now-36h (the slate horizon)');
+  mod.__resetState();
+  db.setRows('nfl_line_moves', [{ sport: 'NHL', game_id: 'h', total_move: 0.5, captured_at: new Date(Date.now() - 40 * 3600_000).toISOString() }]);
+  await mod.default.run();
+  assert.equal(db.calls.insert.length, 1, 'outside the horizon it is a different sighting');
 });
 
 // ── 7. Empty slate ──────────────────────────────────────────────

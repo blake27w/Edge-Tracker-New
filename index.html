@@ -7523,12 +7523,17 @@ function renderSigClose(){
 
   if(by.length){
     var tot=(lm&&lm.agg)||{};
-    var tb=sigHdr('OPEN → CLOSE HISTORY',(tot.n!=null?tot.n+' games':'')+' · 180d');
-    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th>n</th><th>totals ↓</th><th>avg total</th><th>avg spread</th><th>avg ML pp</th></tr></thead><tbody>';
+    // The span is the OLDEST ROW RETURNED, not the query window: the row cap
+    // makes a busy sport's sample days long, not months. An old payload has
+    // no history_days — say nothing rather than claim a window.
+    var span=lm&&lm.history_days!=null?' · '+lm.history_days+'d':'';
+    var tb=sigHdr('OPEN → CLOSE HISTORY',(tot.n!=null?tot.n+' games':'')+span+(lm&&lm.history_capped?' · capped':''));
+    tb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th>n</th><th>span</th><th>totals ↓</th><th>avg total</th><th>avg spread</th><th>avg ML pp</th></tr></thead><tbody>';
     by.forEach(function(b){
       if(!b)return;
       tb+='<tr'+((b.n||0)<20?' style="opacity:.6"':'')+'><td class="l" style="color:var(--cream)">'+esc(b.sport||'')+((b.n||0)<20?' <span style="font-size:7px;color:var(--muted)">thin</span>':'')+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(b.n)+'</td>';
+      tb+='<td style="color:var(--muted)">'+(b.days!=null?b.days+'d':'—')+'</td>';
       tb+='<td style="color:'+(b.total_down_pct==null?'var(--muted)':'var(--brass)')+'">'+sigNum(b.total_down_pct,'%')+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(b.total_avg_abs)+'</td>';
       tb+='<td style="color:var(--dim)">'+sigNum(b.spread_avg_abs)+'</td>';
@@ -7546,8 +7551,11 @@ function renderSigClose(){
     if(!live.length)lb+=sigBanner('nodata',{things:'upcoming games with an opener',at:sigAt(lm.updated)});
     else {
       lb+='<div class="sigtbl-wrap"><table class="sigtbl"><thead><tr><th class="l">sport</th><th class="l">game</th><th>O/U open→now</th><th>Δ</th><th>spr</th><th>ML pp</th></tr></thead><tbody>';
-      live.slice(0,80).forEach(function(g){
-        if(!g)return;
+      // Per-sport cap, same reason as the agent's: a flat first-80 by kickoff
+      // lets a Saturday slate push every Sunday NFL row off the panel.
+      var perSport={},shown=[];
+      live.forEach(function(g){if(!g)return;var k=g.sport||'NFL';perSport[k]=(perSport[k]||0)+1;if(perSport[k]<=16)shown.push(g);});
+      shown.forEach(function(g){
         var tcol=g.total_move==null?'var(--muted)':g.total_move<0?'var(--sage)':g.total_move>0?'var(--leather)':'var(--dim)';
         lb+='<tr><td class="l"><span class="sh-tag">'+esc(g.sport||'NFL')+'</span></td>';
         lb+='<td class="l" style="color:var(--cream)">'+esc(g.matchup||'')+'</td>';

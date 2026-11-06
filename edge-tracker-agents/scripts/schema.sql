@@ -715,7 +715,14 @@ alter table nfl_line_moves add column if not exists sport    text;
 alter table nfl_line_moves add column if not exists open_ml  numeric;
 alter table nfl_line_moves add column if not exists close_ml numeric;
 alter table nfl_line_moves add column if not exists ml_move  numeric;  -- implied-prob pts, home side
-update nfl_line_moves set sport = 'NFL' where sport is null;            -- pre-existing rows are all NFL
+-- Backfill: rows written BEFORE this feature deployed are NFL by construction.
+-- SET THE TIMESTAMP to the deploy time of the all-sports build before running
+-- (the placeholder does not cast, so an unedited copy fails loudly instead of
+-- relabelling). The guard means a row written after deploy can never be
+-- relabelled by this statement; the agent itself only ever writes NFL rows
+-- sportless (its pre-DDL retry drops every other sport), so nothing is lost.
+update nfl_line_moves set sport = 'NFL' where sport is null
+  and captured_at < 'YYYY-MM-DDTHH:MM:SSZ';                                  -- <- deploy timestamp
 
 -- ── NFL derivative edges (team totals etc.; only when NFL_DERIVATIVES=true) ──
 create table if not exists nfl_derivatives (

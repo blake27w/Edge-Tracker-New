@@ -24,6 +24,9 @@
 // nothing on the board. This agent needs "which games are on the board right
 // now", which is exactly getGames(). Importing the season table would also
 // pull in agents/odds/index.js, which the zero-spend smoke assertion forbids.
+// (The HISTORY read is the one place the config roster is consulted — see
+// below — because a sport whose season ended is, by definition, not on the
+// slate, and its history must still be reported.)
 //
 // Baseline/movement tables are untouched. Open→close is opening_lines (first
 // sight, immutable) vs in-memory consensus; it has no reason to read
@@ -35,21 +38,43 @@
 // real one. Soccer draws are ignored (we store home ML only).
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
+import config from '../../config/index.js';
 import { logger } from '../../utils/index.js';
 import { getGames, setNflLineMove } from '../../store/index.js';
 import { computeMarkets } from '../../games/lines.js';
 import { impliedProb } from '../shared/odds-math.js';
 
-const CLOSE_LEAD_MS = 30 * 60_000; // a game ≤30m from kickoff is treated as closed
-const HISTORY_DAYS = 180;          // aggregate window
-const HISTORY_LIMIT = 4000;        // ~150 rows/day across 12 sports → ~27k/180d; the newest 4000 is plenty
-const OPENERS_CHUNK = 100;         // ids per `in:` call so a 300-game Saturday never builds an over-long URL
-const persisted = new Set();       // game_id already saved as a close (pruned to the slate each run)
+const CLOSE_LEAD_MS = 30 * 60_000;       // a game ≤30m from kickoff is treated as closed
+const SLATE_HORIZON_MS = 36 * 3600_000;  // getGames() holds games starting in the next 36h (odds agent)
+const HISTORY_DAYS = 180;                // aggregate window (upper bound — the real span is published)
+const HISTORY_LIMIT = 4000;              // rows across ALL sports; split evenly per sport below
+const LIVE_PER_SPORT = 32;               // the old NFL-only cap, now applied per sport so no sport evicts another
+const OPENERS_CHUNK = 100;               // ids per `in:` call so a 300-game Saturday never builds an over-long URL
+const OPENERS_FAIL_RUNS = 3;             // consecutive unreadable-opener runs before it counts as blocked (D76 idiom)
+const POSTGREST_DEFAULT_MAX_ROWS = 1000; // PostgREST's default `max-rows`; a limit above it is silently clamped
+                                         // (the `limit: 8000`/`20000` reads in backtest, book-edges, book-move and
+                                         // src/index.js have the same exposure and no guard — not touched here)
+const persisted = new Set();             // game_id already saved as a close (pruned to the slate each run)
 
 // Blocked reasons are CONSTANT LITERALS (D80): no counts, no env, nothing
 // interpolated, so the durable blockedReason on /health is stable text.
 export const OPENERS_BLOCKED = 'opening_lines could not be read';
 export const SCHEMA_BLOCKED = 'nfl_line_moves is missing the all-sports columns — run the schema.sql block';
+
+// Process-lifetime state, each a D80 "will prevent the next run identically
+// until a human acts" condition or the streak that decides one:
+//   schemaMissing — latched the first time the insert is rejected on the new
+//     columns, cleared only by an insert WITH them succeeding. A run with no
+//     new close has no insert to fail, so without the latch /health would
+//     toggle blockedRuns 1→0→1 all day and re-fire reportDegraded on every
+//     re-entry — the opposite of a standing block.
+//   openersFailRuns — a lone opening_lines read failure is a network blip, not
+//     a block; OPENERS_FAIL_RUNS consecutive ones are (D76's breaker shape).
+let schemaMissing = false;
+let openersFailRuns = 0;
+
+// Test seam.
+export function __resetState() { persisted.clear(); schemaMissing = false; openersFailRuns = 0; }
 
 const r1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
 // Number(null) === 0 and Number('') === 0, so a plain Number() would turn a
@@ -63,19 +88,30 @@ const isPrice = (v) => Number.isFinite(v) && Math.abs(v) >= 100;
 const mlMove = (open, close) => (isPrice(open) && isPrice(close) ? r1((impliedProb(close) - impliedProb(open)) * 100) : null);
 const delta = (open, close) => (open != null && close != null ? r1(close - open) : null);
 
+// A `limit: N > 1000` select that returns EXACTLY 1000 rows was almost
+// certainly clamped by PostgREST's default max-rows, not satisfied — nobody
+// can verify the project's setting from here, so the shape is flagged instead.
+export const postgrestCapped = (limit, rows) => limit > POSTGREST_DEFAULT_MAX_ROWS && rows.length === POSTGREST_DEFAULT_MAX_ROWS;
+
 // History aggregate for a set of rows; a null move is NOT a 0 move and stays
-// out of every denominator.
+// out of every denominator. `from` is the oldest row's stamp — the honest span
+// of the sample, which the row cap makes shorter than HISTORY_DAYS for any
+// busy sport.
 const agg = (rows) => {
   const tm = rows.map((h) => num(h.total_move)).filter(Number.isFinite);
   const sm = rows.map((h) => num(h.spread_move)).filter(Number.isFinite);
   const mm = rows.map((h) => num(h.ml_move)).filter(Number.isFinite);
   const avgAbs = (xs) => (xs.length ? r1(xs.reduce((s, x) => s + Math.abs(x), 0) / xs.length) : null);
+  const stamps = rows.map((h) => new Date(h.captured_at).getTime()).filter(Number.isFinite);
+  const from = stamps.length ? new Date(Math.min(...stamps)).toISOString() : null;
   return {
     n: rows.length,
     total_down_pct: tm.length ? Math.round((tm.filter((x) => x < 0).length / tm.length) * 1000) / 10 : null,
     total_avg_abs: avgAbs(tm),
     spread_avg_abs: avgAbs(sm),
     ml_avg_abs: avgAbs(mm),
+    from,
+    days: from ? Math.max(1, Math.ceil((Date.now() - new Date(from).getTime()) / 86_400_000)) : null,
   };
 };
 
@@ -87,8 +123,27 @@ async function readOpeners(ids) {
   return out;
 }
 
+// Keep each sport's soonest N upcoming games, then merge by kickoff. A single
+// cross-sport cap sorted by commence_time let a 150-game Saturday fill every
+// slot before Sunday NFL — the NFL Prep block painted zero rows.
+function capPerSport(rows, n) {
+  const by = {};
+  for (const r of rows) (by[r.sport] ||= []).push(r);
+  const out = [];
+  for (const arr of Object.values(by)) {
+    arr.sort((a, b) => new Date(a.commence_time) - new Date(b.commence_time));
+    out.push(...arr.slice(0, n));
+  }
+  return out.sort((a, b) => new Date(a.commence_time) - new Date(b.commence_time));
+}
+
 const LEGACY_COLS = ['game_id', 'matchup', 'open_total', 'close_total', 'total_move', 'open_spread', 'close_spread', 'spread_move', 'captured_at'];
 const ALL_COLS = [...LEGACY_COLS, 'sport', 'open_ml', 'close_ml', 'ml_move'];
+// The legacy columns carry no sport, and every reader (the PWA, the schema.sql
+// backfill) treats a sportless row as this sport — so only rows of this sport
+// may ever be written on them. Anything else written sportless would be
+// relabelled NFL forever and pollute NFL aggregates with NBA-scale moves.
+const LEGACY_SPORT = 'NFL';
 const pick = (r, cols) => Object.fromEntries(cols.map((c) => [c, r[c]]));
 
 async function run() {
@@ -97,14 +152,18 @@ async function run() {
   if (!games.length) { setNflLineMove(null); return { summary: 'dormant — empty slate' }; }
 
   // Openers for these games (chunked). Unreadable openers mean the agent can
-  // do nothing this run — say so, loudly.
+  // do nothing this run; one failure is a blip and is said in the summary,
+  // OPENERS_FAIL_RUNS in a row is a block (D80 reserves `blocked` for what
+  // will fail identically next run).
   const ids = games.map((g) => g.game_id);
   let opens;
-  try { opens = await readOpeners(ids); }
+  try { opens = await readOpeners(ids); openersFailRuns = 0; }
   catch (e) {
-    logger.warn('nfl-line-move', `opening_lines: ${e.message}`);
+    openersFailRuns++;
+    logger.warn('nfl-line-move', `opening_lines: ${e.message} (${openersFailRuns} consecutive)`);
     setNflLineMove(null);
-    return { summary: 'skipped — opening_lines unreadable', blocked: OPENERS_BLOCKED };
+    const summary = `skipped — opening_lines unreadable (${openersFailRuns} consecutive)`;
+    return openersFailRuns >= OPENERS_FAIL_RUNS ? { summary, blocked: OPENERS_BLOCKED } : { summary };
   }
   const openMap = new Map();
   for (const o of opens) openMap.set(`${o.game_id}|${o.market}`, fin(o.line));
@@ -129,59 +188,89 @@ async function run() {
     if (started) toClose.push(row); else live.push(row);
   }
 
-  // Persist open→close once per game (dedup in-memory + against today's rows).
-  let blocked = null;
+  // Persist open→close once per game: dedup in-memory and against rows written
+  // within the slate horizon. The horizon, not the UTC day — a game closing at
+  // 23:50Z that drops off the slate for one cycle and is back after 00:00Z
+  // would otherwise be re-inserted.
   let logged = new Set();
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const ex = await db.select('nfl_line_moves', 'game_id', { gte: { captured_at: today + 'T00:00:00Z' } });
+    const ex = await db.select('nfl_line_moves', 'game_id', { gte: { captured_at: new Date(now - SLATE_HORIZON_MS).toISOString() } });
     logged = new Set(ex.map((r) => r.game_id));
   } catch (_) { /* table optional */ }
   const onSlate = new Set(ids);
   for (const id of persisted) if (!onSlate.has(id)) persisted.delete(id);
   const fresh = toClose.filter((r) => !persisted.has(r.game_id) && !logged.has(r.game_id)
     && (r.total_move != null || r.spread_move != null || r.ml_move != null));
+  let dropped = [];
   if (fresh.length) {
     fresh.forEach((r) => persisted.add(r.game_id));
     const nowIso = new Date().toISOString();
     const rows = fresh.map((r) => ({ ...pick(r, ALL_COLS), captured_at: nowIso }));
-    try { await db.insert('nfl_line_moves', rows); }
+    try { await db.insert('nfl_line_moves', rows); schemaMissing = false; }
     catch (e) {
       // The four new columns are hand-run DDL (D73 distinction: a missing
       // COLUMN, not a missing relation). Retry once with them stripped so the
-      // legacy NFL rows keep landing, and report the schema gap as blocked.
+      // legacy rows keep landing — NFL ONLY, because a stripped row is
+      // sportless and sportless means NFL to every reader. The other sports'
+      // closes are lost for this run; the loss is counted here and announced
+      // by SCHEMA_BLOCKED, and their ids are left out of `persisted` so they
+      // land on a later run if the DDL is applied while they are on the slate.
       if (/column/i.test(e.message || '')) {
-        blocked = SCHEMA_BLOCKED;
-        try { await db.insert('nfl_line_moves', rows.map((r) => pick(r, LEGACY_COLS))); }
-        catch (e2) { logger.warn('nfl-line-move', e2.message); }
+        schemaMissing = true;
+        const keep = rows.filter((r) => r.sport === LEGACY_SPORT);
+        dropped = rows.filter((r) => r.sport !== LEGACY_SPORT);
+        for (const r of dropped) persisted.delete(r.game_id);
+        if (dropped.length) {
+          const lost = [...new Set(dropped.map((r) => r.sport))].sort().join(', ');
+          logger.warn('nfl-line-move', `schema missing the all-sports columns — ${dropped.length} non-NFL close(s) NOT written (${lost}); only NFL rows land on the legacy columns`);
+        }
+        if (keep.length) {
+          try { await db.insert('nfl_line_moves', keep.map((r) => pick(r, LEGACY_COLS))); }
+          catch (e2) { logger.warn('nfl-line-move', e2.message); }
+        }
       } else logger.warn('nfl-line-move', e.message);
     }
   }
 
   // Aggregate recent closed history (market direction tendencies), overall and
-  // per sport. One bounded query, grouped in JS. Legacy rows have no sport and
-  // are NFL by construction (the DDL block backfills them).
-  let hist = [];
-  try {
-    hist = await db.select('nfl_line_moves', 'sport,total_move,spread_move,ml_move', {
-      gte: { captured_at: new Date(now - HISTORY_DAYS * 86_400_000).toISOString() },
-      order: { column: 'captured_at', ascending: false }, limit: HISTORY_LIMIT,
-    });
-  } catch (_) { /* none */ }
-  const overall = agg(hist);
+  // per sport. One bounded query PER SPORT — the config roster plus whatever
+  // is on the slate — with the row budget split evenly. A single newest-N
+  // query across sports held ~27 days at 12-sport volume, so a sport whose
+  // season ended a month ago silently vanished from bySport; per-sport bounds
+  // keep every sport's real n (and its `thin` marker) on the board. Legacy
+  // sportless rows are the schema.sql backfill's job, not a 13th query.
+  const histSports = [...new Set([...Object.keys(config.SPORTS), ...games.map((g) => g.sport)])];
+  const perSport = Math.max(1, Math.floor(HISTORY_LIMIT / histSports.length));
+  const since = new Date(now - HISTORY_DAYS * 86_400_000).toISOString();
   const histBySport = {};
-  for (const h of hist) (histBySport[h.sport || 'NFL'] ||= []).push(h);
+  let historyCapped = false;
+  for (const sport of histSports) {
+    try {
+      const rows = await db.select('nfl_line_moves', 'sport,total_move,spread_move,ml_move,captured_at', {
+        match: { sport }, gte: { captured_at: since },
+        order: { column: 'captured_at', ascending: false }, limit: perSport,
+      });
+      if (postgrestCapped(perSport, rows)) {
+        if (!historyCapped) logger.warn('nfl-line-move', `history read for ${sport} returned exactly ${POSTGREST_DEFAULT_MAX_ROWS} rows against limit ${perSport} — PostgREST max-rows is likely clamping it`);
+        historyCapped = true;
+      }
+      for (const h of rows) (histBySport[h.sport || LEGACY_SPORT] ||= []).push(h);
+    } catch (_) { /* none (pre-DDL the `sport` projection itself is rejected) */ }
+  }
+  const hist = Object.values(histBySport).flat();
+  const overall = agg(hist);
   const bySport = Object.entries(histBySport).map(([sport, rows]) => ({ sport, ...agg(rows) })).sort((a, b) => b.n - a.n);
 
   const sports = [...new Set(games.map((g) => g.sport))];
-  live.sort((a, b) => new Date(a.commence_time) - new Date(b.commence_time));
-  setNflLineMove({ updated: new Date().toISOString(), live: live.slice(0, 80), agg: overall, bySport });
+  setNflLineMove({
+    updated: new Date().toISOString(), live: capPerSport(live, LIVE_PER_SPORT), agg: overall, bySport,
+    history_from: overall.from, history_days: overall.days, history_capped: historyCapped,
+  });
   const out = {
-    summary: `${live.length} games · ${sports.length} sports (${fresh.length} new closes) · ${overall.n} in history`,
-    data: { live: live.length, sports: sports.length, closed: fresh.length, history: overall.n },
+    summary: `${live.length} games · ${sports.length} sports (${fresh.length - dropped.length} new closes${dropped.length ? `, ${dropped.length} dropped — schema` : ''}) · ${overall.n} in history`,
+    data: { live: live.length, sports: sports.length, closed: fresh.length - dropped.length, dropped: dropped.length, history: overall.n, history_days: overall.days, history_capped: historyCapped },
   };
-  if (blocked) out.blocked = blocked;
-  return out;
+  return schemaMissing ? { ...out, blocked: SCHEMA_BLOCKED } : out;
 }
 
 export default { name: 'nfl-line-move', run };
