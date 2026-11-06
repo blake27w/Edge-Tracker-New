@@ -24,6 +24,9 @@ const SPLIT_SPORTS = new Set(['NHL', 'NBA', 'MLB', 'NFL']);
 // say" — and readers treat a present 0 and an absent key very differently.
 // Type-check before coercing (house rule); a row without a usable `moved`
 // adds no entry, so its absence stays visible downstream.
+// `typeof m.moved !== 'number'` deliberately rejects numeric STRINGS too: the
+// only producer (odds' movementsAll) emits numbers, so a future DB-shaped
+// producer handing over '1.5' would be silently dropped here, not coerced.
 function moveIndexes(moves) {
   const total = new Map(), spread = new Map();
   for (const m of moves || []) {
@@ -87,8 +90,8 @@ ${slate}`;
   let noMoveData = 0; // lopsided rows the RLM/freeze rule could not judge
   for (const r of list) {
     if (!r || !r.game_id) continue;
-    const bets = num(r.bets_pct);
-    const handle = num(r.handle_pct);
+    const bets = pct(r.bets_pct);
+    const handle = pct(r.handle_pct);
     const divergence = bets != null && handle != null ? Math.round((handle - bets) * 10) / 10 : null;
     const lopsided = bets != null && bets >= 70;
     const mk = marketKey(r.market);
@@ -108,8 +111,15 @@ ${slate}`;
     // tell. When the index has no entry for the public side's number, the row
     // says so — net_move null AND rlm/freeze null (not judged), which every
     // reader already treats as "no tell" — and the run counts it.
+    //
+    // The same holds when no index can even be CHOSEN: a spread row whose
+    // game_id is off the slate (side resolved by the literal "home"/"away"
+    // substring, no team to key on) is a row the rule could not judge, so it
+    // is null/null/null and counted — not a judged `false`. ML is the one
+    // intentional exception: it has no line history here by design, so its
+    // `false` means "this rule does not apply", and it is not counted.
     let rlm = false, freeze = false, netMove = null;
-    if (lopsided && resolved) {
+    if (lopsided && resolved && mk !== 'ml') {
       let idx = null, key = null;
       if (mk === 'total' && (resolved === 'over' || resolved === 'under')) {
         idx = moves.total; key = r.game_id;
@@ -117,9 +127,9 @@ ${slate}`;
         const team = resolved === 'home' ? g.home : g.away;
         idx = moves.spread; key = `${r.game_id}|${String(team).toLowerCase()}`;
       }
-      if (idx && !idx.has(key)) {
+      if (!idx || !idx.has(key)) {
         rlm = null; freeze = null; noMoveData++;
-      } else if (idx) {
+      } else {
         netMove = idx.get(key);
         // Over backers are gifted by the total DROPPING; Under backers by it
         // rising. A spread side's own line rising = its backers get a better
@@ -161,6 +171,18 @@ function marketKey(m) {
   if (s.includes('spread') || s.includes('puck') || s.includes('run')) return 'spread';
   return 'ml';
 }
-function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+// A public percentage is PRESENT or it is null — never a coerced 0. The old
+// `num()` validated the coercion, not the input: `Number(null)`, `Number('')`
+// and `Number(false)` are all a finite 0, so a Claude row with `bets_pct: null`
+// published as "0% tickets", `divergence = handle - 0` became a large fake
+// sharp-side tell, and the 0 was written to `prevBets` so the NEXT run's real
+// 75% fired pile-on. Type-check before coercing (house rule): only a number or
+// a non-blank numeric string is a reading; a genuine 0 stays 0.
+function pct(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 export default { name: 'public-splits', run };
