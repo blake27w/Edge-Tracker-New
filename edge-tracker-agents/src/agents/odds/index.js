@@ -683,7 +683,11 @@ const FULL_TAIL_MS = FULL_TAIL_MIN * 60_000;
 const POSTTIP_FALLBACK_MIN = 45;
 let clampWarned = false;
 function postTipTailMin() {
-  const asked = oddsApi.postTipMin ?? POSTTIP_FALLBACK_MIN;
+  const raw = oddsApi.postTipMin ?? POSTTIP_FALLBACK_MIN;
+  // Defence in depth: config already rejects negatives and non-integers, but
+  // a mocked or hand-built config could hand us either, and a negative tail
+  // would invert the window onto PRE-tip games (D107). Non-numeric → fallback.
+  const asked = Number.isFinite(raw) ? Math.max(0, raw) : POSTTIP_FALLBACK_MIN;
   if (asked <= FULL_TAIL_MIN) return asked;
   if (!clampWarned) {
     clampWarned = true;

@@ -118,7 +118,7 @@ async function run() {
   // market was quiet, and this means we could not have seen it move.
   const postTipBit = postTip.games
     ? ` · ${postTip.games} started game${postTip.games === 1 ? '' : 's'} beyond steam bound`
-      + ` (${postTip.rows} row${postTip.rows === 1 ? '' : 's'}, post-tip tail)`
+      + ` (${postTip.rows} row${postTip.rows === 1 ? '' : 's'} wider than the bound — post-tip tail or rehydrated baseline)`
     : '';
 
   if (histBlind) {
