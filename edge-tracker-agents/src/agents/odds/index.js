@@ -663,13 +663,34 @@ const STRIKE_MIN = Number(process.env.ODDS_STRIKE_MIN) || 4;
 const NEAR_MIN = Number(process.env.ODDS_NEAR_MIN) || 10;
 const MID_MIN = Number(process.env.ODDS_MID_MIN) || 30;
 const IDLE_MIN = Number(process.env.ODDS_IDLE_MIN) || 180;
+// The FULL post-tip tail: a sport in `oddsApi.liveSports` stays on STRIKE/NEAR
+// this long after a game starts, because something is reading those rows.
+// Also the CEILING on the short tail below — it is the longest window this
+// agent has ever polled, so a NON-live sport asking for more than it is a typo
+// rather than a policy, and `tier > fullTier` cannot report that either: a
+// tail wider than the full tail lowers no tier, so the demotion segment would
+// read 0 at exactly the moment the spend went up.
+const FULL_TAIL_MIN = 3.5 * 60;
+const FULL_TAIL_MS = FULL_TAIL_MIN * 60_000;
 // How long a sport with NO live in-play consumer stays on STRIKE/NEAR AFTER a
-// game has started. `oddsApi.liveSports` keeps the full -3.5h; everything else
-// gets this. `0` is a legitimate setting ("no post-tip polling at all"), which
-// is exactly why this reads through hdrNum ?? and not `|| 45`: Number('') is a
-// finite 0, so `|| 45` cannot tell an unset var from a deliberate zero and
-// `Number(x) || 45` would silently discard the zero (the D10/D67/D79 family).
-const POSTTIP_MIN = Math.max(0, hdrNum(process.env.ODDS_POSTTIP_MIN) ?? 45);
+// game has started. The env knob is read in config through intEnv — the one
+// reader that cleans before it coerces, so `ODDS_POSTTIP_MIN='  '` is unset
+// and not a finite 0 — and `0` is a legitimate setting there ("drop the moment
+// a game tips"). The `?? 45` is the mocked-config path only (the odds tests
+// mock.module the WHOLE config object, so a new key is absent there), exactly
+// like `liveSports ?? []`; the real default lives in config. Read per call, so
+// a config change needs no restart.
+const POSTTIP_FALLBACK_MIN = 45;
+let clampWarned = false;
+function postTipTailMin() {
+  const asked = oddsApi.postTipMin ?? POSTTIP_FALLBACK_MIN;
+  if (asked <= FULL_TAIL_MIN) return asked;
+  if (!clampWarned) {
+    clampWarned = true;
+    logger.warn('odds', `ODDS_POSTTIP_MIN is longer than the full post-tip tail — clamped to ${FULL_TAIL_MIN} min`);
+  }
+  return FULL_TAIL_MIN;
+}
 const lastKeyFetch = new Map(); // odds-api league key -> ms of last fetch
 
 function paceMult() {
@@ -707,19 +728,37 @@ function paceMult() {
 // need. What drops is the ~2h45m tail beyond it, which no consumer above can
 // use. Sports in `liveSports` (NFL when NFL_LIVE is on) keep the full -3.5h.
 //
+// What the shortening COSTS, stated because it is paid and not free: past the
+// tail a started non-live game sits at MID/IDLE × the governor, i.e. gaps of
+// 45-720 minutes, every one of them beyond STEAM_MAX_GAP_MIN — so post-tip
+// steam is undetectable for those sports by construction. `sharp` reports that
+// as its own summary segment rather than letting it read as a quiet market
+// (D107); see the STEAM_MAX_GAP_MIN comment below.
+//
 // Pre-tip behaviour is byte-identical: the three dt bands below are the same
 // mutually exclusive bands as before (dt <= 30m, 30m < dt <= 90m, dt <= 12h),
-// and only the NEGATIVE edge of the first two moved.
+// and only the NEGATIVE edge of the FIRST moved — the second band is entirely
+// pre-tip (dt > 30m), which is why it carries no tail test at all.
 //
-// `lowered` is an optional Set the caller passes to collect the sports whose
-// tier this rule actually demoted on this run — reported, because a cadence
-// that quietly halved itself must not look like a cadence nobody changed.
+// `lowered` is an optional Map the caller passes to collect the sports whose
+// tier this rule actually demoted on this run, each against the tier it landed
+// at — reported, because a cadence that quietly halved itself must not look
+// like a cadence nobody changed, and "how slow did it get" belongs on /health
+// rather than in arithmetic over four cadence knobs and an unseen governor.
+//
+// How a demoted sport is NAMED: the tier it landed at, with the governor
+// multiplier when one applies (the governor touches MID/IDLE only, so a NEAR
+// landing never carries one).
+function tierLabel(tier, mult) {
+  const name = ['STRIKE', 'NEAR', 'MID', 'IDLE'][tier] || String(tier);
+  return tier >= 2 && mult > 1 ? `${name}×${mult}` : name;
+}
+
 export function sportIntervalMin(sport, mult, lowered = null) {
   const now = Date.now();
-  const FULL_TAIL_MS = 3.5 * 3600_000;
   // `?? []` and not `.includes` straight off the config: the odds tests
   // mock.module the WHOLE config object, so a new key is absent there.
-  const tailMs = (oddsApi.liveSports ?? []).includes(sport) ? FULL_TAIL_MS : POSTTIP_MIN * 60_000;
+  const tailMs = (oddsApi.liveSports ?? []).includes(sport) ? FULL_TAIL_MS : postTipTailMin() * 60_000;
   let tier = 3;      // 3 idle · 2 mid · 1 near · 0 strike
   let fullTier = 3;  // the tier the old unconditional -3.5h tail would have given
   for (const g of getGames()) {
@@ -731,13 +770,17 @@ export function sportIntervalMin(sport, mult, lowered = null) {
       if (dt >= -tailMs) { tier = 0; fullTier = 0; break; }
       if (dt >= -FULL_TAIL_MS) fullTier = 0;
     } else if (dt <= 90 * 60_000) {
-      if (dt >= -tailMs) tier = Math.min(tier, 1);
-      if (dt >= -FULL_TAIL_MS) fullTier = Math.min(fullTier, 1);
+      // 30m < dt <= 90m, so dt is POSITIVE: a started game is always dt <= 30m
+      // and was handled above. There is no post-tip case in this arm, which is
+      // why neither tier is conditioned on a tail here — the two `dt >= -tail`
+      // guards this used to carry were vacuously true and read as if NEAR had
+      // a post-tip window of its own.
+      tier = Math.min(tier, 1); fullTier = Math.min(fullTier, 1);
     } else if (dt <= 12 * 3600_000) {
       tier = Math.min(tier, 2); fullTier = Math.min(fullTier, 2);
     }
   }
-  if (lowered && tier > fullTier) lowered.add(sport);
+  if (lowered && tier > fullTier) lowered.set(sport, tierLabel(tier, mult));
   if (tier === 0) return STRIKE_MIN;
   if (tier === 1) return NEAR_MIN;        // protected from the governor
   if (tier === 2) return MID_MIN * mult;
@@ -833,10 +876,24 @@ const HYDRATE_PROBE_GAMES = 1;
 // steam feed. Idle-tier gaps (180, up to 720 governed) are still excluded on
 // purpose — a three-hour drift is not steam no matter which process observed
 // it, and the spec's own rule is that an in-process 12h gap is just as
-// conflated as a rehydrated one. `line_movements` still records every row at
-// full detail, and `movementsAll` publishes every row in memory; this filters
-// only the steam feed. Follow-up: `sharp` should also check `gap_min` itself,
-// so it is safe against any other producer — not changed here.
+// conflated as a rehydrated one.
+//
+// That rule was written when a STARTED game could not reach a governed tier:
+// the post-tip tail was an unconditional -3.5h, so every in-play row arrived
+// at STRIKE (4) or NEAR (10) and sailed through this bound. Since D102 it does
+// not. Past the short tail a started game in a sport outside `liveSports` sits
+// at MID or IDLE × the governor — gaps of 45 to 720 minutes — so EVERY row
+// it produces is beyond this bound, and post-tip steam for those sports is
+// undetectable by construction. The bound is still right (a 45-minute gap
+// genuinely cannot prove simultaneity, and widening it to admit the governed
+// tiers would be exactly the D77 conflation it exists to prevent); what
+// changed is that the blindness is now a DESIGNED state rather than an
+// impossible one, so `sharp` counts and names those rows instead of printing
+// `0 steam` over them (D107).
+//
+// `line_movements` still records every row at full detail, and `movementsAll`
+// publishes every row in memory; this filters only the steam feed. `sharp` applies this same bound to its own union of
+// history and memory, so it is safe against any other producer (D92).
 // Never wider than the emit bound: a row we refuse to write cannot be steam.
 const STEAM_MAX_GAP_MIN = Math.min(
   MOVE_MAX_GAP_MIN,
@@ -1350,7 +1407,9 @@ async function run() {
   let skippedFootballFloor = 0;
   // Sports whose cadence the shortened post-tip tail demoted on THIS run
   // (D102) — a tier change nobody can see is a tier change nobody can audit.
-  const postTipTail = new Set();
+  // sport -> the tier it landed at ('MID×4'), so the report says how slow it
+  // got and not only how many sports it happened to (D107).
+  const postTipTail = new Map();
 
   for (const [sport, meta] of Object.entries(SPORTS)) {
     // The Odds API has no bare golf/tennis key (event-specific only) — skip to avoid 404s.
@@ -1526,7 +1585,7 @@ async function run() {
   const baselineBit = `baseline ${hydr.games}/${hydr.attempted} games → ${hydr.keys} keys rehydrated${hydr.failures ? `, ${hydr.failures} read failures` : ''}, ${stats.staleBaseline} stale-baseline${hydrateFailRuns >= HYDRATE_FAIL_RUNS ? `, reads circuit-broken after ${hydrateFailRuns} failed runs` : ''}${steamDropped ? `, ${steamDropped} too wide for steam` : ''}`;
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots (${snapshotsWritten} written${snapshotsLost ? `, ${snapshotsLost} lost` : ''}), ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · ${postTipTail.size} sports post-tip tail · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots (${snapshotsWritten} written${snapshotsLost ? `, ${snapshotsLost} lost` : ''}), ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · ${postTipTail.size} sports post-tip tail${postTipTail.size ? ` (${[...new Set(postTipTail.values())].join(', ')})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
     gamesMonitored: allGames.length,
     data: {
       games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls,
@@ -1542,8 +1601,11 @@ async function run() {
       // `movements` is what was written; `steamFeed` is what sharp can see.
       steamFeed: steamFeed.length, steamDropped, hydrateFailRuns,
       // The sports the shortened post-tip tail demoted this run — names, not a
-      // count, so "which league stopped being polled" is answerable (D102).
-      postTipTail: [...postTipTail],
+      // count, so "which league stopped being polled" is answerable (D102) —
+      // plus the tier each one landed at, so "how slow is it now" is
+      // answerable without re-deriving it from the cadence knobs (D107).
+      postTipTail: [...postTipTail.keys()],
+      postTipTailTier: Object.fromEntries(postTipTail),
       budget: getOddsBudget(),
     },
   };

@@ -128,6 +128,34 @@ function footballPriorityOn(now = new Date()) {
 // cost is paid for nothing.
 const NFL_LIVE_ON = String(env.NFL_LIVE || '').toLowerCase() === 'true';
 
+// ── The post-tip tail for everyone else, in minutes ─────────────
+// Read with intEnv, NOT the odds agent's hdrNum: hdrNum rejects '' but does
+// not CLEAN, so `ODDS_POSTTIP_MIN='  '` (a dashboard paste) coerced to a
+// finite 0 and closed the post-tip window entirely — silently, because 0 is
+// also a legitimate setting here ("drop to MID/IDLE the moment a game tips").
+// intEnv is the one reader in this file built for exactly that distinction:
+// it cleans first, rejects blank BEFORE coercing, keeps an explicit 0, and
+// refuses a negative (which, unfloored, would invert `dt >= -tailMs` onto
+// PRE-tip games, and floored would silently become a different setting).
+//
+// The knob lives here and not beside its siblings in the odds agent because
+// intEnv lives here and cannot be imported there: ~20 test files mock.module
+// this file with `defaultExport` only, and a named import of a mocked module
+// that lacks the name is a link-time SyntaxError. The sibling cadence knobs
+// (ODDS_STRIKE_MIN, ODDS_NEAR_MIN, ODDS_MID_MIN, ODDS_IDLE_MIN,
+// ODDS_MOVE_MAX_GAP_MIN, ODDS_STEAM_MAX_GAP_MIN) still read through
+// `Number(...) ||` / hdrNum in the agent and have the same blank-and-negative
+// behaviour — deliberately out of scope, recorded in D107.
+//
+// A rejected value warns ONCE, at load. The warning names the VARIABLE and
+// the rule and never echoes the value (D80: no env value reaches a log).
+const POSTTIP_DEFAULT_MIN = 45;
+const POSTTIP_ASKED_MIN = intEnv(env.ODDS_POSTTIP_MIN, null);
+if (clean(env.ODDS_POSTTIP_MIN) !== '' && POSTTIP_ASKED_MIN === null) {
+  console.warn(`[config] ODDS_POSTTIP_MIN is not a non-negative integer — ignored, using ${POSTTIP_DEFAULT_MIN}`);
+}
+const ODDS_POSTTIP_MIN = POSTTIP_ASKED_MIN ?? POSTTIP_DEFAULT_MIN;
+
 // The Odds API sport keys. Soccer covers 7 leagues we care about.
 const SPORTS = {
   MLB: { key: 'baseball_mlb', emoji: '⚾', hasTotals: true },
@@ -151,6 +179,21 @@ const SPORTS = {
   GOLF: { key: 'golf', emoji: '⛳', hasTotals: false, oddsSkip: true },
 };
 for (const k of ODDS_SKIP_SPORTS) if (SPORTS[k]) SPORTS[k].oddsSkip = true;
+
+// `liveSports` is compared against `g.sport` — the UPPER-CASE keys of SPORTS
+// above — so it is normalised and validated the same way ODDS_SKIP_SPORTS is:
+// upper-cased, then membership-tested against SPORTS. `ODDS_LIVE_SPORTS=nfl`
+// silently bought nothing before this (it never matched 'NFL') and a typo
+// bought nothing while reading as a configured sport. Unknown names are
+// dropped with ONE warning that names the variable, how many were dropped and
+// the known keys — but never echoes the value (D80). Which name was dropped is
+// in the operator's own env; the count plus the valid set is enough to fix it.
+const ODDS_LIVE_SPORTS_ASKED = list(env.ODDS_LIVE_SPORTS, NFL_LIVE_ON ? ['NFL'] : [])
+  .map((s) => s.toUpperCase());
+const ODDS_LIVE_SPORTS = ODDS_LIVE_SPORTS_ASKED.filter((s) => !!SPORTS[s]);
+if (ODDS_LIVE_SPORTS.length !== ODDS_LIVE_SPORTS_ASKED.length) {
+  console.warn(`[config] ODDS_LIVE_SPORTS: ${ODDS_LIVE_SPORTS_ASKED.length - ODDS_LIVE_SPORTS.length} of ${ODDS_LIVE_SPORTS_ASKED.length} names are not known sports and were dropped — known: ${Object.keys(SPORTS).join(',')}`);
+}
 
 // The Odds API bills by market × region, NOT by bookmaker — so every book here
 // is FREE edge surface: more books = more chances one is slow (stale lines,
@@ -330,8 +373,12 @@ const config = {
     footballSports: FOOTBALL_SPORTS,
     footballPriority: FOOTBALL_PRIORITY,
     footballPriorityOn,
-    // Sports whose post-tip polling tail stays at the full -3.5h (D102).
-    liveSports: list(env.ODDS_LIVE_SPORTS, NFL_LIVE_ON ? ['NFL'] : []),
+    // Sports whose post-tip polling tail stays at the full -3.5h (D102),
+    // upper-cased and validated against SPORTS above (D107).
+    liveSports: ODDS_LIVE_SPORTS,
+    // The tail for every OTHER sport, in minutes. The odds agent clamps this
+    // to its own full-tail length — the bound lives where the tail does.
+    postTipMin: ODDS_POSTTIP_MIN,
     base: 'https://api.the-odds-api.com/v4',
   },
 

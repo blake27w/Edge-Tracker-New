@@ -48,6 +48,7 @@ const oddsApiMock = {
   monthlyBudget: 20000, tier: 'starter', key: 'test-key',
   footballSports: [], footballPriority: 'false', footballPriorityOn: () => false,
   liveSports: [],
+  postTipMin: 45,
   base: 'https://api.the-odds-api.com/v4',
 };
 
@@ -85,15 +86,15 @@ before(async () => {
 });
 after(() => mock.reset());
 
-beforeEach(() => { oddsApiMock.liveSports = []; setGames([]); });
+beforeEach(() => { oddsApiMock.liveSports = []; oddsApiMock.postTipMin = 45; setGames([]); });
 
 // ── 1. the short window still covers the fresh post-tip rows ────
 test('a non-live sport whose last game tipped 30 min ago is still on STRIKE', () => {
   setGames(slate('A', -30 * MIN));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('A', 1, lowered), STRIKE,
     'book-move scores started games and wants the freshest rows — 30 min in is inside the 45-min window');
-  assert.deepEqual([...lowered], [], 'nothing was demoted, so nothing is reported');
+  assert.deepEqual([...lowered.keys()], [], 'nothing was demoted, so nothing is reported');
 });
 
 test('the 45-minute edge: 44 min in is STRIKE, 46 min in is not', () => {
@@ -106,18 +107,18 @@ test('the 45-minute edge: 44 min in is STRIKE, 46 min in is not', () => {
 // ── 2. the long tail is gone ────────────────────────────────────
 test('tipped 50 min ago with the next game 8h out drops to MID — the 3.5h tail is gone', () => {
   setGames(slate('A', -50 * MIN, 8 * H));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('A', 1, lowered), MID,
     'the 8h game is inside the 12h MID band, so MID is the floor — STRIKE is what this refuses');
-  assert.deepEqual([...lowered], ['A'],
+  assert.deepEqual([...lowered.keys()], ['A'],
     'this exact slate was STRIKE before the change, so the demotion is named');
 });
 
 test('tipped 50 min ago with nothing else on the board drops all the way to IDLE', () => {
   setGames(slate('A', -50 * MIN));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('A', 1, lowered), IDLE);
-  assert.deepEqual([...lowered], ['A']);
+  assert.deepEqual([...lowered.keys()], ['A']);
 });
 
 test('the dead 3h tail: tipped 3h ago is IDLE, not STRIKE', () => {
@@ -129,9 +130,9 @@ test('the dead 3h tail: tipped 3h ago is IDLE, not STRIKE', () => {
 // ── 3. PRE-tip behaviour is byte-identical ──────────────────────
 test('tipped 50 min ago but the NEXT game starts in 20 min is STRIKE — pre-tip is untouched', () => {
   setGames(slate('A', -50 * MIN, 20 * MIN));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('A', 1, lowered), STRIKE);
-  assert.deepEqual([...lowered], [],
+  assert.deepEqual([...lowered.keys()], [],
     'the old window would have returned STRIKE too, so this run demoted nothing');
 });
 
@@ -155,27 +156,27 @@ test('the governor still stretches MID/IDLE and still never touches STRIKE/NEAR'
 
 test('the freshest game wins: 50 min in AND 20 min in is STRIKE', () => {
   setGames(slate('A', -50 * MIN, -20 * MIN));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('A', 1, lowered), STRIKE);
-  assert.deepEqual([...lowered], [], 'a sport is not "demoted" because one of its games aged out');
+  assert.deepEqual([...lowered.keys()], [], 'a sport is not "demoted" because one of its games aged out');
 });
 
 // ── 4. a live sport keeps the full tail ─────────────────────────
 test('NFL tipped 2h ago keeps STRIKE when it is in liveSports', () => {
   oddsApiMock.liveSports = ['NFL'];
   setGames(slate('NFL', -2 * H));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('NFL', 1, lowered), STRIKE,
     'nfl.live reads these rows — this is the tail the change is paying for');
-  assert.deepEqual([...lowered], []);
+  assert.deepEqual([...lowered.keys()], []);
 });
 
 test('the same NFL slate drops to IDLE when liveSports is empty — the consumer is off', () => {
   oddsApiMock.liveSports = [];
   setGames(slate('NFL', -2 * H));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('NFL', 1, lowered), IDLE);
-  assert.deepEqual([...lowered], ['NFL']);
+  assert.deepEqual([...lowered.keys()], ['NFL']);
 });
 
 test('ODDS_LIVE_SPORTS is not NFL-shaped: NCAAB in the list keeps the full tail', () => {
@@ -188,9 +189,9 @@ test('ODDS_LIVE_SPORTS is not NFL-shaped: NCAAB in the list keeps the full tail'
 test('even a live sport ends at -3.5h: NFL tipped 4h ago is IDLE', () => {
   oddsApiMock.liveSports = ['NFL'];
   setGames(slate('NFL', -4 * H));
-  const lowered = new Set();
+  const lowered = new Map();
   assert.equal(mod.sportIntervalMin('NFL', 1, lowered), IDLE);
-  assert.deepEqual([...lowered], [], 'the old window would not have polled this either');
+  assert.deepEqual([...lowered.keys()], [], 'the old window would not have polled this either');
 });
 
 test('a config with no liveSports key at all does not throw — the odds tests mock the whole object', () => {
@@ -208,49 +209,56 @@ test('an unparseable commence_time is still ignored, not treated as live', () =>
   assert.equal(mod.sportIntervalMin('A', 1), IDLE);
 });
 
-// ── 5. ODDS_POSTTIP_MIN, and 0 as a real setting ────────────────
-// A fresh module instance per env value: POSTTIP_MIN is read once at load, the
-// same as the other cadence constants.
-async function withPostTip(v, tag) {
-  if (v === null) delete process.env.ODDS_POSTTIP_MIN;
-  else process.env.ODDS_POSTTIP_MIN = v;
-  const m = await import(`../src/agents/odds/index.js?posttip=${tag}`);
-  delete process.env.ODDS_POSTTIP_MIN;
-  return m;
-}
+// ── 5. the tail length knob, and 0 as a real setting ────────────
+// The VALUE comes from config (`oddsApi.postTipMin`) because the reader that
+// can tell '  ' from 0 — intEnv — lives there; env parsing is pinned in
+// test/odds-posttip-knob.test.js. What belongs here is what the agent does
+// with the number it is handed, read per call exactly as the live service does
+// (a config change needs no restart).
 
-test('ODDS_POSTTIP_MIN=0 is HONOURED — zero post-tip polling, not the default', async () => {
-  const m = await withPostTip('0', 'zero');
+test('postTipMin 0 is HONOURED — zero post-tip polling, not the default', () => {
+  oddsApiMock.postTipMin = 0;
   setGames(slate('A', -1 * MIN));
-  const lowered = new Set();
-  assert.equal(m.sportIntervalMin('A', 1, lowered), IDLE,
+  const lowered = new Map();
+  assert.equal(mod.sportIntervalMin('A', 1, lowered), IDLE,
     '0 means "drop the moment it tips"; Number("") is a finite 0, so `|| 45` could not tell this from unset');
-  assert.deepEqual([...lowered], ['A']);
+  assert.deepEqual([...lowered.keys()], ['A']);
   setGames(slate('A', 1 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), STRIKE, 'and pre-tip is still pre-tip at 0');
+  assert.equal(mod.sportIntervalMin('A', 1), STRIKE, 'and pre-tip is still pre-tip at 0');
 });
 
-test("ODDS_POSTTIP_MIN='' falls back to the 45-minute default", async () => {
-  const m = await withPostTip('', 'empty');
-  setGames(slate('A', -30 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), STRIKE);
-  setGames(slate('A', -50 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), IDLE);
-});
-
-test('ODDS_POSTTIP_MIN=120 widens the window without touching the live-sport tail', async () => {
-  const m = await withPostTip('120', 'wide');
+test('postTipMin 120 widens the window without touching the live-sport tail', () => {
+  oddsApiMock.postTipMin = 120;
   setGames(slate('A', -100 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), STRIKE);
+  assert.equal(mod.sportIntervalMin('A', 1), STRIKE);
   setGames(slate('A', -3.4 * 60 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), IDLE, '120 < 210, so the full tail is still strictly longer');
+  assert.equal(mod.sportIntervalMin('A', 1), IDLE, '120 < 210, so the full tail is still strictly longer');
 });
 
-test('a negative ODDS_POSTTIP_MIN cannot invert the window and swallow pre-tip games', async () => {
-  const m = await withPostTip('-60', 'neg');
-  setGames(slate('A', 10 * MIN));
-  assert.equal(m.sportIntervalMin('A', 1), STRIKE,
-    'floored at 0 — an unfloored tailMs would make `dt >= -tailMs` demand dt >= +60m');
+test('a tail longer than the FULL tail is clamped to it, not honoured', () => {
+  // 600 would give a NON-live sport a 10-hour fast tail — longer than the 3.5h
+  // this change removed, i.e. a knob that silently spends MORE than the
+  // behaviour it replaced. `tier > fullTier` cannot report that either: a tail
+  // wider than the full tail lowers nothing, so the demotion segment reads 0
+  // while the spend goes up. Clamped at the full tail, where the bound lives.
+  oddsApiMock.postTipMin = 300;
+  setGames(slate('A', -250 * MIN));
+  assert.equal(mod.sportIntervalMin('A', 1), IDLE,
+    '250 min in is past the 210-min full tail, so an unclamped 300 would have kept STRIKE');
+  setGames(slate('A', -200 * MIN));
+  assert.equal(mod.sportIntervalMin('A', 1), STRIKE, 'and inside the clamp it behaves like the full tail');
+  oddsApiMock.postTipMin = 600;
+  setGames(slate('A', -3.6 * 60 * MIN));
+  assert.equal(mod.sportIntervalMin('A', 1), IDLE, 'no setting can poll past the full tail');
+});
+
+test('a config with no postTipMin key at all falls back to 45 — the odds tests mock the whole object', () => {
+  delete oddsApiMock.postTipMin;
+  setGames(slate('A', -30 * MIN));
+  assert.equal(mod.sportIntervalMin('A', 1), STRIKE);
+  setGames(slate('A', -50 * MIN));
+  assert.equal(mod.sportIntervalMin('A', 1), IDLE);
+  oddsApiMock.postTipMin = 45;
 });
 
 // ── 6. the run reports it ───────────────────────────────────────
@@ -265,8 +273,31 @@ test('a real run names the demoted sports in the summary and in data', async () 
   });
   const r = await mod.default.run();
   assert.deepEqual(r.data.postTipTail, ['A'], 'names, so "which league stopped being polled" is answerable');
-  assert.match(r.summary, /· 1 sports post-tip tail ·/,
+  assert.match(r.summary, /· 1 sports post-tip tail \(MID\) ·/,
     'and in the summary segment, which is where an operator actually reads it');
+  assert.deepEqual(r.data.postTipTailTier, { A: 'MID' },
+    'the tier it landed at, so "how slow is it now" is not arithmetic the reader has to do');
+});
+
+test('the summary says HOW SLOW, governor included — the tier is the number that matters', async () => {
+  // A demoted sport lands at MID or IDLE, which are the two tiers the pace
+  // governor multiplies, so "3 sports post-tip tail" alone leaves the reader
+  // to multiply four cadence knobs by a mult they cannot see. The label
+  // carries both.
+  setGames([...slate('A', -50 * MIN, 8 * H), ...slate('NCAAB', -50 * MIN)]);
+  global.fetch = async (url) => ({
+    ok: true, status: 200,
+    headers: { get: () => null },
+    json: async () => (String(url).includes('/sports?') ? [{ key: 'k_A', active: true }] : []),
+  });
+  const lowered = new Map();
+  assert.equal(mod.sportIntervalMin('A', 4, lowered), MID * 4);
+  assert.equal(mod.sportIntervalMin('NCAAB', 4, lowered), IDLE * 4);
+  assert.deepEqual(Object.fromEntries(lowered), { A: 'MID×4', NCAAB: 'IDLE×4' },
+    'tier AND governor multiplier, because that product is the real cadence');
+  const un = new Map();
+  assert.equal(mod.sportIntervalMin('A', 1, un), MID);
+  assert.deepEqual(Object.fromEntries(un), { A: 'MID' }, 'and no ×1 noise when the governor is idle');
 });
 
 test('the segment is present with a zero too — a quiet run and a lowered one must not look alike', async () => {
@@ -278,5 +309,6 @@ test('the segment is present with a zero too — a quiet run and a lowered one m
   });
   const r = await mod.default.run();
   assert.deepEqual(r.data.postTipTail, []);
-  assert.match(r.summary, /· 0 sports post-tip tail ·/);
+  assert.deepEqual(r.data.postTipTailTier, {});
+  assert.match(r.summary, /· 0 sports post-tip tail ·/, 'no parenthetical when nothing was lowered');
 });
