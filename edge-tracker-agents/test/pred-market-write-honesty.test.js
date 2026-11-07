@@ -80,3 +80,20 @@ test('a failed pred_market_edges insert is reported as lost, not as success', ()
     'the error must carry the database message that explains the loss');
   assert.deepEqual(logs.warn, [], 'a lost write must not be downgraded to warn');
 });
+
+test('a total write loss returns a blocked reason — a constant literal, no counts', () => {
+  // The run reported `0 written`, which the watchdog, /data-health and the
+  // degraded channel all read as a quiet slate. A run that built rows and
+  // landed none of them succeeded while unable to do its job — D80's
+  // definition — so it opts into the blocked channel and the orchestrator does
+  // the reporting (no reportDegraded call of our own).
+  assert.equal(typeof res.blocked, 'string', 'built edges, landed none — that is D80\'s blocked');
+  assert.match(res.blocked, /pred_market_edges rejects the batch/, 'the reason must name the table');
+  assert.match(res.blocked, /alter column in scripts\/schema\.sql/, 'and the fix a human has to run');
+  // The D80 trap: the orchestrator treats a changed reason as a NEW fault and
+  // restarts the streak, so a reason carrying a run-varying count would sit at
+  // blockedRuns 1 forever and re-fire reportDegraded every run. Counts live in
+  // the summary, which is free to vary.
+  assert.ok(!/\d/.test(res.blocked),
+    `the blocked reason must be a constant literal with no counts — got ${JSON.stringify(res.blocked)}`);
+});

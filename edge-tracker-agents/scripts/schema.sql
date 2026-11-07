@@ -947,13 +947,21 @@ alter table line_movements add column if not exists baseline_source text;
 -- a single half-point consensus anywhere in the batch discards every row in the
 -- run. Observed live 2026-11-07 as `write|pred_market_edges` ×9.
 --
--- The fix is the column type, not a round in the agent: `book_prob` and
--- `edge_pct` in the same row are devigged from the unrounded price, so a
--- rounded price would leave a row that cannot reproduce its own implied
--- probability — corruption in the other direction.
+-- The fix is the column type, not a round in the agent, and the reason is
+-- FIDELITY: a median across books is not a price any book quoted, and rounding
+-- it would store a quote that never existed. (The original rationale — "the row
+-- could no longer reproduce its own book_prob" — does not survive scrutiny:
+-- `book_prob` is devigged from BOTH sides' prices, so a row carrying only the
+-- played side's `price` cannot reproduce it either way.) Downstream consumers
+-- that need an integer quote should round at their own edge; `grading/index.js`
+-- pays ML win P&L at this notional median, which is strictly better than the
+-- row never persisting at all.
 --
 -- Writers: src/agents/pred-market/index.js (pred_market_edges),
 -- src/agents/signal-engine/index.js and src/agents/public-fade/index.js
--- (monitor_scores) — the same median through all three.
+-- (monitor_scores) — the same median through all three. Also
+-- src/agents/nfl.live/nfl-live-index.js:132, which writes monitor_scores with
+-- `price: best?.price ?? e.price` — the fallback is the exchange edge's own
+-- `price`, i.e. that same median arriving second-hand via pred_market_edges.
 alter table pred_market_edges alter column price type numeric;
 alter table monitor_scores    alter column price type numeric;

@@ -24,34 +24,21 @@
 //  1. every column scripts/schema.sql declares `integer` for this table must
 //     receive an integer — this is the failing assertion, and the fix is the
 //     DDL (`price numeric`), not a round in the agent;
-//  2. `price` must stay the UNROUNDED consensus, because `book_prob` in the same
-//     row is devigged from that exact number — rounding the price would leave
-//     the row internally inconsistent (a price that cannot reproduce its own
-//     implied probability), which is corruption in the other direction.
+//  2. `price` must stay the UNROUNDED consensus, on FIDELITY grounds: a median
+//     across books is not a price any book quoted, and rounding it would store
+//     a quote that never existed, in a column whose other writers hold real
+//     feed prices. (D104 argued this from reproducibility — "the row could no
+//     longer reproduce its own book_prob" — which does not hold: book_prob is
+//     devigged from BOTH sides' prices, so a row carrying only the played
+//     side's price cannot reproduce it either way. D108 corrects that.) The
+//     round belongs at whichever consumer needs an integer quote.
 // ══════════════════════════════════════════════════════════════
 import { test, mock, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { computeMarkets } from '../src/games/lines.js';
-
-const SCHEMA = new URL('../scripts/schema.sql', import.meta.url);
-
-// Column name → declared type for one `create table` block in schema.sql,
-// plus any later `alter table … add column` for the same table.
-function declaredColumns(sql, table) {
-  const block = new RegExp(`create table if not exists ${table}\\s*\\(([\\s\\S]*?)\\n\\);`, 'i').exec(sql);
-  assert.ok(block, `no create table block for ${table} in schema.sql`);
-  const cols = {};
-  for (const raw of block[1].split('\n')) {
-    const line = raw.replace(/--.*$/, '').trim().replace(/,$/, '');
-    if (!line || /^(primary|unique|foreign|constraint|check)\b/i.test(line)) continue;
-    const m = /^([a-z_][a-z0-9_]*)\s+(.+)$/i.exec(line);
-    if (m) cols[m[1]] = m[2].trim().toLowerCase();
-  }
-  const alter = new RegExp(`alter table ${table} add column if not exists ([a-z_][a-z0-9_]*)\\s+([^;]+);`, 'gi');
-  for (const m of sql.matchAll(alter)) cols[m[1]] = m[2].trim().toLowerCase();
-  return cols;
-}
+import {
+  readSchema, declaredColumns, assertDeclared, integerColumns, integerViolations,
+} from './helpers/schema-ddl.js';
 
 // An even number of books on both sides, so every median is an average of two.
 // Home +120 / +131 → consensus 125.5, the exact value the live error quoted.
@@ -75,6 +62,7 @@ const polyPayload = [{
 
 const inserts = [];
 const realFetch = global.fetch;
+let res;
 
 before(async () => {
   global.fetch = async (url) => {
@@ -97,7 +85,7 @@ before(async () => {
     namedExports: { logger: { info() {}, warn() {}, error() {} } },
   });
   const agent = (await import('../src/agents/pred-market/index.js')).default;
-  const res = await agent.run();
+  res = await agent.run();
   assert.equal(res.data.edges, 1, 'the scripted slate must produce exactly one exchange edge');
 });
 after(() => { global.fetch = realFetch; mock.reset(); });
@@ -110,20 +98,35 @@ const row = () => {
 };
 
 test('every pred_market_edges column declared integer receives an integer', () => {
-  const cols = declaredColumns(readFileSync(SCHEMA, 'utf8'), 'pred_market_edges');
-  const ints = Object.keys(cols).filter((c) => /^(integer|int|int4|bigint|int8|smallint|int2)\b/.test(cols[c]));
+  const cols = declaredColumns(readSchema(), 'pred_market_edges');
+  // The anti-vacuity guard. "Each integer column got an integer" is satisfied
+  // by an empty list, and after the fix this table HAS no integer column — the
+  // fix is precisely that `price` stopped being one — so `ints.length > 0` is
+  // not available here. What is pinned instead is the parse: these three
+  // columns must have come out of the DDL with a declared type, so a
+  // reformatted `create table` block fails rather than quietly reading zero
+  // columns and agreeing with everything. (monitor_scores keeps `t1_count`, so
+  // its copy of this test asserts the length as well.)
+  assertDeclared(cols, 'pred_market_edges', ['price', 'exch_prob', 'vol']);
+  const ints = integerColumns(cols);
   const r = row();
-  const bad = ints
-    .filter((c) => r[c] != null && !Number.isInteger(r[c]))
-    .map((c) => `${c} (declared ${cols[c]}) got ${JSON.stringify(String(r[c]))}`);
+  const bad = integerViolations(cols, ints, r);
   assert.deepEqual(bad, [],
     `Postgres rejects the whole batch for these: ${bad.join('; ')} — the consensus median is not an integer, so the column must be numeric`);
 });
 
-test('price stays the unrounded consensus median that book_prob was devigged from', () => {
+test('price stays the unrounded consensus median — rounding is the consumer\'s job', () => {
   const consensus = computeMarkets(game).ml.consensusHome;
   assert.equal(consensus, 125.5, 'an even book count averages the two middle prices');
   assert.equal(row().price, consensus,
-    'rounding price would leave a row whose book_prob cannot be reproduced from its own price');
+    'a median is not a price any book quoted; rounding it would store a quote that never existed (D108)');
 });
 
+test('a run that wrote its batch returns no blocked reason', () => {
+  // The other half of the blocked contract pinned in the honesty test: a run
+  // without `blocked` is what the orchestrator reads as recovery, and is the
+  // only way a standing block ever clears.
+  assert.equal(res.data.written, 1, 'the scripted insert succeeds');
+  assert.equal(res.data.lost, 0);
+  assert.equal(res.blocked, undefined, 'a run that wrote is not blocked');
+});

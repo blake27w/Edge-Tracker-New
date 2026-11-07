@@ -23,6 +23,10 @@ const EDGE = Number(process.env.PRED_EDGE_PCT) || 0.04;       // book underprice
 const MIN_VOL = Number(process.env.PRED_MIN_VOL) || 5000;     // skip illiquid exchange markets
 const POLY_URL = process.env.POLYMARKET_URL || 'https://gamma-api.polymarket.com/markets?closed=false&limit=500';
 const KALSHI_URL = process.env.KALSHI_MARKETS_URL || 'https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=1000';
+// Constant literal, no counts: the orchestrator treats a changed `blocked`
+// reason as a new fault and resets the streak (D80), so an interpolated count
+// would read `blockedRuns: 1` forever and churn reportDegraded every run.
+const BLOCKED_WRITE = 'pred_market_edges rejects the batch — run the alter column in scripts/schema.sql';
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
 function teamMatch(a, b) {
@@ -130,6 +134,12 @@ async function run() {
   }
   return {
     summary: `${edges.length} exchange edges (${written} written${lost ? `, ${lost} lost` : ''}, poly ${poly.length}, kalshi ${kalshi.length})`,
+    // A run that built edges and landed none of them succeeded while unable to
+    // do its job — D80's definition, so it goes down the blocked channel. The
+    // reason is a CONSTANT literal: the orchestrator reads a changed reason as
+    // a new fault and restarts the streak, so counts stay in the summary. A
+    // later run that writes returns no `blocked` and the orchestrator clears.
+    blocked: written === 0 && lost > 0 ? BLOCKED_WRITE : undefined,
     data: { edges: edges.length, written, lost },
   };
 }

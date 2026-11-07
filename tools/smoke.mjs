@@ -692,8 +692,9 @@ ok('both opted-in agents are driven on BOTH sides of their gate',
 ok('the opt-in set is asserted against the wired fleet, not just the opted-in files',
   /exactly the agents the specs opted in/.test(blockedTestSrc)
   && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc)
-  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
-  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95) and sharp (D94).');
+  && /OPTED_IN_ON_WRITE_LOSS = \['pred-market', 'signal-engine', 'public-fade'\]/.test(blockedTestSrc)
+  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, \.\.\.OPTED_IN_ON_WRITE_LOSS, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95), sharp (D94), and the three median-price writers whose whole batch can be rejected at once (D108) — each named in its own list so adding one is a visible edit here.');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a
@@ -1121,6 +1122,40 @@ ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of t
   && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
   && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
   'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
+
+// ── 17. The owed `alter column` statements for the median price (D104/D108) ──
+// `price` holds a consensus MEDIAN, which lands on a half whenever the book
+// count is even, and both columns were declared `integer`. PostgREST applies a
+// batch insert as ONE statement, so a single half-point consensus discarded
+// every row in the run — nine times on 2026-11-07, each reported as a success.
+// Changing the `create` / `add column` declarations fixes a database created
+// from scratch; a database that already applied the old file keeps the integer
+// column, and NOTHING in this repo applies schema.sql (D69/D70). So the two
+// `alter column` lines ARE the fix for production, and deleting one leaves a
+// database broken with no trace in the repo at all. Asserted on the raw file,
+// not codeOnly(): a commented-out ALTER is not a statement anyone can run.
+for (const t of ['pred_market_edges', 'monitor_scores']) {
+  ok(`schema.sql carries the hand-run alter column for ${t}.price`,
+    new RegExp(`^\\s*alter table ${t}\\s+alter column price type numeric\\s*;`, 'm').test(schema),
+    'the median is not an integer and nothing applies this file — without this line the live column stays `integer` and keeps rejecting whole batches');
+}
+ok('schema.sql says the two alter column lines are run by hand',
+  /RUN THESE TWO LINES BY HAND/.test(schema),
+  'an ALTER with no instruction attached is indistinguishable from one already applied');
+// Both other writers of that median report what LANDED, not what they built,
+// and a run that landed nothing opts into the blocked channel (D80/D108).
+const sigSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/signal-engine/index.js'), 'utf8');
+const fadeSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-fade/index.js'), 'utf8');
+const predSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/pred-market/index.js'), 'utf8');
+for (const [name, src] of [['signal-engine', sigSrc], ['public-fade', fadeSrc], ['pred-market', predSrc]]) {
+  const code = codeOnly(src);
+  ok(`${name} counts what landed and reports a total loss as blocked`,
+    /written = 0, lost = 0;/.test(code)
+    && /logger\.error\(/.test(code)
+    && /blocked: written === 0 && lost > 0 \? BLOCKED_WRITE : undefined/.test(code)
+    && /const BLOCKED_WRITE = '[^0-9']+';/.test(code),
+    'a `catch { warn }` under a summary reporting the count BUILT is how nine lost runs read as nine successes; and the blocked reason must be a constant literal with no counts, or the orchestrator reads every run as a new fault (D80)');
+}
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
