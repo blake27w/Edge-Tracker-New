@@ -33,9 +33,31 @@ const EXPIRE_BATCH = 200;
 // A sweep this large is either first-run cleanup or a grader that was down
 // long enough to write off real results. Both are worth saying out loud.
 const EXPIRE_LOUD_AT = Number(process.env.GRADE_EXPIRE_LOUD_AT) || 25;
-// Minimum plays-with-finals-available before "0 graded" is treated as a defect
-// rather than an ordinary quiet run. Guards against alarming on a single play.
+// Minimum should-have-been-gradeable plays before "0 graded" is treated as a
+// defect rather than an ordinary quiet run. Guards against alarming on a single
+// play (one prop with an unfindable stat is not an outage).
 const ZERO_ALARM_MIN = Number(process.env.GRADE_ZERO_ALARM_MIN) || 5;
+// How long after scored_at a play's game is CERTAINLY over. Plays are logged up
+// to 36h before kickoff and a game runs ~4h, so past this a missing final is a
+// real failure (ours or ESPN's) rather than a game that hasn't started.
+const SETTLED_HOURS = Number(process.env.GRADE_SETTLED_HOURS) || 48;
+// Scoreboard dates to fetch per play, as day offsets from scored_at. A play is
+// logged up to 36h BEFORE kickoff and a late US game lands on the NEXT UTC
+// date, so its final can sit two days after scored_at; a late-evening game
+// logged after its own kickoff sits one day before. [+2,+1,0,-1] is the tight
+// cover. The old [0,-1] looked only backwards, so an NCAAF play logged the day
+// before kickoff (prod: Toledo @ Sacramento State, scored 11-03, final on
+// ESPN's 11-04 board) never had its game's date fetched at all (D105).
+//
+// Cost: the pairs below are deduped to one fetch per distinct (sport, date),
+// and shared/espn.js caches by that same key, so it is 4 fetches per sport for
+// a single evening's slate regardless of how many plays are queued (worst case
+// LOOKBACK_DAYS+3 distinct dates when the queue spans the whole window).
+// Targeting ONE date instead would need the game's kickoff time, which is not
+// available cheaply: monitor_scores has no commence_time column (signal-engine
+// strips it before insert) and the odds slate in store holds only the CURRENT
+// upcoming games, so a play days old is no longer in it. ESPN is free.
+const DATE_OFFSETS = [2, 1, 0, -1];
 
 // monitor_scores sport → ESPN scoreboard path.
 const ESPN_PATH = {
@@ -47,7 +69,15 @@ function profitPerUnit(odds = -110) {
   return odds < 0 ? 100 / Math.abs(odds) : odds / 100;
 }
 function ymd(d) { return d.toISOString().slice(0, 10).replace(/-/g, ''); }
-function norm(s) { return String(s || '').toLowerCase(); }
+// Fold diacritics BEFORE casing. The Odds API carries the accented spelling
+// ("Tim Stützle") while ESPN's boxscore displayName is unaccented
+// ("Tim Stutzle"), and every comparison downstream is ===/includes, so an
+// unfolded norm() left those plays pending forever (D105). Both sides of every
+// comparison pass through here, and shared/espn.js folds its team nicknames the
+// same way, so nothing that matched before stops matching.
+function norm(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
 
 // Completed finals for a sport+date — via the shared TTL-cached ESPN fetcher.
 async function fetchFinals(sport, dateStr) {
@@ -91,23 +121,45 @@ function lossAnomaly(p, f) {
 }
 
 // ── Player-prop grading from ESPN box scores ─────────────────────
-// stat_type → { labels: ESPN stat abbreviations, category?: stat group, altGA? }
+// stat_type → { keys: ESPN stat API names, labels: display abbreviations,
+//               category?: stat group, altGA?, att? }
+//
+// `keys` is authoritative and tried first. Display abbreviations collide — both
+// across sports and across columns of the SAME table — so resolving a prop by
+// label is a coin flip that happens to have landed right everywhere except NHL
+// shots. Audited against live ESPN boxscores (NHL 401892628, NFL 401873036,
+// NBA 401909936, MLB 401908046):
+//   NHL skaters labels [...,'G','YTDG','A','S','SM','SOG',...] →
+//     keys [...,'goals','ytdGoals','assists','shotsTotal','shotsMissed',
+//     'shootoutGoals',...]. 'S' is shots on goal; 'SOG' is SHOOTOUT goals.
+//     The old ['SOG','S','SH'] took the first label present, so every NHL
+//     shots-on-goal prop graded against shootout goals — effectively always 0,
+//     writing every OVER a loss and every UNDER a win (D105).
+//   NFL 'REC' is receptions in the receiving group and fumblesRecovered in the
+//     fumbles group; 'YDS' is passing/rushing/receiving yards in three groups;
+//     'PTS' is totalKickingPoints in the kicking group but points in NBA. Each
+//     of those is correct today only because of its `category` filter — exactly
+//     the same bug waiting. `keys` makes it structural instead of incidental.
+//   MLB batting labels ['H-AB','AB','R','H',...]: indexOf('H') lands on hits,
+//     not on the 'H-AB' string — right by luck; key 'hits' is right by name.
+//   'SH' matches no label in any of the four boxscores; kept only as a harmless
+//     last resort.
 // Short stat ids used by research prop picks (nfl-props baselines) → grading stat_type.
 const RESEARCH_STAT = { rush_yds: 'player_rush_yds', rec_yds: 'player_reception_yds', receptions: 'player_receptions', pass_yds: 'player_pass_yds', rush_att: 'player_rush_att', targets: 'player_targets', pass_att: 'player_pass_att' };
 const STAT = {
-  player_points: { labels: ['PTS'], altGA: true },          // NBA PTS; NHL falls back to G+A
-  player_rebounds: { labels: ['REB'] },
-  player_assists: { labels: ['AST'] },
-  player_shots_on_goal: { labels: ['SOG', 'S', 'SH'] },
-  player_pass_yds: { labels: ['YDS'], category: 'passing' },
-  player_rush_yds: { labels: ['YDS'], category: 'rushing' },
-  player_reception_yds: { labels: ['YDS'], category: 'receiving' },
-  player_receptions: { labels: ['REC'], category: 'receiving' },
-  player_rush_att: { labels: ['CAR'], category: 'rushing' },
-  player_targets: { labels: ['TGTS'], category: 'receiving' },
-  player_pass_att: { labels: ['C/ATT'], category: 'passing', att: true },
-  batter_hits: { labels: ['H'], category: 'batting' },
-  pitcher_strikeouts: { labels: ['K', 'SO'], category: 'pitching' },
+  player_points: { keys: ['points'], labels: ['PTS'], altGA: true }, // NBA points; NHL falls back to G+A
+  player_rebounds: { keys: ['rebounds'], labels: ['REB'] },
+  player_assists: { keys: ['assists'], labels: ['AST'] },
+  player_shots_on_goal: { keys: ['shotsTotal'], labels: ['S', 'SH'] },
+  player_pass_yds: { keys: ['passingYards'], labels: ['YDS'], category: 'passing' },
+  player_rush_yds: { keys: ['rushingYards'], labels: ['YDS'], category: 'rushing' },
+  player_reception_yds: { keys: ['receivingYards'], labels: ['YDS'], category: 'receiving' },
+  player_receptions: { keys: ['receptions'], labels: ['REC'], category: 'receiving' },
+  player_rush_att: { keys: ['rushingAttempts'], labels: ['CAR'], category: 'rushing' },
+  player_targets: { keys: ['receivingTargets'], labels: ['TGTS'], category: 'receiving' },
+  player_pass_att: { keys: ['completions/passingAttempts'], labels: ['C/ATT'], category: 'passing', att: true },
+  batter_hits: { keys: ['hits'], labels: ['H'], category: 'batting' },
+  pitcher_strikeouts: { keys: ['strikeouts'], labels: ['K', 'SO'], category: 'pitching' },
 };
 
 function statNum(v) {
@@ -120,7 +172,9 @@ function nameMatch(ath, name) {
   if (!a || !n) return false;
   if (a === n || a.includes(n) || n.includes(a)) return true;
   const an = a.split(' '), nn = n.split(' ');
-  return an.length && nn.length && an[an.length - 1] === nn[nn.length - 1] && an[0][0] === nn[0][0]; // last name + first initial
+  // Surname + first initial. Both sides are already diacritic-folded by norm(),
+  // which is what lets "Tim Stützle" reach ESPN's "Tim Stutzle".
+  return !!an[0] && !!nn[0] && an[an.length - 1] === nn[nn.length - 1] && an[0][0] === nn[0][0];
 }
 // Find a player's stat in an ESPN boxscore.
 function statValue(box, player, spec) {
@@ -130,12 +184,20 @@ function statValue(box, player, spec) {
         const gn = String(grp.name || grp.text || grp.type || '').toLowerCase();
         if (!gn.includes(spec.category)) continue;
       }
+      // ESPN ships two parallel arrays describing the same columns: `keys`
+      // (stable API names) and `labels` (display abbreviations). Resolve by key
+      // name first and fall back to the label, so an ambiguous abbreviation can
+      // never pick the wrong column when the unambiguous name is right there.
+      const keys = (grp.keys || []).map((s) => String(s));
       const labels = (grp.labels || grp.keys || []).map((s) => String(s).toUpperCase());
       const ath = (grp.athletes || []).find((a) => nameMatch(a.athlete, player));
       if (!ath) continue;
-      for (const w of spec.labels) {
-        const i = labels.indexOf(w);
-        if (i >= 0) { if (spec.att) { const m = /(\d+)\s*\/\s*(\d+)/.exec(String(ath.stats?.[i] || '')); if (m) return Number(m[2]); continue; } const v = statNum(ath.stats?.[i]); if (v != null) return v; }
+      const cols = [];
+      for (const k of spec.keys || []) { const i = keys.indexOf(k); if (i >= 0 && !cols.includes(i)) cols.push(i); }
+      for (const w of spec.labels) { const i = labels.indexOf(w); if (i >= 0 && !cols.includes(i)) cols.push(i); }
+      for (const i of cols) {
+        if (spec.att) { const m = /(\d+)\s*\/\s*(\d+)/.exec(String(ath.stats?.[i] || '')); if (m) return Number(m[2]); continue; }
+        const v = statNum(ath.stats?.[i]); if (v != null) return v;
       }
       if (spec.altGA) { // NHL points = goals + assists
         const gi = labels.indexOf('G'), ai = labels.indexOf('A');
@@ -311,12 +373,12 @@ async function run() {
     return { summary: `no completed plays to grade${expired ? ` · ${expired} expired` : ''}`, data: { graded: 0, expired } };
   }
 
-  // Collect the (sport, date) pairs we need — game day plus the day before,
-  // since a late-evening US game lands on the prior UTC date.
+  // Collect the (sport, date) pairs we need — see DATE_OFFSETS for why the
+  // window reaches forwards as well as back, and for the fetch cost.
   const pairs = new Map();
   for (const p of [...pending, ...rpending]) {
     const d = new Date(p.scored_at || p.created_at);
-    for (const off of [0, -1]) {
+    for (const off of DATE_OFFSETS) {
       const dd = new Date(d.getTime() + off * 86400_000);
       pairs.set(`${p.sport}|${ymd(dd)}`, { sport: p.sport, date: ymd(dd) });
     }
@@ -336,6 +398,10 @@ async function run() {
   // genuinely empty slate both printed "graded 0". These counters are the
   // difference between the two, and they go into the summary.
   let noFinal = 0, noResult = 0, writeFail = 0;
+  // Of the no-final plays, how many are past SETTLED_HOURS — i.e. their game is
+  // certainly over, so the missing final is a defect and not a pending kickoff.
+  let noFinalSettled = 0;
+  const settledFloor = Date.now() - SETTLED_HOURS * 3600_000;
   const now = new Date().toISOString();
   for (const p of pending) {
     const parts = String(p.matchup || '').split(' @ ');
@@ -343,7 +409,11 @@ async function run() {
     const f = (finalsBySport[p.sport] || []).find(
       (x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick),
     );
-    if (!f) { noFinal++; continue; }
+    if (!f) {
+      noFinal++;
+      if (Date.parse(p.scored_at || p.created_at) < settledFloor) noFinalSettled++;
+      continue;
+    }
     const result = p.market === 'prop' ? await gradeProp(p, f, ESPN_PATH[p.sport]) : gradePlay(p, f);
     if (!result) { noResult++; continue; }
     const stake = p.unit_dollars ?? config.rules.unitDollars;
@@ -433,13 +503,30 @@ async function run() {
   // The signal that IS a defect: ESPN returned finals for a play's sport (so
   // games on that date are over and the data is there) and still nothing
   // matched. That's our matching, not the market's timing.
-  const withFinals = pending.filter((p) => (finalsBySport[p.sport] || []).length);
-  if (withFinals.length >= ZERO_ALARM_MIN && !total) {
-    const why = noResult > noFinal
-      ? `${noResult} plays matched a final but produced no result (missing line / unsupported market)`
-      : `none of ${withFinals.length} plays matched a final, though ESPN returned finals for their sport+date (matchup ↔ ESPN nickname matching)`;
-    logger.error('grading', `${withFinals.length} plays had finals available, 0 graded — ${why}`);
-    reportDegraded('grading|zero', `${withFinals.length} plays had finals available but 0 graded — ${why}`);
+  // The old test was "did ESPN return ANY finals for this play's sport" — true
+  // every single day, because the sport's earlier games are always over by the
+  // time the evening slate is logged. So three NHL plays on 7:00/8:00 PM games
+  // that had not kicked off counted as "finals available" and the alarm fired
+  // daily as a false positive (D105). Two populations can actually have been
+  // gradeable:
+  //   matchedFinal  — a final for the play's OWN matchup was on the scoreboard
+  //                   (same matcher the grading loop above uses), so the data
+  //                   demonstrably existed;
+  //   noFinalSettled — no final found, but the play is past SETTLED_HOURS, so
+  //                   its game is certainly over and the miss is ours or ESPN's.
+  // A pre-kickoff play is in neither, which is the whole point.
+  const matchedFinal = graded + noResult + writeFail;
+  const suspect = matchedFinal + noFinalSettled;
+  if (suspect >= ZERO_ALARM_MIN && !total) {
+    // Stated as fact, so it has to be true: name all three populations rather
+    // than asserting "none matched" while one of them did.
+    const why = `${matchedFinal} had their final on ESPN but produced no result`
+      + `${noResult ? ` (${noResult} matched, stat/market unsupported or line missing)` : ''}`
+      + `${writeFail ? ` (${writeFail} write failed)` : ''}`
+      + `, ${noFinalSettled} are >${SETTLED_HOURS}h past logging with no ESPN final for their matchup`
+      + `${noFinal - noFinalSettled ? `; ${noFinal - noFinalSettled} more have no final yet and are not counted (games not finished)` : ''}`;
+    logger.error('grading', `${suspect} plays should have been gradeable, 0 graded — ${why}`);
+    reportDegraded('grading|zero', `${suspect} plays should have been gradeable but 0 graded — ${why}`);
   }
   if (writeFail) reportDegraded('grading|write', `${writeFail} monitor_scores writes failed`);
 
@@ -457,7 +544,12 @@ async function run() {
 
   return {
     summary: `graded ${graded} (${wins}W-${losses}L-${pushes}P)${extra.length ? ` ${extra.join(' ')}` : ''} · ${notes.join(', ')} · free ESPN`,
-    data: { graded, wins, losses, pushes, research: rGraded, tennis: tGraded, ufc: uGraded, queued, noFinal, noResult, writeFail, expired },
+    data: {
+      graded, wins, losses, pushes, research: rGraded, tennis: tGraded, ufc: uGraded,
+      queued, noFinal, noResult, writeFail, expired,
+      // The alarm's own populations, so a quiet run can be read without the logs.
+      matchedFinal, noFinalSettled,
+    },
   };
 }
 

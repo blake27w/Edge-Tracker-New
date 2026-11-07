@@ -98,9 +98,14 @@ test('the summary carries per-stage counters even when nothing grades', async ()
 });
 
 // ── Alarm precision: the thing that decides whether this is useful ──
+// D(3), not D(1): the alarm population is no longer "the sport returned some
+// finals" (true every day — that fired daily as a false positive) but "this
+// play's own game is certainly over". The odds slate reaches 36h ahead
+// (odds/index.js:1098), so a play logged 24h ago may still be 12h PRE-kickoff
+// and cannot be evidence of anything. Past the 48h settle window it can.
 test('alarms when ESPN had finals and nothing matched — a real matching bug', async () => {
   db.setRows('monitor_scores', Array.from({ length: 6 }, (_, i) => playRow({
-    id: `p${i}`, game_id: `g${i}`, matchup: 'Mistyped Away @ Mistyped Home',
+    id: `p${i}`, game_id: `g${i}`, matchup: 'Mistyped Away @ Mistyped Home', scored_at: D(3),
   })));
   finals = [RAVENS];
   await grading.run();

@@ -7,7 +7,10 @@
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 const FINALS_TTL = Number(process.env.ESPN_FINALS_TTL_MS) || 15 * 60_000;
 
-const norm = (s) => String(s || '').toLowerCase();
+// Fold diacritics before casing, matching grading's norm(). Both sides of
+// every nickname comparison must fold or neither can: folding only the play's
+// matchup would newly break an accented nickname. Strictly widens what matches.
+const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const finalsCache = new Map(); // `${path}|${date}` -> { at, data }
 const boxCache = new Map();    // eventId -> boxscore
 
