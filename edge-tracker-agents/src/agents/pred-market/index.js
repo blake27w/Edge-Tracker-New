@@ -112,8 +112,26 @@ async function run() {
   edges.sort((a, b) => b.edge_pct - a.edge_pct);
   setPredMarket({ updated: now, edges, sources: { polymarket: poly.length, kalshi: kalshi.length } });
 
-  if (edges.length) { try { await db.insert('pred_market_edges', edges); } catch (e) { logger.warn('pred-market', e.message); } }
-  return { summary: `${edges.length} exchange edges (poly ${poly.length}, kalshi ${kalshi.length})`, data: { edges: edges.length } };
+  // `edges.length` is what was BUILT; `written` is what LANDED. PostgREST
+  // applies the batch as one statement, so a single rejected row loses the
+  // whole run — and `catch { warn }` with a summary that still read
+  // "N exchange edges" is why nine lost runs showed only as a degraded key
+  // (D104, the D99 idiom). "Nothing happened" and "I could not write it" must
+  // never look the same.
+  let written = 0, lost = 0;
+  if (edges.length) {
+    try {
+      await db.insert('pred_market_edges', edges);
+      written = edges.length;
+    } catch (e) {
+      lost = edges.length;
+      logger.error('pred-market', `edge write: ${lost}/${edges.length} rows lost — ${e.message}`);
+    }
+  }
+  return {
+    summary: `${edges.length} exchange edges (${written} written${lost ? `, ${lost} lost` : ''}, poly ${poly.length}, kalshi ${kalshi.length})`,
+    data: { edges: edges.length, written, lost },
+  };
 }
 
 export default { name: 'pred-market', run };
