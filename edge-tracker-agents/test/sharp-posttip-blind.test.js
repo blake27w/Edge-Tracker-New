@@ -83,7 +83,7 @@ test('three co-directional rows at gap 60 on a STARTED game: not steam, and the 
   assert.equal(r.data.eligible, 0);
   assert.equal(r.data.postTipBeyondBound, 3, 'the rows that exist and can never be steam, counted');
   assert.equal(r.data.postTipBlindGames, 1, 'and the started game left with nothing eligible');
-  assert.match(r.summary, /1 started game beyond steam bound \(3 rows, post-tip tail\)/,
+  assert.match(r.summary, /1 started game beyond steam bound \(3 rows wider than the bound — post-tip tail or rehydrated baseline\)/,
     'its OWN segment: `0 steam · 3 rows / 0 gap-eligible` alone is what a quiet market prints');
 });
 
@@ -159,7 +159,7 @@ test('two started games blinded the same way are counted as two, with their rows
   const r = await sharp.run();
   assert.equal(r.data.postTipBlindGames, 2);
   assert.equal(r.data.postTipBeyondBound, 5);
-  assert.match(r.summary, /2 started games beyond steam bound \(5 rows, post-tip tail\)/);
+  assert.match(r.summary, /2 started games beyond steam bound \(5 rows wider than the bound — post-tip tail or rehydrated baseline\)/);
 });
 
 test('the segment survives a failed history read — memory-only rows are blinded the same way', async () => {
@@ -171,7 +171,7 @@ test('the segment survives a failed history read — memory-only rows are blinde
 
   const r = await sharp.run();
   assert.match(r.summary, /^blind — history read failed/, 'the read failure is still the headline');
-  assert.match(r.summary, /1 started game beyond steam bound \(3 rows, post-tip tail\)/,
+  assert.match(r.summary, /1 started game beyond steam bound \(3 rows wider than the bound — post-tip tail or rehydrated baseline\)/,
     'and the second blind spot is reported alongside it, not instead of it');
 });
 
