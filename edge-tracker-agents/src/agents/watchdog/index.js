@@ -89,30 +89,86 @@ async function run() {
     } catch (_) { /* ignore */ }
   }
 
-  // Schema check: probe the recently-added columns/tables so a missing-migration
-  // (schema.sql not re-run) surfaces immediately instead of as a blank tab.
+  // Schema check: probe the recently-added tables AND every hand-run column, so
+  // a missing migration — schema.sql not re-run, or an `alter table` nobody
+  // pasted — surfaces immediately instead of as a blank tab.
+  //
+  // Why every hand-run column and not just the recent ones: on 2026-11-07 the
+  // steam reader was found blind for 229 consecutive runs because the two
+  // `line_movements` `alter table` lines from #136 were never applied in
+  // Supabase, and the odds agent's strip-and-retry (D73) kept the inserts
+  // landing WITHOUT the columns, so nothing complained until a reader selected
+  // one. Every probe in the pre-2026-11-07 list named a column that always
+  // exists, so the one channel built to catch unapplied DDL (D69/D70) was
+  // structurally unable to see a skipped `alter table`. D103.
   if (db.isConnected()) {
+    // Two kinds of probe, and the third element says which:
+    //   [t, c]           — `c` is a sentinel column standing in for the
+    //                      TABLE's existence; the fix is to run schema.sql.
+    //   [t, c, 'column'] — `c` is a column added by an `alter table … add
+    //                      column if not exists` in schema.sql, i.e. hand-run
+    //                      DDL that is skippable; the fix is that statement.
+    // The split is by probe INTENT, not by error code: `isMissingRelation`
+    // reads 42703 (undefined column) and 42P01 (undefined table) alike, which
+    // is correct here — either way the named thing is not queryable and the
+    // named DDL is what creates it, and this flag does not latch. D73 is where
+    // that same conflation is NOT fine (a latching write-path flag), which is
+    // why the odds agent carries its own `isMissingColumn` instead.
+    //
+    // Cost: each probe is `select <col> limit 1` with no `where`, so Postgres
+    // seq-scans and stops at the first row — one row touched, even on
+    // `line_snapshots` (7M rows). 43 of them every 5 minutes is noise.
     const probes = [
-      ['monitor_scores', 'anomaly'], ['monitor_scores', 'player'],
-      ['monitor_scores', 'price'], ['monitor_scores', 'live'],
+      // ── table-existence probes ──
       ['opp_results', 'id'], ['line_signals', 'id'], ['ev_opportunities', 'id'],
-      ['ev_opportunities', 'quote_age_min'], ['line_snapshots', 'last_update'],
       ['arb_opportunities', 'id'], ['research_notes', 'id'], ['fair_line_log', 'game_id'],
       ['pred_market_edges', 'id'], ['umpire_runs', 'umpire'], ['pitcher_changes', 'id'],
-      ['weather_changes', 'id'], ['nfl_qb_status', 'id'],
-      ['clv_records', 'clv_odds'], ['clv_records', 'suspect'],
-      ['book_move_log', 'id'],
+      ['weather_changes', 'id'], ['nfl_qb_status', 'id'], ['book_move_log', 'id'],
+      // ── hand-run `alter table … add column` probes, one per statement ──
+      ['game_weather', 'wind_effect', 'column'],
+      ['monitor_scores', 'player', 'column'], ['monitor_scores', 'stat_type', 'column'],
+      ['monitor_scores', 'anomaly', 'column'], ['monitor_scores', 'observational', 'column'],
+      ['monitor_scores', 'prop_signal_type', 'column'], ['monitor_scores', 'price', 'column'],
+      ['monitor_scores', 'live', 'column'],
+      ['subscribers', 'email', 'column'], ['subscribers', 'sms', 'column'],
+      ['subscribers', 'email_opt', 'column'],
+      ['clv_records', 'entry_at', 'column'], ['clv_records', 'close_at', 'column'],
+      ['clv_records', 'suspect', 'column'], ['clv_records', 'clv_odds', 'column'],
+      ['clv_records', 'close_source', 'column'],
+      ['opp_results', 'detail', 'column'], ['opp_results', 'price', 'column'],
+      ['nfl_line_moves', 'sport', 'column'], ['nfl_line_moves', 'open_ml', 'column'],
+      ['nfl_line_moves', 'close_ml', 'column'], ['nfl_line_moves', 'ml_move', 'column'],
+      ['ev_opportunities', 'commence_time', 'column'], ['ev_opportunities', 'note', 'column'],
+      ['ev_opportunities', 'quote_age_min', 'column'],
+      ['public_splits', 'freeze', 'column'], ['public_splits', 'pileon', 'column'],
+      ['public_splits', 'net_move', 'column'],
+      ['line_snapshots', 'last_update', 'column'],
+      ['line_movements', 'gap_min', 'column'], ['line_movements', 'baseline_source', 'column'],
     ];
-    // tools/smoke.mjs cross-checks this list against schema.sql: a table added
-    // there without a probe here fails the build. Hand-run DDL is how this repo
-    // ships a table nobody created (D69/D70), and this is the probe for it.
-    const missing = [];
-    for (const [t, c] of probes) {
+    // tools/smoke.mjs cross-checks this list against schema.sql, both ways: a
+    // table declared there without a probe here fails the build, and so does
+    // an `alter table … add column` without a `[table, column]` probe. Hand-run
+    // DDL is how this repo ships a table nobody created and a column nobody
+    // added (D69/D70/D103), and this is the probe for it.
+    const missingTables = [];
+    const missingColumns = [];
+    for (const [t, c, kind] of probes) {
       try { await db.select(t, c, { limit: 1 }); }
-      catch (e) { if (db.isMissingRelation(e) || /relation/i.test(e.message || '')) missing.push(`${t}.${c}`); }
+      catch (e) {
+        if (db.isMissingRelation(e) || /relation/i.test(e.message || '')) {
+          (kind === 'column' ? missingColumns : missingTables).push(`${t}.${c}`);
+        }
+      }
     }
-    if (missing.length) {
-      issues.push({ key: 'schema', type: 'schema', agent: 'db', label: 'Database schema', detail: `out of date — run scripts/schema.sql in Supabase (missing: ${missing.join(', ')})` });
+    if (missingTables.length) {
+      issues.push({ key: 'schema', type: 'schema', agent: 'db', label: 'Database schema', detail: `out of date — run scripts/schema.sql in Supabase (missing: ${missingTables.join(', ')})` });
+    }
+    // Deliberately its own key and its own sentence: "the table is not there"
+    // and "the table is there but one `alter table` was skipped" are different
+    // repairs, and sharing the key would let whichever fired first hide the
+    // other for the rest of the day.
+    if (missingColumns.length) {
+      issues.push({ key: 'schema|column', type: 'schema', agent: 'db', label: 'Database schema (column)', detail: `missing hand-run column${missingColumns.length > 1 ? 's' : ''}: ${missingColumns.join(', ')} — run the matching alter table in scripts/schema.sql` });
     }
   }
 

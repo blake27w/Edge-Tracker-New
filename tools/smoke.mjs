@@ -313,6 +313,28 @@ ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+'\]/.test(watc
   ok('every table schema.sql declares is probed by the watchdog', unprobed.length === 0,
     `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
   ok('the probe parser saw the list', probed.size >= 14, `parsed ${probed.size} probed tables`);
+  // The allowlist is frozen at the 32 tables that pre-date the probe (D97).
+  // Pinning the size is what makes it an allowlist rather than an escape
+  // hatch: growing it to silence the assertion above now fails here instead.
+  ok('the pre-probe allowlist is still frozen at 32 tables', PRE_PROBE.size === 32,
+    `${PRE_PROBE.size} entries — do not grow it; add the probe to the watchdog instead`);
+
+  // The same pin one level down, and the one that was missing on 2026-11-07:
+  // every `alter table … add column if not exists` in schema.sql is hand-run
+  // DDL, so every one of them can be skipped in Supabase and leave the code
+  // reading a column that is not there. `line_movements.gap_min` was skipped
+  // for 229 steam runs (D103). There is no allowlist here on purpose — the
+  // next forgotten column fails the build.
+  const addedCols = [...schema.matchAll(/alter\s+table\s+(\w+)\s+add\s+column\s+if\s+not\s+exists\s+"?(\w+)"?/gi)]
+    .map((m) => `${m[1]}.${m[2]}`);
+  const probedCols = new Set([...probeBlock.matchAll(/\['(\w+)',\s*'(\w+)'/g)].map((m) => `${m[1]}.${m[2]}`));
+  const unprobedCols = addedCols.filter((c) => !probedCols.has(c));
+  ok('every hand-run column in schema.sql is probed by the watchdog', unprobedCols.length === 0,
+    `add a probe for: ${unprobedCols.join(', ')} — an unapplied alter table is invisible until a reader selects the column`);
+  ok('the column parser saw both sides', addedCols.length >= 31 && probedCols.size >= 31,
+    `${addedCols.length} alter-table columns / ${probedCols.size} probe pairs`);
+  ok('the line_movements columns from #136 are probed', probedCols.has('line_movements.gap_min')
+    && probedCols.has('line_movements.baseline_source'), 'the 229-blind-run column (D103)');
 }
 ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
