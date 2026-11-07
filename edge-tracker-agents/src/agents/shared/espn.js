@@ -10,7 +10,14 @@ const FINALS_TTL = Number(process.env.ESPN_FINALS_TTL_MS) || 15 * 60_000;
 // Fold diacritics before casing, matching grading's norm(). Both sides of
 // every nickname comparison must fold or neither can: folding only the play's
 // matchup would newly break an accented nickname. Strictly widens what matches.
-const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// FOLD covers what NFD cannot: stroked and ligature letters are precomposed
+// single code points with no combining mark to strip, plus the typographic
+// apostrophe. Keep this table identical to grading's.
+const FOLD = { ø: 'o', ł: 'l', ß: 'ss', đ: 'd', æ: 'ae', œ: 'oe', '’': "'" };
+const FOLD_RE = /[øłßđæœ’]/gi;
+const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(FOLD_RE, (c) => FOLD[c.toLowerCase()] || c)
+  .toLowerCase();
 const finalsCache = new Map(); // `${path}|${date}` -> { at, data }
 const boxCache = new Map();    // eventId -> boxscore
 

@@ -32,16 +32,16 @@ const at = (daysAgo, h, m) => {
 const ymd = (iso, off = 0) =>
   new Date(new Date(iso).getTime() + off * 86400_000).toISOString().slice(0, 10).replace(/-/g, '');
 
-let db, degraded, lines, finals, box, grading;
+let db, degraded, lines, finals, box, slate, grading;
 const fetched = [];   // every (path, date) getFinals was asked for, in order
 
 before(async () => {
   db = fakeDb({ monitor_scores: [], research_notes: [] });
-  degraded = []; finals = {}; box = null;
+  degraded = []; finals = {}; box = null; slate = [];
   const fl = fakeLogger(); lines = fl.lines;
   mock.module(import.meta.resolve('../src/db/index.js'), { defaultExport: db, namedExports: { isConnected: db.isConnected, isMissingRelation: db.isMissingRelation } });
   mock.module(import.meta.resolve('../src/utils/index.js'), { namedExports: { logger: fl.logger } });
-  mock.module(import.meta.resolve('../src/store/index.js'), { namedExports: { reportDegraded: (k, d) => degraded.push({ k, d }) } });
+  mock.module(import.meta.resolve('../src/store/index.js'), { namedExports: { reportDegraded: (k, d) => degraded.push({ k, d }), getGames: () => slate } });
   mock.module(import.meta.resolve('../src/config/index.js'), { defaultExport: { rules: { unitDollars: 100 } } });
   mock.module(import.meta.resolve('../src/agents/shared/espn.js'), {
     namedExports: {
@@ -57,7 +57,7 @@ after(() => mock.reset());
 beforeEach(() => {
   degraded.length = 0; lines.error.length = 0; lines.warn.length = 0;
   db.calls.select.length = 0; db.calls.update.length = 0;
-  finals = {}; box = null; fetched.length = 0;
+  finals = {}; box = null; slate = []; fetched.length = 0;
 });
 
 // ── Fault 1: the finals date window only looks BACKWARDS ─────────
@@ -128,7 +128,14 @@ test('no alarm when the plays’ own games have not finished yet', async () => {
 // the five plays DID match its final (it failed later, in prop lookup), yet the
 // alarm read "none of 5 plays matched a final".
 test('the alarm never claims nothing matched when something did', async () => {
-  const old = at(6, 3, 27);
+  // at(3), not at(6): the four unmatched plays have to be inside
+  // UNRESOLVABLE_DAYS to be in the alarm population at all. Past that bound a
+  // final that never arrived is a postponed game, not a matching bug — and a
+  // play whose game is absent from every fetched date would otherwise re-raise
+  // this same alarm on every run until the 30-day write-off. The test's intent
+  // (a genuine matching failure alarms, and says truthfully what matched) is
+  // unchanged; only the premise that it must alarm *forever* is dropped.
+  const old = at(3, 3, 27);
   const rows = [{
     // Matches its final; prop stat lookup then fails → counted as noResult.
     id: 'm1', game_id: 'g-anaheim', sport: 'NHL', qualified: true, status: 'pending',
@@ -183,6 +190,40 @@ test('an accented player name matches ESPN’s unaccented displayName', async ()
   assert.equal(r.data.noResult, 0, 'the diacritic is the only thing between the play and its stat');
   assert.equal(r.data.graded, 1);
   assert.equal(db.rows('monitor_scores').find((x) => x.id === 'stu').status, 'loss', '1 shot, OVER 1.5');
+});
+
+// Stripping combining marks is only half the fold. Stroked and ligature
+// letters (ø ł ß đ æ œ) are single precomposed code points — NFD leaves them
+// exactly as they are — and the typographic apostrophe is a different code
+// point from the ASCII quote. "Oliver Bjørkstrand" against ESPN's
+// "Oliver Bjorkstrand" would therefore sit pending forever, with no diacritic
+// anywhere in sight to explain why.
+test('a stroked letter and a typographic apostrophe fold to ESPN’s spelling', async () => {
+  const old = at(6, 3, 27);
+  const prop = (id, player) => ({
+    id, game_id: `g-${id}`, sport: 'NHL', qualified: true, status: 'pending',
+    market: 'prop', stat_type: 'player_shots_on_goal', player, side: 'OVER', line: 1.5,
+    matchup: 'Ottawa Senators @ Anaheim Ducks', scored_at: old,
+  });
+  db.setRows('monitor_scores', [
+    prop('bjork', 'Oliver Bjørkstrand'),      // ESPN: "Oliver Bjorkstrand"
+    prop('oreilly', 'Ryan O’Reilly'),         // U+2019; ESPN: "Ryan O'Reilly"
+  ]);
+  finals[`hockey/nhl|${ymd(old)}`] = [
+    { id: '401892628', homeNick: 'ducks', awayNick: 'senators', home_score: 6, away_score: 3, total: 9, overtime: false },
+  ];
+  // S (shots on goal) = 4 for both.
+  const line = ['0', '0', '1', '-1', '16:19', '3:27', '0:00', '12:52', '22', '0', '9', '1', '4', '0', '0', '0', '0', '0.0', '0', '0', '0'];
+  box = { players: [{ statistics: [{ name: 'forwards', labels: NHL_SKATER_LABELS,
+    athletes: [skater('Oliver Bjorkstrand', line), skater("Ryan O'Reilly", line)] }] }] };
+
+  const r = await grading.run();
+
+  assert.equal(r.data.noResult, 0, 'neither name has a combining mark NFD could strip');
+  assert.equal(r.data.graded, 2);
+  for (const id of ['bjork', 'oreilly']) {
+    assert.equal(db.rows('monitor_scores').find((x) => x.id === id).status, 'win', `${id}: 4 shots, OVER 1.5`);
+  }
 });
 
 // ── Fault 4 (separate, and worse — this one MIS-grades) ──────────
@@ -249,4 +290,103 @@ test('the widened date window costs 4 fetches per sport per slate, not 4 per pla
     [2, 1, 0, -1].map((off) => `hockey/nhl|${ymd(tonight, off)}`).sort(),
     'offsets are [+2, +1, 0, -1] from scored_at',
   );
+});
+
+// ── Fault 5 (the worst of the set — it writes WRONG results) ─────
+// Finals are flattened per sport across all four fetched dates and matched by
+// nickname with a bare `.find()`, so a matchup that appears on more than one
+// board is a coin flip resolved by fetch order. DATE_OFFSETS starts at +2, the
+// LATEST board, so the flip lands on the newest game in the window — and
+// repeated matchups are routine, not exotic: an MLB series is the same two
+// nicknames on three consecutive days, and NBA/NHL home-and-homes do it too.
+// Reproduced before the fix: a game-1 Braves ML loss (2-3) sitting two days in
+// the queue was written `win 4-2 +83.33` off game 3.
+const mlbPlay = (over = {}) => ({
+  id: 'mlb1', game_id: 'g-day1', sport: 'MLB', qualified: true, status: 'pending',
+  market: 'ml', price: -120, side: 'Atlanta Braves',
+  matchup: 'Atlanta Braves @ Cincinnati Reds', ...over,
+});
+const bravesAtReds = (id, away, home) => ({
+  id, homeNick: 'reds', awayNick: 'braves',
+  home_score: home, away_score: away, total: away + home, overtime: false,
+});
+
+test('a play in an MLB series grades against its OWN game, not a later one', async () => {
+  const scored = at(4, 22, 0);
+  db.setRows('monitor_scores', [mlbPlay({ scored_at: scored })]);
+  finals[`baseball/mlb|${ymd(scored)}`] = [bravesAtReds('G1', 2, 3)];     // own game: Braves LOSE
+  finals[`baseball/mlb|${ymd(scored, 1)}`] = [bravesAtReds('G2', 4, 2)];  // Braves win
+  finals[`baseball/mlb|${ymd(scored, 2)}`] = [bravesAtReds('G3', 4, 2)];  // Braves win
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(r.data.graded, 1);
+  assert.equal(row.result_score, '2-3', 'game 1 is the play’s own game');
+  assert.equal(row.status, 'loss', 'grading game 3 instead wrote a win and +83.33 of fictional P&L');
+  assert.equal(row.pnl, -100);
+});
+
+// When the odds slate still holds the game, its commence_time is the real
+// answer and beats the scored_at heuristic. This is the pre-kickoff case the
+// [+2,+1,0,-1] window exists for: the play was logged the evening BEFORE its
+// game, so same-day-as-scored_at is the wrong board even though it has the
+// matchup on it.
+test('the slate’s own commence_time decides which game in the series is the play’s', async () => {
+  const scored = at(3, 23, 30);
+  db.setRows('monitor_scores', [mlbPlay({ scored_at: scored })]);
+  slate = [{ game_id: 'g-day1', sport: 'MLB', commence_time: new Date(Date.parse(scored) + 86400_000).toISOString() }];
+  finals[`baseball/mlb|${ymd(scored)}`] = [bravesAtReds('G1', 4, 2)];     // night before: Braves won
+  finals[`baseball/mlb|${ymd(scored, 1)}`] = [bravesAtReds('G2', 1, 7)];  // the play's game
+  finals[`baseball/mlb|${ymd(scored, 2)}`] = [bravesAtReds('G3', 4, 2)];
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(r.data.graded, 1);
+  assert.equal(row.result_score, '1-7', 'the slate said the game is tomorrow');
+  assert.equal(row.status, 'loss');
+});
+
+// An MLB doubleheader is two different games with one matchup on one date, and
+// nothing left in the row distinguishes them. A guess is right half the time,
+// which is worse than useless in a track record — so the play stays pending and
+// is counted, not silently dropped.
+test('two equally close finals leave the play pending and are counted, never guessed', async () => {
+  const scored = at(4, 22, 0);
+  db.setRows('monitor_scores', [mlbPlay({ scored_at: scored })]);
+  finals[`baseball/mlb|${ymd(scored)}`] = [
+    bravesAtReds('DH1', 2, 3),   // game 1: Braves lose
+    bravesAtReds('DH2', 7, 1),   // game 2: Braves win
+  ];
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(row.status, 'pending', 'honest pending beats a 50/50 W or L');
+  assert.equal(r.data.graded, 0);
+  assert.equal(r.data.ambiguousFinal, 1, 'and it is counted, so it cannot hide');
+  assert.match(r.summary, /1 ambiguous final/);
+  assert.deepEqual(degraded, [], 'declining to guess is a decision, not a failure to alarm on');
+});
+
+// research_notes had the identical bug on the identical finals, writing the
+// wrong game into a second, separately published track record.
+test('research picks get the same date-aware pick, not the newest board', async () => {
+  const created = at(4, 22, 0);
+  db.setRows('monitor_scores', []);
+  db.setRows('research_notes', [{
+    id: 'r1', type: 'pick', status: 'pending', sport: 'MLB', market: 'ml', odds: -120,
+    side: 'Atlanta Braves', matchup: 'Atlanta Braves @ Cincinnati Reds', created_at: created,
+  }]);
+  finals[`baseball/mlb|${ymd(created)}`] = [bravesAtReds('G1', 2, 3)];
+  finals[`baseball/mlb|${ymd(created, 1)}`] = [bravesAtReds('G2', 4, 2)];
+  finals[`baseball/mlb|${ymd(created, 2)}`] = [bravesAtReds('G3', 4, 2)];
+
+  const r = await grading.run();
+  const row = db.rows('research_notes').find((x) => x.id === 'r1');
+
+  assert.equal(r.data.research, 1);
+  assert.equal(row.result_score, '2-3');
+  assert.equal(row.status, 'loss');
 });

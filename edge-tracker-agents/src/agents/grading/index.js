@@ -8,7 +8,7 @@
 import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
-import { reportDegraded } from '../../store/index.js';
+import { reportDegraded, getGames } from '../../store/index.js';
 import { getFinals, getBox, getUfcResults } from '../shared/espn.js';
 
 // Two SEPARATE thresholds. Welding them together was a mistake: "stop
@@ -41,6 +41,15 @@ const ZERO_ALARM_MIN = Number(process.env.GRADE_ZERO_ALARM_MIN) || 5;
 // to 36h before kickoff and a game runs ~4h, so past this a missing final is a
 // real failure (ours or ESPN's) rather than a game that hasn't started.
 const SETTLED_HOURS = Number(process.env.GRADE_SETTLED_HOURS) || 48;
+// Past this, a play with no final on ANY fetched date has stopped being
+// evidence of a grading defect. Postponed, cancelled and relocated games are
+// the common cause, and they never acquire a final — so counting them in the
+// alarm population re-raised the same alert every single run for the 25 days
+// between SETTLED_HOURS and EXPIRE_DAYS. That is the daily false alarm D105
+// set out to remove, arriving by a slower route. They stay pending (they are
+// honestly ungradeable, not written off) and are reported as `unresolvable`.
+// 5 days is well past any ESPN publish lag while still bounding the noise.
+const UNRESOLVABLE_DAYS = Number(process.env.GRADE_UNRESOLVABLE_DAYS) || 5;
 // Scoreboard dates to fetch per play, as day offsets from scored_at. A play is
 // logged up to 36h BEFORE kickoff and a late US game lands on the NEXT UTC
 // date, so its final can sit two days after scored_at; a late-evening game
@@ -69,6 +78,14 @@ function profitPerUnit(odds = -110) {
   return odds < 0 ? 100 / Math.abs(odds) : odds / 100;
 }
 function ymd(d) { return d.toISOString().slice(0, 10).replace(/-/g, ''); }
+// Characters NFD cannot reach. Stroked and ligature letters are single
+// precomposed code points with no combining mark to strip — NFD('ø') is 'ø' —
+// so the diacritic fold alone still left "Bjørkstrand" unable to meet ESPN's
+// "Bjorkstrand". The typographic apostrophe is the same class of problem from
+// the other direction: the Odds API ships U+2019 in "O’Reilly" where ESPN
+// ships the ASCII quote. Both sides fold, so this only ever widens matching.
+const FOLD = { ø: 'o', ł: 'l', ß: 'ss', đ: 'd', æ: 'ae', œ: 'oe', '’': "'" };
+const FOLD_RE = /[øłßđæœ’]/gi;
 // Fold diacritics BEFORE casing. The Odds API carries the accented spelling
 // ("Tim Stützle") while ESPN's boxscore displayName is unaccented
 // ("Tim Stutzle"), and every comparison downstream is ===/includes, so an
@@ -76,12 +93,83 @@ function ymd(d) { return d.toISOString().slice(0, 10).replace(/-/g, ''); }
 // comparison pass through here, and shared/espn.js folds its team nicknames the
 // same way, so nothing that matched before stops matching.
 function norm(s) {
-  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(FOLD_RE, (c) => FOLD[c.toLowerCase()] || c)
+    .toLowerCase();
 }
 
 // Completed finals for a sport+date — via the shared TTL-cached ESPN fetcher.
 async function fetchFinals(sport, dateStr) {
   return getFinals(ESPN_PATH[sport], dateStr);
+}
+
+// ── Picking the RIGHT final when a matchup repeats ───────────────
+// The finals for a sport are flattened across all four fetched dates, and
+// matchups REPEAT inside a 4-day window as a matter of routine, not as an edge
+// case: an MLB series is the same two nicknames on three consecutive days (15
+// of 28 matchups in a typical window), and NBA/NHL home-and-homes do it too.
+// A nickname-only `.find()` over that flattened list returns whichever board
+// was fetched first — and DATE_OFFSETS starts at +2, the LATEST board — so a
+// play on game 1 of a series was graded against game 3's score. Verified in
+// reproduction: an MLB game-1 loss (2-3) pending two days was written
+// `win 4-2 +83.33` off game 3. gradeProp inherited it through `f.id`, which
+// means the box score came from the wrong game too.
+//
+// So every final carries the board date it came from, and we choose the one
+// closest to the play's OWN game date.
+const FALLBACK_RANK = [0, 1, 2, -1];
+
+// Signed day distance between two YYYYMMDD strings. Parsed as UTC midnights
+// rather than differenced as timestamps, so DST cannot shift a boundary.
+function dayDiff(a, b) {
+  const t = (s) => Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
+  return Math.round((t(a) - t(b)) / 86400_000);
+}
+
+// The play's own game date, if it can be had for free. monitor_scores has no
+// commence_time column (signal-engine strips it before insert), but the
+// in-memory odds slate still holds the game while it is upcoming, and that is
+// already in process — no query, no new dependency. Once the game has rolled
+// off the slate this returns null and the caller falls back to scored_at.
+function gameDate(p) {
+  if (!p.game_id) return null;
+  const g = (getGames() || []).find((x) => x.game_id === p.game_id && x.commence_time);
+  const t = g ? Date.parse(g.commence_time) : NaN;
+  return Number.isFinite(t) ? ymd(new Date(t)) : null;
+}
+
+// Choose the final for a play. Returns { f } with the chosen final (or null if
+// none matched), or { ambiguous: true } when two candidates are equally good.
+function pickFinal(finals, p, awayName, homeName) {
+  const hits = [], seen = new Set();
+  for (const x of finals) {
+    if (!(homeName.includes(x.homeNick) && awayName.includes(x.awayNick))) continue;
+    // The same ESPN event can surface on two adjacent boards. One game is not
+    // an ambiguity, so collapse by event id before counting candidates.
+    if (x.id != null) { if (seen.has(x.id)) continue; seen.add(x.id); }
+    hits.push(x);
+  }
+  if (hits.length <= 1) return { f: hits[0] || null };
+
+  const own = gameDate(p);
+  const base = ymd(new Date(p.scored_at || p.created_at));
+  // Lower is better. With the game's real date, "closest" is literal. Without
+  // it, scored_at is a lower bound rather than a centre — a play is logged
+  // BEFORE its game — so same-day beats the next day beats two days later, and
+  // the day before is the last resort rather than a tie with the day after.
+  const rank = (x) => {
+    if (!x.boardDate) return Infinity;
+    if (own) return Math.abs(dayDiff(x.boardDate, own));
+    const i = FALLBACK_RANK.indexOf(dayDiff(x.boardDate, base));
+    return i < 0 ? Infinity : i;
+  };
+  const ranked = hits.map((x) => ({ x, r: rank(x) })).sort((a, b) => a.r - b.r);
+  if (!Number.isFinite(ranked[0].r)) return { f: null };
+  // Two finals equally close to the play's game date: nothing left distinguishes
+  // them, and picking either writes a coin-flip result into the track record.
+  // Honest pending beats a 50% chance of a wrong W or L.
+  if (ranked[1] && ranked[1].r === ranked[0].r) return { ambiguous: true };
+  return { f: ranked[0].x };
 }
 
 function gradePlay(p, f) {
@@ -384,12 +472,14 @@ async function run() {
     }
   }
 
-  // Fetch finals, key by sport → list.
+  // Fetch finals, key by sport → list. Each final keeps the board date it came
+  // from: flattening without it is what let a repeated matchup grade against
+  // the wrong game in the series (see pickFinal).
   const finalsBySport = {};
   for (const { sport, date } of pairs.values()) {
     try {
       const finals = await fetchFinals(sport, date);
-      (finalsBySport[sport] ||= []).push(...finals);
+      (finalsBySport[sport] ||= []).push(...finals.map((f) => ({ ...f, boardDate: date })));
     } catch (e) { logger.warn('grading', e.message); }
   }
 
@@ -401,17 +491,30 @@ async function run() {
   // Of the no-final plays, how many are past SETTLED_HOURS — i.e. their game is
   // certainly over, so the missing final is a defect and not a pending kickoff.
   let noFinalSettled = 0;
+  // …and how many are so old that the absence is permanent (postponed or
+  // cancelled), so they belong in neither the alarm nor the "not finished" bin.
+  let unresolvable = 0;
+  // Plays whose matchup matched two finals equally well — left pending on
+  // purpose rather than graded against a guess.
+  let ambiguousFinal = 0;
   const settledFloor = Date.now() - SETTLED_HOURS * 3600_000;
+  const unresolvableFloor = Date.now() - UNRESOLVABLE_DAYS * 86400_000;
   const now = new Date().toISOString();
   for (const p of pending) {
     const parts = String(p.matchup || '').split(' @ ');
     const awayName = norm(parts[0]), homeName = norm(parts[1]);
-    const f = (finalsBySport[p.sport] || []).find(
-      (x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick),
-    );
+    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName);
+    if (pick.ambiguous) {
+      ambiguousFinal++;
+      logger.warn('grading', `${p.matchup} matched two finals equally closely — left pending (${p.id})`);
+      continue;
+    }
+    const f = pick.f;
     if (!f) {
       noFinal++;
-      if (Date.parse(p.scored_at || p.created_at) < settledFloor) noFinalSettled++;
+      const logged = Date.parse(p.scored_at || p.created_at);
+      if (logged < unresolvableFloor) unresolvable++;
+      else if (logged < settledFloor) noFinalSettled++;
       continue;
     }
     const result = p.market === 'prop' ? await gradeProp(p, f, ESPN_PATH[p.sport]) : gradePlay(p, f);
@@ -437,7 +540,12 @@ async function run() {
   for (const p of rpending) {
     const parts = String(p.matchup || '').split(' @ ');
     const awayName = norm(parts[0]), homeName = norm(parts[1]);
-    const f = (finalsBySport[p.sport] || []).find((x) => homeName.includes(x.homeNick) && awayName.includes(x.awayNick));
+    // Same date-aware pick as the monitor_scores loop above: research_notes
+    // carried the identical wrong-game-in-the-series bug, writing it into a
+    // second track record.
+    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName);
+    if (pick.ambiguous) { ambiguousFinal++; continue; }
+    const f = pick.f;
     if (!f) continue;
     let result;
     if (p.market === 'prop' && p.player && p.stat) {
@@ -514,7 +622,13 @@ async function run() {
   //                   demonstrably existed;
   //   noFinalSettled — no final found, but the play is past SETTLED_HOURS, so
   //                   its game is certainly over and the miss is ours or ESPN's.
-  // A pre-kickoff play is in neither, which is the whole point.
+  // A pre-kickoff play is in neither, which is the whole point. Two more
+  // populations are deliberately OUTSIDE the alarm: `unresolvable` (no final on
+  // any date and past UNRESOLVABLE_DAYS — a postponed game, which would
+  // otherwise re-alarm every run until the 30-day write-off) and
+  // `ambiguousFinal` (the data was there but could not be told apart, so the
+  // grader declined to guess — a decision, not a failure). Both are in the
+  // summary and in `data`, so neither disappears.
   const matchedFinal = graded + noResult + writeFail;
   const suspect = matchedFinal + noFinalSettled;
   if (suspect >= ZERO_ALARM_MIN && !total) {
@@ -524,7 +638,9 @@ async function run() {
       + `${noResult ? ` (${noResult} matched, stat/market unsupported or line missing)` : ''}`
       + `${writeFail ? ` (${writeFail} write failed)` : ''}`
       + `, ${noFinalSettled} are >${SETTLED_HOURS}h past logging with no ESPN final for their matchup`
-      + `${noFinal - noFinalSettled ? `; ${noFinal - noFinalSettled} more have no final yet and are not counted (games not finished)` : ''}`;
+      + `${noFinal - noFinalSettled - unresolvable ? `; ${noFinal - noFinalSettled - unresolvable} more have no final yet and are not counted (games not finished)` : ''}`
+      + `${unresolvable ? `; ${unresolvable} are >${UNRESOLVABLE_DAYS}d old with no final on any date and are not counted (postponed or cancelled)` : ''}`
+      + `${ambiguousFinal ? `; ${ambiguousFinal} matched two finals equally closely and were left pending rather than guessed` : ''}`;
     logger.error('grading', `${suspect} plays should have been gradeable, 0 graded — ${why}`);
     reportDegraded('grading|zero', `${suspect} plays should have been gradeable but 0 graded — ${why}`);
   }
@@ -538,6 +654,8 @@ async function run() {
   // a diagnosis without needing DB access.
   const notes = [`${queued} queued`];
   if (noFinal) notes.push(`${noFinal} no final`);
+  if (unresolvable) notes.push(`${unresolvable} unresolvable`);
+  if (ambiguousFinal) notes.push(`${ambiguousFinal} ambiguous final`);
   if (noResult) notes.push(`${noResult} no result`);
   if (writeFail) notes.push(`${writeFail} write fail`);
   if (expired) notes.push(`${expired} expired`);
@@ -547,8 +665,9 @@ async function run() {
     data: {
       graded, wins, losses, pushes, research: rGraded, tennis: tGraded, ufc: uGraded,
       queued, noFinal, noResult, writeFail, expired,
-      // The alarm's own populations, so a quiet run can be read without the logs.
-      matchedFinal, noFinalSettled,
+      // The alarm's own populations, so a quiet run can be read without the
+      // logs — including the two that are deliberately kept out of it.
+      matchedFinal, noFinalSettled, unresolvable, ambiguousFinal,
     },
   };
 }
