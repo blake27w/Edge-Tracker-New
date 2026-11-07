@@ -663,6 +663,13 @@ const STRIKE_MIN = Number(process.env.ODDS_STRIKE_MIN) || 4;
 const NEAR_MIN = Number(process.env.ODDS_NEAR_MIN) || 10;
 const MID_MIN = Number(process.env.ODDS_MID_MIN) || 30;
 const IDLE_MIN = Number(process.env.ODDS_IDLE_MIN) || 180;
+// How long a sport with NO live in-play consumer stays on STRIKE/NEAR AFTER a
+// game has started. `oddsApi.liveSports` keeps the full -3.5h; everything else
+// gets this. `0` is a legitimate setting ("no post-tip polling at all"), which
+// is exactly why this reads through hdrNum ?? and not `|| 45`: Number('') is a
+// finite 0, so `|| 45` cannot tell an unset var from a deliberate zero and
+// `Number(x) || 45` would silently discard the zero (the D10/D67/D79 family).
+const POSTTIP_MIN = Math.max(0, hdrNum(process.env.ODDS_POSTTIP_MIN) ?? 45);
 const lastKeyFetch = new Map(); // odds-api league key -> ms of last fetch
 
 function paceMult() {
@@ -677,18 +684,61 @@ function paceMult() {
 
 // Fetch interval (minutes) for a sport's key. Governor (mult) applies to MID/IDLE
 // ONLY — the strike/near windows stay fast no matter how stressed the budget is.
-function sportIntervalMin(sport, mult) {
+//
+// ── The post-tip tail, and who actually reads it (D102) ──
+// The tail used to be an unconditional -3.5h for every sport: a game stayed
+// "live" for three and a half hours after kickoff, so the last tip of a night
+// held its whole league on STRIKE (4 min) until ~3.5h later. The sports with a
+// real in-play consumer need that; the rest do not, and the arithmetic is
+// lopsided — most of those fetches land after every consumer has stopped
+// looking.
+//
+// What genuinely reads post-tip rows, measured rather than assumed:
+//   book-move      — reads a -3h slate and scores started games; its FRESHEST
+//                    post-tip rows are the ones that matter.
+//   sharp          — same -3h slate, and its steam verdict needs three books
+//                    inside a 35-min window, so it needs the rows to KEEP
+//                    arriving for a while after a tip.
+//   clv-tracker    — bounds its close at `commence_time`; a post-tip row can
+//                    never be its close.
+//   nfl-line-move  — happy path closes at -30m PRE-tip.
+// So 45 minutes is not "nothing reads post-tip" — it is exactly the span
+// book-move's freshest started games and one of sharp's 35-min steam windows
+// need. What drops is the ~2h45m tail beyond it, which no consumer above can
+// use. Sports in `liveSports` (NFL when NFL_LIVE is on) keep the full -3.5h.
+//
+// Pre-tip behaviour is byte-identical: the three dt bands below are the same
+// mutually exclusive bands as before (dt <= 30m, 30m < dt <= 90m, dt <= 12h),
+// and only the NEGATIVE edge of the first two moved.
+//
+// `lowered` is an optional Set the caller passes to collect the sports whose
+// tier this rule actually demoted on this run — reported, because a cadence
+// that quietly halved itself must not look like a cadence nobody changed.
+export function sportIntervalMin(sport, mult, lowered = null) {
   const now = Date.now();
-  let tier = 3; // 3 idle · 2 mid · 1 near · 0 strike
+  const FULL_TAIL_MS = 3.5 * 3600_000;
+  // `?? []` and not `.includes` straight off the config: the odds tests
+  // mock.module the WHOLE config object, so a new key is absent there.
+  const tailMs = (oddsApi.liveSports ?? []).includes(sport) ? FULL_TAIL_MS : POSTTIP_MIN * 60_000;
+  let tier = 3;      // 3 idle · 2 mid · 1 near · 0 strike
+  let fullTier = 3;  // the tier the old unconditional -3.5h tail would have given
   for (const g of getGames()) {
     if (g.sport !== sport) continue;
     const t = Date.parse(g.commence_time || '');
     if (!Number.isFinite(t)) continue;
     const dt = t - now;
-    if (dt <= 30 * 60_000 && dt >= -3.5 * 3600_000) return STRIKE_MIN;      // live or <30m — fastest, protected
-    if (dt <= 90 * 60_000 && dt >= -3.5 * 3600_000) { tier = Math.min(tier, 1); continue; }
-    if (dt > 0 && dt <= 12 * 3600_000) tier = Math.min(tier, 2);
+    if (dt <= 30 * 60_000) {                                     // live or <30m — fastest, protected
+      if (dt >= -tailMs) { tier = 0; fullTier = 0; break; }
+      if (dt >= -FULL_TAIL_MS) fullTier = 0;
+    } else if (dt <= 90 * 60_000) {
+      if (dt >= -tailMs) tier = Math.min(tier, 1);
+      if (dt >= -FULL_TAIL_MS) fullTier = Math.min(fullTier, 1);
+    } else if (dt <= 12 * 3600_000) {
+      tier = Math.min(tier, 2); fullTier = Math.min(fullTier, 2);
+    }
   }
+  if (lowered && tier > fullTier) lowered.add(sport);
+  if (tier === 0) return STRIKE_MIN;
   if (tier === 1) return NEAR_MIN;        // protected from the governor
   if (tier === 2) return MID_MIN * mult;
   return IDLE_MIN * mult;
@@ -1298,6 +1348,9 @@ async function run() {
   // Credits this sport is actually allowed to touch right now.
   const spendable = (sport) => (isFootball(sport) ? budget.remaining : budget.remaining - footballFloor);
   let skippedFootballFloor = 0;
+  // Sports whose cadence the shortened post-tip tail demoted on THIS run
+  // (D102) — a tier change nobody can see is a tier change nobody can audit.
+  const postTipTail = new Set();
 
   for (const [sport, meta] of Object.entries(SPORTS)) {
     // The Odds API has no bare golf/tennis key (event-specific only) — skip to avoid 404s.
@@ -1308,7 +1361,7 @@ async function run() {
     if (spendable(sport) <= 0) { skippedFootballFloor++; continue; }
     // How often this sport's keys deserve a refresh right now (governor applies
     // to mid/idle only; strike/near stay fast).
-    const ivMs = sportIntervalMin(sport, mult) * 60_000;
+    const ivMs = sportIntervalMin(sport, mult, postTipTail) * 60_000;
 
     for (const key of keys) {
       if (active && !active.has(key) && key !== 'golf' && key !== 'tennis') { skippedSeason++; continue; }
@@ -1473,7 +1526,7 @@ async function run() {
   const baselineBit = `baseline ${hydr.games}/${hydr.attempted} games → ${hydr.keys} keys rehydrated${hydr.failures ? `, ${hydr.failures} read failures` : ''}, ${stats.staleBaseline} stale-baseline${hydrateFailRuns >= HYDRATE_FAIL_RUNS ? `, reads circuit-broken after ${hydrateFailRuns} failed runs` : ''}${steamDropped ? `, ${steamDropped} too wide for steam` : ''}`;
 
   return {
-    summary: `${allGames.length} games, ${snapshots.length} snapshots (${snapshotsWritten} written${snapshotsLost ? `, ${snapshotsLost} lost` : ''}), ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
+    summary: `${allGames.length} games, ${snapshots.length} snapshots (${snapshotsWritten} written${snapshotsLost ? `, ${snapshotsLost} lost` : ''}), ${movements.length} movements · ${baselineBit} · ${calls} calls${skippedPaced ? `, ${skippedPaced} paced` : ''}${mult > 1 ? ` (throttle ×${mult})` : ''} · ${postTipTail.size} sports post-tip tail · credits ${budget.used}/${oddsApi.monthlyBudget} (${budget.remaining} left)${skippedBudget ? `, ${skippedBudget} budget-skips` : ''}${skippedFootballFloor ? `, ${skippedFootballFloor} held for football (floor ${footballFloor})` : ''} · ${denomBit}`,
     gamesMonitored: allGames.length,
     data: {
       games: allGames.length, snapshots: snapshots.length, movements: movements.length, calls,
@@ -1488,6 +1541,9 @@ async function run() {
       staleBaseline: stats.staleBaseline,
       // `movements` is what was written; `steamFeed` is what sharp can see.
       steamFeed: steamFeed.length, steamDropped, hydrateFailRuns,
+      // The sports the shortened post-tip tail demoted this run — names, not a
+      // count, so "which league stopped being polled" is answerable (D102).
+      postTipTail: [...postTipTail],
       budget: getOddsBudget(),
     },
   };

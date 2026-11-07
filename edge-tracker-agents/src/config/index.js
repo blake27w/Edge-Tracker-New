@@ -115,6 +115,19 @@ function footballPriorityOn(now = new Date()) {
     || (FOOTBALL_PRIORITY === 'auto' && FOOTBALL_SEASON_MONTHS.has(now.getMonth()));
 }
 
+// ── Sports with a live in-play consumer ─────────────────────────
+// Only these keep the odds agent's FULL post-tip polling tail (see
+// POSTTIP_MIN in the odds agent). Everything else drops to MID/IDLE
+// POSTTIP_MIN after its last tip, because nothing is reading the rest of
+// the tail (D102).
+//
+// The NFL default MIRRORS nfl-live-index.js's own ENABLED predicate
+// EXACTLY — `=== 'true'`, deliberately not bool(). bool() also accepts
+// 1/yes/on, so `NFL_LIVE=1` would buy three hours of post-tip polling a
+// night for a consumer that is still disabled. The two must agree or the
+// cost is paid for nothing.
+const NFL_LIVE_ON = String(env.NFL_LIVE || '').toLowerCase() === 'true';
+
 // The Odds API sport keys. Soccer covers 7 leagues we care about.
 const SPORTS = {
   MLB: { key: 'baseball_mlb', emoji: '⚾', hasTotals: true },
@@ -317,6 +330,8 @@ const config = {
     footballSports: FOOTBALL_SPORTS,
     footballPriority: FOOTBALL_PRIORITY,
     footballPriorityOn,
+    // Sports whose post-tip polling tail stays at the full -3.5h (D102).
+    liveSports: list(env.ODDS_LIVE_SPORTS, NFL_LIVE_ON ? ['NFL'] : []),
     base: 'https://api.the-odds-api.com/v4',
   },
 

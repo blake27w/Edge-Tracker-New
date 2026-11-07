@@ -1122,6 +1122,43 @@ ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of t
   && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
   'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
 
+// ── 17. The post-tip polling tail ───────────────────────────────
+// The tail used to be an unconditional -3.5h, so the last tip of a night held
+// its whole league on the 4-minute STRIKE cadence until ~3.5h later — roughly
+// 136 fetches a night on the tail alone, almost all of them after every
+// consumer had stopped looking. It is now two windows, and the shape is what
+// is pinned here: the full -3.5h for a sport in `liveSports`, -POSTTIP_MIN
+// (45) for everything else. A rewrite that restores one unconditional window
+// fails this (D102).
+const oddsCode = codeOnly(oddsSrc);
+ok('the post-tip tail is two windows, not one',
+  /const FULL_TAIL_MS = 3\.5 \* 3600_000;/.test(oddsCode)
+  && /\(oddsApi\.liveSports \?\? \[\]\)\.includes\(sport\) \? FULL_TAIL_MS : POSTTIP_MIN \* 60_000/.test(oddsCode)
+  && !/>= -3\.5 \* 3600_000/.test(oddsCode),
+  'a single unconditional -3.5h window is the thing this replaced; `?? []` is load-bearing because the odds tests mock the whole config object');
+ok('POSTTIP_MIN accepts 0 as a setting',
+  /POSTTIP_MIN = Math\.max\(0, hdrNum\(process\.env\.ODDS_POSTTIP_MIN\) \?\? 45\)/.test(oddsCode),
+  '`Number(x) || 45` cannot tell an unset var from a deliberate zero (Number("") is a finite 0), and an unfloored negative would invert the window onto PRE-tip games');
+ok('the demotion is reported in both units',
+  /\$\{postTipTail\.size\} sports post-tip tail/.test(oddsCode)
+  && /postTipTail: \[\.\.\.postTipTail\]/.test(oddsCode)
+  && /sportIntervalMin\(sport, mult, postTipTail\)/.test(oddsCode)
+  && /if \(lowered && tier > fullTier\) lowered\.add\(sport\);/.test(oddsCode),
+  'a cadence that halved itself silently is indistinguishable from one nobody changed; the comparison against the OLD tier is what makes the report mean "this rule did it" rather than "this sport is idle"');
+// The predicate mirror. config decides whether NFL keeps the full tail; the
+// nfl.live agent decides whether anything reads it. bool() accepts 1/yes/on
+// and the agent does not, so bool() here buys the tail for a disabled consumer.
+const nflLiveSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/nfl.live/nfl-live-index.js'), 'utf8');
+const NFL_LIVE_PREDICATE = /String\((?:process\.)?env\.NFL_LIVE \|\| ''\)\.toLowerCase\(\) === 'true'/;
+ok('config mirrors the nfl.live enable predicate exactly',
+  NFL_LIVE_PREDICATE.test(codeOnly(nflLiveSrc)) && NFL_LIVE_PREDICATE.test(codeOnly(cfgSrc))
+  && !/NFL_LIVE_ON = bool\(/.test(cfgSrc)
+  && /liveSports: list\(env\.ODDS_LIVE_SPORTS, NFL_LIVE_ON \? \['NFL'\] : \[\]\)/.test(cfgSrc),
+  'NFL_LIVE=1 must leave BOTH off — bool() would enable 3h/night of polling for a consumer that stays disabled');
+ok('both tail knobs are documented for the operator',
+  /ODDS_LIVE_SPORTS/.test(envExample) && /ODDS_POSTTIP_MIN/.test(envExample),
+  'the live config wins over the repo (D92), so an undocumented knob is an unusable one');
+
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);
 if (skips.length) {
