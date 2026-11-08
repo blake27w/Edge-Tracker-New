@@ -9,7 +9,7 @@ import config from '../../config/index.js';
 import db from '../../db/index.js';
 import { logger } from '../../utils/index.js';
 import { reportDegraded, getGames } from '../../store/index.js';
-import { getFinals, getBox, getUfcResults } from '../shared/espn.js';
+import { getFinals, getSchedule, getBox, getUfcResults } from '../shared/espn.js';
 
 // Two SEPARATE thresholds. Welding them together was a mistake: "stop
 // attempting" and "write off permanently" are different decisions with very
@@ -103,6 +103,12 @@ async function fetchFinals(sport, dateStr) {
   return getFinals(ESPN_PATH[sport], dateStr);
 }
 
+// ALL scheduled events (completed or not) for a sport+date. Same fetch/cache
+// as fetchFinals (shared/espn.js dedupes on the raw request) — this is free.
+async function fetchSchedule(sport, dateStr) {
+  return getSchedule(ESPN_PATH[sport], dateStr);
+}
+
 // ── Picking the RIGHT final when a matchup repeats ───────────────
 // The finals for a sport are flattened across all four fetched dates, and
 // matchups REPEAT inside a 4-day window as a matter of routine, not as an edge
@@ -126,21 +132,34 @@ function dayDiff(a, b) {
   return Math.round((t(a) - t(b)) / 86400_000);
 }
 
-// The play's own game date, if it can be had for free. monitor_scores has no
-// commence_time column (signal-engine strips it before insert), but the
+// The play's own game kickoff (ms), if it can be had for free. monitor_scores
+// has no commence_time column (signal-engine strips it before insert), but the
 // in-memory odds slate still holds the game while it is upcoming, and that is
 // already in process — no query, no new dependency. Once the game has rolled
 // off the slate this returns null and the caller falls back to scored_at.
-function gameDate(p) {
+function gameCommenceMs(p) {
   if (!p.game_id) return null;
   const g = (getGames() || []).find((x) => x.game_id === p.game_id && x.commence_time);
   const t = g ? Date.parse(g.commence_time) : NaN;
-  return Number.isFinite(t) ? ymd(new Date(t)) : null;
+  return Number.isFinite(t) ? t : null;
+}
+function gameDate(p) {
+  const t = gameCommenceMs(p);
+  return t != null ? ymd(new Date(t)) : null;
 }
 
+// A final whose own kickoff lands this far from the play's real kickoff is not
+// the play's game, full stop — "closest board date" is not a strong enough
+// test once two games share a date (D111 #1, the doubleheader defect).
+const START_TOLERANCE_MS = 3 * 3600_000;
+
 // Choose the final for a play. Returns { f } with the chosen final (or null if
-// none matched), or { ambiguous: true } when two candidates are equally good.
-function pickFinal(finals, p, awayName, homeName) {
+// none matched), { ambiguous: true } when two candidates are equally good, or
+// { wrongSlot: true } when a candidate matched the matchup but is demonstrably
+// the wrong GAME — either its kickoff is too far from the play's own, or (when
+// the play's own kickoff is unknown) the board holds a second scheduled game
+// for this matchup that simply hasn't gone final yet.
+function pickFinal(finals, p, awayName, homeName, schedule) {
   const hits = [], seen = new Set();
   for (const x of finals) {
     if (!(homeName.includes(x.homeNick) && awayName.includes(x.awayNick))) continue;
@@ -149,7 +168,33 @@ function pickFinal(finals, p, awayName, homeName) {
     if (x.id != null) { if (seen.has(x.id)) continue; seen.add(x.id); }
     hits.push(x);
   }
-  if (hits.length <= 1) return { f: hits[0] || null };
+
+  const commence = gameCommenceMs(p);
+  // Only a real signal when both sides have a start time. A final with no
+  // startTime (old fixtures, or an ESPN response missing comp.date) is never
+  // rejected on this basis alone — this guard can only narrow, never widen,
+  // what used to match.
+  const withinStart = (x) => commence == null || !x.startTime
+    || Math.abs(Date.parse(x.startTime) - commence) <= START_TOLERANCE_MS;
+  const viable = hits.filter(withinStart);
+  // Candidates existed for this matchup but none started near the play's own
+  // kickoff — not a tie, the wrong game entirely.
+  if (hits.length > 0 && viable.length === 0) return { wrongSlot: true };
+
+  if (viable.length <= 1) {
+    const f = viable[0] || null;
+    // getFinals only returns COMPLETED events, so "exactly one hit" can really
+    // mean "the matchup's OTHER game today hasn't finished yet" — a
+    // doubleheader where game 2 is still live silently reads as "one game".
+    // Only checkable once the play's own kickoff is unknown: when commence is
+    // known, the start-time filter above already settled it.
+    if (f && commence == null) {
+      const sameMatchup = (schedule || []).filter((s) =>
+        s.boardDate === f.boardDate && homeName.includes(s.homeNick) && awayName.includes(s.awayNick));
+      if (sameMatchup.length >= 2) return { wrongSlot: true };
+    }
+    return { f };
+  }
 
   const own = gameDate(p);
   const base = ymd(new Date(p.scored_at || p.created_at));
@@ -163,7 +208,7 @@ function pickFinal(finals, p, awayName, homeName) {
     const i = FALLBACK_RANK.indexOf(dayDiff(x.boardDate, base));
     return i < 0 ? Infinity : i;
   };
-  const ranked = hits.map((x) => ({ x, r: rank(x) })).sort((a, b) => a.r - b.r);
+  const ranked = viable.map((x) => ({ x, r: rank(x) })).sort((a, b) => a.r - b.r);
   if (!Number.isFinite(ranked[0].r)) return { f: null };
   // Two finals equally close to the play's game date: nothing left distinguishes
   // them, and picking either writes a coin-flip result into the track record.
@@ -476,10 +521,19 @@ async function run() {
   // from: flattening without it is what let a repeated matchup grade against
   // the wrong game in the series (see pickFinal).
   const finalsBySport = {};
+  // Scheduled events (completed or not) on the same dates, for pickFinal's
+  // doubleheader guard — getFinals drops the unfinished game, so it alone
+  // can't tell "one game" from "one game done, one still live" (D111 #1).
+  // Same cached fetch as fetchFinals, so this costs nothing extra.
+  const scheduleBySport = {};
   for (const { sport, date } of pairs.values()) {
     try {
       const finals = await fetchFinals(sport, date);
       (finalsBySport[sport] ||= []).push(...finals.map((f) => ({ ...f, boardDate: date })));
+    } catch (e) { logger.warn('grading', e.message); }
+    try {
+      const sched = await fetchSchedule(sport, date);
+      (scheduleBySport[sport] ||= []).push(...sched.map((s) => ({ ...s, boardDate: date })));
     } catch (e) { logger.warn('grading', e.message); }
   }
 
@@ -497,16 +551,26 @@ async function run() {
   // Plays whose matchup matched two finals equally well — left pending on
   // purpose rather than graded against a guess.
   let ambiguousFinal = 0;
+  // Plays whose matchup matched a final that is demonstrably the WRONG game —
+  // a doubleheader with only game 1 final, or a kickoff too far from the
+  // play's own. Same "decline to guess" treatment as ambiguousFinal: pending,
+  // counted, kept out of the zero-graded alarm (D111 #1).
+  let wrongSlot = 0;
   const settledFloor = Date.now() - SETTLED_HOURS * 3600_000;
   const unresolvableFloor = Date.now() - UNRESOLVABLE_DAYS * 86400_000;
   const now = new Date().toISOString();
   for (const p of pending) {
     const parts = String(p.matchup || '').split(' @ ');
     const awayName = norm(parts[0]), homeName = norm(parts[1]);
-    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName);
+    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName, scheduleBySport[p.sport] || []);
     if (pick.ambiguous) {
       ambiguousFinal++;
       logger.warn('grading', `${p.matchup} matched two finals equally closely — left pending (${p.id})`);
+      continue;
+    }
+    if (pick.wrongSlot) {
+      wrongSlot++;
+      logger.warn('grading', `${p.matchup} matched a final that is not this play's own game — left pending (${p.id})`);
       continue;
     }
     const f = pick.f;
@@ -543,8 +607,9 @@ async function run() {
     // Same date-aware pick as the monitor_scores loop above: research_notes
     // carried the identical wrong-game-in-the-series bug, writing it into a
     // second track record.
-    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName);
+    const pick = pickFinal(finalsBySport[p.sport] || [], p, awayName, homeName, scheduleBySport[p.sport] || []);
     if (pick.ambiguous) { ambiguousFinal++; continue; }
+    if (pick.wrongSlot) { wrongSlot++; continue; }
     const f = pick.f;
     if (!f) continue;
     let result;
@@ -640,7 +705,8 @@ async function run() {
       + `, ${noFinalSettled} are >${SETTLED_HOURS}h past logging with no ESPN final for their matchup`
       + `${noFinal - noFinalSettled - unresolvable ? `; ${noFinal - noFinalSettled - unresolvable} more have no final yet and are not counted (games not finished)` : ''}`
       + `${unresolvable ? `; ${unresolvable} are >${UNRESOLVABLE_DAYS}d old with no final on any date and are not counted (postponed or cancelled)` : ''}`
-      + `${ambiguousFinal ? `; ${ambiguousFinal} matched two finals equally closely and were left pending rather than guessed` : ''}`;
+      + `${ambiguousFinal ? `; ${ambiguousFinal} matched two finals equally closely and were left pending rather than guessed` : ''}`
+      + `${wrongSlot ? `; ${wrongSlot} matched a final that was not their own game (wrong kickoff, or an unfinished doubleheader game) and were left pending rather than guessed` : ''}`;
     logger.error('grading', `${suspect} plays should have been gradeable, 0 graded — ${why}`);
     reportDegraded('grading|zero', `${suspect} plays should have been gradeable but 0 graded — ${why}`);
   }
@@ -656,6 +722,7 @@ async function run() {
   if (noFinal) notes.push(`${noFinal} no final`);
   if (unresolvable) notes.push(`${unresolvable} unresolvable`);
   if (ambiguousFinal) notes.push(`${ambiguousFinal} ambiguous final`);
+  if (wrongSlot) notes.push(`${wrongSlot} wrong slot`);
   if (noResult) notes.push(`${noResult} no result`);
   if (writeFail) notes.push(`${writeFail} write fail`);
   if (expired) notes.push(`${expired} expired`);
@@ -666,8 +733,8 @@ async function run() {
       graded, wins, losses, pushes, research: rGraded, tennis: tGraded, ufc: uGraded,
       queued, noFinal, noResult, writeFail, expired,
       // The alarm's own populations, so a quiet run can be read without the
-      // logs — including the two that are deliberately kept out of it.
-      matchedFinal, noFinalSettled, unresolvable, ambiguousFinal,
+      // logs — including the three that are deliberately kept out of it.
+      matchedFinal, noFinalSettled, unresolvable, ambiguousFinal, wrongSlot,
     },
   };
 }

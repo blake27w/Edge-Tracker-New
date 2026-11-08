@@ -29,7 +29,10 @@ before(async () => {
   mock.module(import.meta.resolve('../src/store/index.js'), { namedExports: { reportDegraded: (k, d) => degraded.push({ k, d }), getGames: () => slate } });
   mock.module(import.meta.resolve('../src/config/index.js'), { defaultExport: { rules: { unitDollars: 100 } } });
   mock.module(import.meta.resolve('../src/agents/shared/espn.js'), {
-    namedExports: { getFinals: async () => finals, getBox: async () => null, getUfcResults: async () => [] },
+    namedExports: {
+      getFinals: async () => finals, getSchedule: async () => [],
+      getBox: async () => null, getUfcResults: async () => [],
+    },
   });
   grading = (await import('../src/agents/grading/index.js')).default;
 });

@@ -22,6 +22,20 @@ import { test, mock, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb, fakeLogger } from './helpers/fake-db.js';
 
+// Pinned, not wall-clock. `at()`'s daysAgo/hour/minute math is relative to
+// Date.now(), and Date.now() used to be the real clock — so after ~19:00
+// Central, Date.now() had already rolled to the next UTC date and at(0, 15, 11)
+// landed 13h in the FUTURE, pending's window selected 0 rows, and the
+// zero-matched-games tests went red. Pinning Date.now() for the whole suite
+// (D111 #2) makes every test's result independent of the hour this runs.
+// 21:12 UTC — the production incident's own timestamp (see header). Chosen
+// deliberately, not just "a safe hour": it is AFTER every `at(0, h, m)` fixture
+// below (the latest is 15:11) by more than the 3.5h queue cutoff, so pinning it
+// doesn't itself exclude today's-evening fixtures from the pending window —
+// the exact trap that picking noon, or any hour before 18:41 UTC, would fall
+// into on this file's fixtures.
+const CLOCK_ANCHOR = Date.parse('2026-11-07T21:12:00.000Z');
+
 // Relative so the suite doesn't rot out of the 10-day lookback, but the
 // clock-time and date OFFSETS are the production ones.
 const at = (daysAgo, h, m) => {
@@ -32,12 +46,13 @@ const at = (daysAgo, h, m) => {
 const ymd = (iso, off = 0) =>
   new Date(new Date(iso).getTime() + off * 86400_000).toISOString().slice(0, 10).replace(/-/g, '');
 
-let db, degraded, lines, finals, box, slate, grading;
+let db, degraded, lines, finals, schedule, box, slate, grading;
 const fetched = [];   // every (path, date) getFinals was asked for, in order
 
 before(async () => {
+  mock.timers.enable({ apis: ['Date'], now: CLOCK_ANCHOR });
   db = fakeDb({ monitor_scores: [], research_notes: [] });
-  degraded = []; finals = {}; box = null; slate = [];
+  degraded = []; finals = {}; schedule = {}; box = null; slate = [];
   const fl = fakeLogger(); lines = fl.lines;
   mock.module(import.meta.resolve('../src/db/index.js'), { defaultExport: db, namedExports: { isConnected: db.isConnected, isMissingRelation: db.isMissingRelation } });
   mock.module(import.meta.resolve('../src/utils/index.js'), { namedExports: { logger: fl.logger } });
@@ -46,18 +61,19 @@ before(async () => {
   mock.module(import.meta.resolve('../src/agents/shared/espn.js'), {
     namedExports: {
       getFinals: async (path, date) => { fetched.push(`${path}|${date}`); return finals[`${path}|${date}`] || []; },
+      getSchedule: async (path, date) => schedule[`${path}|${date}`] || [],
       getBox: async () => box,
       getUfcResults: async () => [],
     },
   });
   grading = (await import('../src/agents/grading/index.js')).default;
 });
-after(() => mock.reset());
+after(() => { mock.timers.reset(); mock.reset(); });
 
 beforeEach(() => {
   degraded.length = 0; lines.error.length = 0; lines.warn.length = 0;
   db.calls.select.length = 0; db.calls.update.length = 0;
-  finals = {}; box = null; slate = []; fetched.length = 0;
+  finals = {}; schedule = {}; box = null; slate = []; fetched.length = 0;
 });
 
 // ── Fault 1: the finals date window only looks BACKWARDS ─────────
@@ -368,6 +384,86 @@ test('two equally close finals leave the play pending and are counted, never gue
   assert.equal(r.data.ambiguousFinal, 1, 'and it is counted, so it cannot hide');
   assert.match(r.summary, /1 ambiguous final/);
   assert.deepEqual(degraded, [], 'declining to guess is a decision, not a failure to alarm on');
+});
+
+// ── Fault 6a (D111 #1) — the slate still knows the kickoff, and it disagrees ──
+// When the play's game is still on the odds slate, its real commence_time is
+// ground truth. A final whose own start time is hours away from that is not
+// this play's game at all — checkable directly, no need for the schedule
+// fallback below (which only applies once the slate no longer has the game).
+test('a final whose kickoff is hours from the play’s own slate time is rejected, not guessed', async () => {
+  const scored = at(4, 22, 0);
+  const day = scored.slice(0, 10);
+  const g1Start = `${day}T17:10:00.000Z`, g2Start = `${day}T23:10:00.000Z`;
+  db.setRows('monitor_scores', [mlbPlay({ game_id: 'g-day2', scored_at: scored })]);
+  // The play's OWN game (game 2) is still on the slate — its real kickoff is known.
+  slate = [{ game_id: 'g-day2', sport: 'MLB', commence_time: g2Start }];
+  // Only game 1 has a final, and it started 6h before the play's own kickoff.
+  finals[`baseball/mlb|${ymd(scored)}`] = [{ ...bravesAtReds('G1', 2, 3), startTime: g1Start }];
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(r.data.graded, 0, 'the only final on offer started 6h away from this play’s real kickoff');
+  assert.equal(r.data.wrongSlot, 1);
+  assert.equal(row.status, 'pending');
+  assert.deepEqual(degraded, [], 'declining to guess is a decision, not a failure to alarm on');
+});
+
+// ── Fault 6b (D111 #1) — a doubleheader where only game 1 is final ──
+// getFinals filters to `comp.status.type.completed`, so a doubleheader with
+// game 2 still in progress yields exactly ONE completed event for the
+// matchup — hits.length === 1, which the pre-D111 code treated as "no
+// ambiguity" and graded straight through. Reproduced in prod: a game-2 play
+// (game_id 'g-day2') silently graded off game 1's score, 'ambiguousFinal: 0'.
+// Unlike 6a, the play's game has already rolled OFF the odds slate by the
+// time grading runs (routine for an in-progress game) — no commence_time to
+// check directly, so this is the scheduled-count fallback (D111 #1 part b).
+test('a game-2 play rolled off the slate is left pending, not graded off game 1’s score', async () => {
+  const scored = at(4, 22, 0);
+  const day = scored.slice(0, 10);
+  const g1Start = `${day}T17:10:00.000Z`, g2Start = `${day}T23:10:00.000Z`;
+  db.setRows('monitor_scores', [mlbPlay({ game_id: 'g-day2', scored_at: scored })]);
+  // Only game 1 has gone final; game 2 is still live, so getFinals never
+  // surfaces it — exactly the production shape.
+  finals[`baseball/mlb|${ymd(scored)}`] = [{ ...bravesAtReds('G1', 2, 3), startTime: g1Start }];
+  // The board DOES know about two scheduled games for this matchup today —
+  // this is what tells pickFinal "one final" isn't "one game".
+  schedule[`baseball/mlb|${ymd(scored)}`] = [
+    { homeNick: 'reds', awayNick: 'braves', startTime: g1Start, completed: true },
+    { homeNick: 'reds', awayNick: 'braves', startTime: g2Start, completed: false },
+  ];
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(r.data.graded, 0, 'game 1’s final must not be written onto the game-2 play');
+  assert.equal(r.data.wrongSlot, 1, 'and it is counted, so it cannot hide');
+  assert.equal(row.status, 'pending');
+  assert.deepEqual(degraded, [], 'declining to guess is a decision, not a failure to alarm on');
+});
+
+// Same doubleheader, same board — but THIS play is game 1's own play, and the
+// odds slate still knows its real kickoff. The start-time match lets it grade
+// normally even though the schedule shows two games for the matchup.
+test('the game-1 play in the same doubleheader still grades, off its own start time', async () => {
+  const scored = at(4, 22, 0);
+  const day = scored.slice(0, 10);
+  const g1Start = `${day}T17:10:00.000Z`, g2Start = `${day}T23:10:00.000Z`;
+  db.setRows('monitor_scores', [mlbPlay({ game_id: 'g-day1', scored_at: scored })]);
+  slate = [{ game_id: 'g-day1', sport: 'MLB', commence_time: g1Start }];
+  finals[`baseball/mlb|${ymd(scored)}`] = [{ ...bravesAtReds('G1', 2, 3), startTime: g1Start }];
+  schedule[`baseball/mlb|${ymd(scored)}`] = [
+    { homeNick: 'reds', awayNick: 'braves', startTime: g1Start, completed: true },
+    { homeNick: 'reds', awayNick: 'braves', startTime: g2Start, completed: false },
+  ];
+
+  const r = await grading.run();
+  const row = db.rows('monitor_scores').find((x) => x.id === 'mlb1');
+
+  assert.equal(r.data.graded, 1, 'the slate’s own kickoff confirms this really is game 1');
+  assert.equal(row.result_score, '2-3');
+  assert.equal(row.status, 'loss');
 });
 
 // research_notes had the identical bug on the identical finals, writing the
