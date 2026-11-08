@@ -297,7 +297,9 @@ alter table monitor_scores add column if not exists prop_signal_type text;
 -- (src/games/lines.js), and a median averages the two middle prices when the
 -- book count is even — +120 / +131 is 125.5. See the owed `alter … type`
 -- near the end of this file; a database that applied the old `integer` form
--- still has it and rejects the whole batch on a half-point consensus.
+-- still has it and rejects the whole batch on a half-point consensus. The
+-- live "222.5" that caught this was an underdog ML median (+220/+225), not a
+-- totals line — the number alone cannot tell the two apart.
 alter table monitor_scores add column if not exists price numeric;
 -- Whether the play was issued in-game (live) vs pre-game.
 alter table monitor_scores add column if not exists live boolean default false;
