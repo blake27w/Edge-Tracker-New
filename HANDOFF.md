@@ -1,6 +1,6 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-08 02:40 UTC — **seven PRs open (#146–#152), all reviewed and tested, none merged. `main` is at `5b92d70`.** Credits are on; the loud-failure machinery surfaced five real bugs in one day and all five have PRs. **One action is Blake's and clears four live alarms: the DDL paste below.**
+Last updated: 2026-11-08 03:45 UTC — **eight PRs open (#146–#153), all reviewed and tested, none merged. `main` is at `5b92d70`.** Credits are on; the loud-failure machinery surfaced five real bugs in one day and all five have PRs. **One action is Blake's and clears four live alarms: the DDL paste below.**
 
 ## OWED NOW — Blake, Supabase SQL editor, one paste
 
@@ -18,15 +18,18 @@ update nfl_line_moves set sport = 'NFL' where sport is null
 -- #150 (a median moneyline is fractional on an even book count; integer columns reject the whole batch)
 alter table pred_market_edges alter column price type numeric;
 alter table monitor_scores    alter column price type numeric;
+-- #153: Claude's dollar cost was going into an integer column
+alter table api_usage alter column used   type numeric;
+alter table api_usage alter column budget type numeric;
 ```
 
-The `update` placeholder does not cast, so an unedited paste fails loudly and rolls the block back. No restart needed: `sharp`'s breaker closes on its next probe, `nfl-line-move` unlatches on its next insert. **Two more ALTERs are coming** from the diagnosis running at close (below) — expect to run a second short paste.
+The `update` placeholder does not cast, so an unedited paste fails loudly and rolls the block back. No restart needed: `sharp`'s breaker closes on its next probe, `nfl-line-move` unlatches on its next insert. Includes the two `api_usage` lines from tonight's diagnosis (#153) — **this is the complete paste; no second one is coming.**
 
 ## Live state at close (read from /health and /budget)
 
 - **Credits worked.** `claude.model = claude-haiku-4-5`; `public-splits` ran (16 splits); its `blocked` alert and `combat-weighin`'s **cleared by themselves** — first live proof of #137's clearing logic. `5002 snapshots (5002 written)` — #144's chunked insert is landing every batch.
 - **Budget.** Day 7: 12,572 / 20,000 used, ceilings sum 18,520. Winter shares are live (D86). Cadence variables `ODDS_STRIKE_MIN=8 / NEAR=15 / MID=45` were set tonight; **measured evening burn 108 credits/hour** (~36 fetches/h, 20-min window at 22:00 ET, 2 sports already ceiling-capped) against ~1,408/day the day before — on track for roughly 700–800/day, near the 667 budget, before #149's post-tip tail lands. NCAAB/NHL/NBA remain the sports that cap first.
-- **Standing alarms and their fix:** `sharp|blocked` and `nfl-line-move|blocked` + `write|nfl_line_moves` → the DDL above. `write|monitor_scores` (`"222.5"` — a **line**, not the price #150 fixes) and `write|api_usage` (`"1.5845"` into an integer column of the **budget persistence table** — if the month row is failing, the credit counter is not persisting across restarts) → **diagnosis running at close** (`fix/integer-columns`, worktree `wt-int`); expect two more `alter column … type numeric` and a sweep of every integer column in `schema.sql` for the same family.
+- **Standing alarms and their fix:** `sharp|blocked` and `nfl-line-move|blocked` + `write|nfl_line_moves` → the DDL above. `write|monitor_scores` (`"222.5"` — a **line**, not the price #150 fixes) and `write|api_usage` (`"1.5845"` into an integer column of the **budget persistence table** — if the month row is failing, the credit counter is not persisting across restarts) → **diagnosed (#153):** the `"222.5"` is an *underdog moneyline median* into the same `price` column #150 fixes (not a total; reproduction added to #150); the `"1.5845"` is **Claude's dollar cost** into `api_usage.used integer` — the credit counter was never affected, but Claude cost tracking has never persisted and reset on every restart. A sweep of every integer column found no further member of this family.
 
 ## The PRs
 
@@ -39,8 +42,9 @@ The `update` placeholder does not cast, so an unedited paste fails loudly and ro
 | [#150](https://github.com/blake27w/Edge-Tracker-New/pull/150) | `price` columns → numeric; three writers report written/lost and block on total loss (D104, D108) | 356 / 251 | needs the two ALTERs above |
 | [#151](https://github.com/blake27w/Edge-Tracker-New/pull/151) | grading: game-date-aware final matching, diacritics, stats by ESPN key, truthful zero alarm, doubleheader guard (D105, D109, D111) | 358 / 245 | **NHL SOG props were graded against shootout goals**; suspect rows: `monitor_scores where stat_type='player_shots_on_goal' and graded_at < deploy` |
 | [#152](https://github.com/blake27w/Edge-Tracker-New/pull/152) | opp-grading: same wrong-game fix (D110) | 361 / 245 | **stacked on #151** — merge #151 first |
+| [#153](https://github.com/blake27w/Edge-Tracker-New/pull/153) | `api_usage.used/budget` → numeric; Claude cost persist failure visible on `/budget.claude` (D112) | 349 / 245 | needs the two `api_usage` ALTERs |
 
-Merge order: #148, #149, #150, #147 (independent); #151 then #152. Each appended to `DECISIONS.md`, so expect append conflicts — resolve by keeping every entry (D101–D111 all present, in order). After the last merge: `npm ci && npm test` and `node tools/smoke.mjs` — zero failures is the only acceptable result (D82).
+Merge order: #148, #149, #150, #153, #147 (independent); #151 then #152. Each appended to `DECISIONS.md`, so expect append conflicts — resolve by keeping every entry (D101–D111 all present, in order). After the last merge: `npm ci && npm test` and `node tools/smoke.mjs` — zero failures is the only acceptable result (D82).
 
 ## What the day taught (beyond the PRs)
 
@@ -53,7 +57,7 @@ Merge order: #148, #149, #150, #147 (independent); #151 then #152. Each appended
 
 ## Follow-ups (none blocking)
 
-1. The two new integer-column ALTERs + the family sweep (lane running at close).
+1. ~~integer-column sweep~~ — done (#153); the family is four columns, all with PRs.
 2. `signal-engine`/`public-fade` add their dedupe key *before* the insert, so a rejected batch's rows are never rebuilt (D108).
 3. `tennis-ingest`/`tennis-close` still write snapshots unchunked (D99).
 4. The DDL regex in smoke misses `add x` without `column`, `schema.t`, `alter table only`, multi-add; three other channels still say "run scripts/schema.sql" (which aborts at the placeholder); `SQL_FILES` is a hardcoded pair (#148 review).
