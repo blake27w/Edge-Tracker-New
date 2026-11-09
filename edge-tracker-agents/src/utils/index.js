@@ -50,6 +50,15 @@ let claudeUsage = null;
 const monthKey = () => new Date().toISOString().slice(0, 7);
 const blankUsage = (month) => ({ month, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, webSearches: 0, calls: 0, cost: 0 });
 
+// Whether the LATEST recordClaudeUsage upsert persisted, and why if not — for
+// /budget.claude so a dashboard consumer can show "cost not persisted" instead
+// of trusting a number that only lives in this process's memory. Reflects the
+// most recent attempt, not a sticky failure: a later successful write clears it.
+let claudeUsageWriteError = null;
+// Log the failure at error level once per process, not once per call — Claude
+// is called often, and a broken column would otherwise spam the log forever.
+let claudeUsageWriteErrorLogged = false;
+
 async function loadClaudeUsage() {
   const month = monthKey();
   if (claudeUsage && claudeUsage.month === month) return;
@@ -85,7 +94,14 @@ async function recordClaudeUsage(usage, model) {
       by_sport: { input: claudeUsage.input, output: claudeUsage.output, cacheWrite: claudeUsage.cacheWrite, cacheRead: claudeUsage.cacheRead, webSearches: claudeUsage.webSearches, calls: claudeUsage.calls },
       updated_at: new Date().toISOString(),
     }, 'provider,month');
-  } catch (_) { /* ignore */ }
+    claudeUsageWriteError = null;
+  } catch (e) {
+    claudeUsageWriteError = e.message;
+    if (!claudeUsageWriteErrorLogged) {
+      claudeUsageWriteErrorLogged = true;
+      logger.error('claude', `api_usage upsert failed — Claude's cost is not being persisted: ${e.message}`);
+    }
+  }
 }
 
 // Async snapshot for the /budget endpoint (loads from DB if cold).
@@ -104,6 +120,10 @@ export async function getClaudeUsage() {
     tokens: { input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite },
     perDay: day ? Math.round((u.cost / day) * 100) / 100 : 0,
     projectedMonthly: day ? Math.round((u.cost / day) * dim * 100) / 100 : Math.round(u.cost * 100) / 100,
+    // Reflects the latest recordClaudeUsage attempt — a dashboard consumer
+    // needs to know the cost above lives only in process memory, not the DB.
+    persisted: !claudeUsageWriteError,
+    ...(claudeUsageWriteError ? { persist_error: claudeUsageWriteError } : {}),
   };
 }
 
