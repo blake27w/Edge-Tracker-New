@@ -293,27 +293,184 @@ ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
 // The watchdog's schema probes are the ONE runtime tell for a table whose DDL
 // nobody ran (D69/D70) — and book_move_log, hand-run 2026-10-28, was not in
 // them. The list is hand-maintained, so this pins it structurally: every table
-// schema.sql declares must be probed, except the ones that pre-date the probe
-// (frozen below — do not add to it; add the probe instead).
+// either hand-run SQL file declares must be probed, except the ones that
+// pre-date the probe (frozen below — do not add to it; add the probe instead).
 const watchdogSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/watchdog/index.js'), 'utf8');
-ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+'\]/.test(watchdogSrc));
+// schema.sql is not the only file a human pastes into the Supabase editor.
+// migrate-research.sql carries 11 more `alter table … add column` statements
+// and the only declaration of the two closing-line tables, and reading only
+// schema.sql left every one of them outside this guard (D106).
+const migrateResearch = await readFile(join(root, 'edge-tracker-agents/scripts/migrate-research.sql'), 'utf8');
+const SQL_FILES = [['scripts/schema.sql', schema], ['scripts/migrate-research.sql', migrateResearch]];
+
+// One pass over the `alter table` statements of a file, in source order, so a
+// column that was added and later DROPPED or RENAMED AWAY leaves the required
+// set. Without that, a future `drop column` would demand a probe for a column
+// that no longer exists, forever — and the only way out would be deleting the
+// assertion. Forms accepted: a quoted or bare table name, `add column` with or
+// without `if not exists`. `alter column` is excluded on purpose: it changes a
+// column that already exists and creates nothing to probe.
+const DDL_COL_RE = /alter\s+table\s+(?:if\s+exists\s+)?"?(\w+)"?\s+(add|drop|rename)\s+column\s+(?:if\s+not\s+exists\s+|if\s+exists\s+)?"?(\w+)"?(?:\s+to\s+"?(\w+)"?)?/gi;
+const requiredColumns = (sql) => {
+  const req = new Set();
+  for (const [, table, verb, col, to] of sql.matchAll(DDL_COL_RE)) {
+    const key = `${table}.${col}`;
+    const v = verb.toLowerCase();
+    if (v === 'add') req.add(key);
+    else if (v === 'drop') req.delete(key);
+    else if (v === 'rename' && req.delete(key) && to) req.add(`${table}.${to}`);
+  }
+  return req;
+};
+const declaredTables = (sql) => [...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?"?(\w+)"?/gi)].map((m) => m[1]);
+
+// ── the parser's forms, on fixtures rather than on the live schema ──
+// Pinning these against the real files would make the assertions tautological
+// (they pass because today's schema happens not to use the form) and would
+// need a `drop column` added to production DDL to test retirement at all.
 {
-  const declared = [...schema.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
-  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
-  const probed = new Set([...probeBlock.matchAll(/\['(\w+)',/g)].map((m) => m[1]));
-  const PRE_PROBE = new Set([
-    'scan_runs', 'api_usage', 'opening_lines', 'line_movements', 'injury_updates', 'game_weather',
-    'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots', 'mlb_context', 'player_usage',
-    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
-    'tennis_matchups', 'subscribers', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
-    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
-    'nfl_inactives', 'nfl_line_moves', 'nfl_derivatives', 'nfl_pace',
-  ]);
-  const unprobed = declared.filter((t) => !probed.has(t) && !PRE_PROBE.has(t));
-  ok('every table schema.sql declares is probed by the watchdog', unprobed.length === 0,
-    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
-  ok('the probe parser saw the list', probed.size >= 14, `parsed ${probed.size} probed tables`);
+  const FIXTURE = `
+    alter table "public_splits" add column freeze boolean;
+    alter table public_splits add column if not exists pileon boolean;
+    alter table public_splits alter column pileon drop not null;
+    alter table public_splits add column "net_move" numeric;
+    alter table public_splits add column doomed text;
+    alter table public_splits drop column if exists doomed;
+    alter table public_splits add column old_name text;
+    alter table public_splits rename column old_name to new_name;
+  `;
+  const req = requiredColumns(FIXTURE);
+  ok('the DDL parser accepts a quoted table name', req.has('public_splits.freeze'),
+    '"public_splits" is valid SQL and reads as a different table to a bare-\\w+ regex');
+  ok('the DDL parser accepts add column without if not exists', req.has('public_splits.freeze')
+    && req.has('public_splits.net_move'), 'the shorter form is the one a human types by hand');
+  ok('the DDL parser accepts a quoted column name', req.has('public_splits.net_move'));
+  ok('the DDL parser still ignores alter column', ![...req].some((c) => /phone|not_null/.test(c))
+    && req.size === 4, `alter column creates nothing to probe — got ${[...req].join(', ')}`);
+  ok('a dropped column leaves the required set', !req.has('public_splits.doomed'),
+    'otherwise a future drop column demands a probe for a column that is gone, forever');
+  ok('a renamed column follows its new name', !req.has('public_splits.old_name')
+    && req.has('public_splits.new_name'));
+  const declared = declaredTables('create table if not exists "quoted_tbl" (id uuid);\ncreate table bare_tbl (id uuid);');
+  ok('the table parser accepts quoted and if-not-exists-less create table',
+    declared.includes('quoted_tbl') && declared.includes('bare_tbl'), declared.join(', '));
 }
+
+ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+',\s*'table'\]/.test(watchdogSrc));
+{
+  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const probedTables = new Set([...probeBlock.matchAll(/\['(\w+)',\s*'\w+',\s*'table'\]/g)].map((m) => m[1]));
+  const probedCols = new Set([...probeBlock.matchAll(/\['(\w+)',\s*'(\w+)',\s*'column'\]/g)].map((m) => `${m[1]}.${m[2]}`));
+  const PRE_PROBE = new Set([
+    'scan_runs', 'api_usage', 'opening_lines', 'injury_updates',
+    'sharp_signals', 'power_ratings', 'schedule_spots', 'mlb_context', 'player_usage',
+    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
+    'tennis_matchups', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
+    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
+    'nfl_inactives', 'nfl_derivatives', 'nfl_pace',
+  ]);
+  const allDeclared = SQL_FILES.flatMap(([, sql]) => declaredTables(sql));
+  const unprobed = allDeclared.filter((t) => !probedTables.has(t) && !PRE_PROBE.has(t));
+  ok('every table the hand-run SQL declares is probed by the watchdog', unprobed.length === 0,
+    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
+  ok('the closing-line tables are probed', probedTables.has('nfl_closing_lines')
+    && probedTables.has('ncaaf_closing_lines'), 'declared only in migrate-research.sql, which this check once did not read');
+  // The allowlist is the 2026-11-07 set minus the five tables that have since
+  // been probed. It is shrink-only on purpose: the subset assertion below
+  // forbids a phantom entry, and the ceiling forbids using it as an escape
+  // hatch for the assertion above. (No exact pin — legitimate consolidation
+  // shrinks it, and an exact pin would then fail for a non-defect.)
+  ok('the pre-probe allowlist holds nothing already probed',
+    ![...PRE_PROBE].some((t) => probedTables.has(t)),
+    'once a table is probed its allowlist entry is dead weight — remove it');
+  ok('the pre-probe allowlist names only declared tables',
+    [...PRE_PROBE].every((t) => allDeclared.includes(t)),
+    'a phantom entry silences a probe assertion for a table that does not exist');
+  ok('the pre-probe allowlist has not grown', PRE_PROBE.size <= 27,
+    `${PRE_PROBE.size} entries — do not grow it; add the probe to the watchdog instead`);
+
+  // Rule 1, and the regression that prompted it: retagging a table's existing
+  // entry `'column'` retires its table probe in silence. `monitor_scores`,
+  // `clv_records` and `line_snapshots` each lost theirs that way, so a dropped
+  // table would have been reported as five to seven missing columns and the
+  // create-table repair would never have been printed.
+  const colTables = new Set([...probedCols].map((c) => c.split('.')[0]));
+  const tablelessColProbes = [...colTables].filter((t) => !probedTables.has(t));
+  ok('every table with column probes also has a table probe', tablelessColProbes.length === 0,
+    `${tablelessColProbes.join(', ')} — without it a missing table reads as N missing columns`);
+  const dupTableProbes = [...probeBlock.matchAll(/\['(\w+)',\s*'\w+',\s*'table'\]/g)]
+    .map((m) => m[1]).filter((t, i, a) => a.indexOf(t) !== i);
+  ok('no table carries two table probes', dupTableProbes.length === 0, dupTableProbes.join(', '));
+
+  // The same pin one level down, and the one that was missing on 2026-11-07:
+  // every `alter table … add column` in either file is hand-run DDL, so every
+  // one of them can be skipped in Supabase and leave the code reading a column
+  // that is not there. `line_movements.gap_min` was skipped for 229 steam runs
+  // (D103). There is no allowlist here on purpose — the next forgotten column
+  // fails the build.
+  // Which files get parsed is itself the thing that failed on 2026-11-07: the
+  // cross-check read schema.sql only, so dropping a file from SQL_FILES makes
+  // every assertion below pass vacuously. This names the file by one of its
+  // columns, so the omission fails rather than going quiet.
+  const allRequired = new Set(SQL_FILES.flatMap(([, sql]) => [...requiredColumns(sql)]));
+  for (const c of ['research_notes.signals', 'nfl_closing_lines.over_odds', 'ncaaf_closing_lines.under_odds',
+    'line_movements.gap_min']) {
+    ok(`the cross-check requires ${c}`, allRequired.has(c),
+      'hand-run DDL lives in schema.sql AND migrate-research.sql — both must be parsed (D106)');
+  }
+
+  for (const [name, sql] of SQL_FILES) {
+    const req = requiredColumns(sql);
+    // Structural, not a count: if a file's `alter table` statements stop
+    // parsing, the subset assertion below passes vacuously and the whole
+    // guard goes quiet. This is what catches that.
+    ok(`the DDL parser found alter-table columns in ${name}`, req.size > 0,
+      'a vacuous subset check is indistinguishable from coverage');
+    const unprobedCols = [...req].filter((c) => !probedCols.has(c));
+    ok(`every hand-run column in ${name} is probed by the watchdog`, unprobedCols.length === 0,
+      `add a probe for: ${unprobedCols.join(', ')} — an unapplied alter table is invisible until a reader selects the column`);
+  }
+  ok('the line_movements columns from #136 are probed', probedCols.has('line_movements.gap_min')
+    && probedCols.has('line_movements.baseline_source'), 'the 229-blind-run column (D103)');
+  ok('the research_notes columns are probed', ['signals', 'player', 'stat']
+    .every((c) => probedCols.has(`research_notes.${c}`)),
+    'backtest selects signals inside a swallowing catch — blind forever if it is absent (D106)');
+}
+
+// The repair text has to be runnable. Pasting the whole of schema.sql into the
+// Supabase SQL editor cannot work: it runs a paste as one transaction and the
+// file carries a placeholder timestamp that deliberately does not cast
+// (schema.sql:728), so the paste aborts there and rolls everything back.
+ok('schema.sql still carries the uncastable placeholder',
+  /'YYYY-MM-DDTHH:MM:SSZ'/.test(schema), 'the reason the repair text says one block at a time');
+ok('the schema issue does not tell a human to run scripts/schema.sql',
+  !/run scripts\/schema\.sql/.test(codeOnly(watchdogSrc)),
+  'that paste aborts on the placeholder and rolls back every statement with it');
+ok('the schema issue names the create table block as the repair',
+  /create table block individually/.test(watchdogSrc));
+ok('the column issue names the one alter table line as the repair',
+  /alter table line individually/.test(watchdogSrc));
+
+// A missing table fails every column probe on it too, and the repair for all of
+// them is the one create table — so the table verdict must suppress its own
+// columns, or one absent table publishes N lines pointing at the wrong fix.
+ok('a missing table suppresses its own column probes',
+  /deadTables/.test(watchdogSrc) && /deadTables\.has\(p\[0\]\)/.test(watchdogSrc),
+  'opp_results absent used to publish three lines, ev_opportunities four');
+
+// Schema issues are the only watchdog lines whose repair is hand-run DDL, and
+// nothing else in the app reports them — so they must not be what the 8-row
+// cap on the dashboard banner drops first.
+{
+  const banner = (html.match(/Watchdog status banner[\s\S]{0,1600}/) || [''])[0];
+  ok('the watchdog banner sorts schema issues ahead of the cap',
+    /sort\(/.test(banner) && /'schema'/.test(banner) && /ordered\.slice\(0,8\)/.test(banner),
+    'eight stale-agent lines used to hide the one line a human has to act on');
+  ok('the watchdog banner still caps the list', /slice\(0,8\)/.test(banner));
+  ok('the watchdog banner still counts every issue, not the capped list',
+    /iss\.length\+'\s*issue'/.test(banner), 'the count is the honest total');
+}
+
 ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
   'an unbounded count on that table is what already times out the page');
@@ -692,8 +849,9 @@ ok('both opted-in agents are driven on BOTH sides of their gate',
 ok('the opt-in set is asserted against the wired fleet, not just the opted-in files',
   /exactly the agents the specs opted in/.test(blockedTestSrc)
   && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc)
-  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
-  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95) and sharp (D94).');
+  && /OPTED_IN_ON_WRITE_LOSS = \['pred-market', 'signal-engine', 'public-fade'\]/.test(blockedTestSrc)
+  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, \.\.\.OPTED_IN_ON_WRITE_LOSS, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95), sharp (D94), and the three median-price writers whose whole batch can be rejected at once (D108) — each named in its own list so adding one is a visible edit here.');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a
@@ -1121,6 +1279,98 @@ ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of t
   && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
   && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
   'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
+
+// ── 17. The post-tip polling tail ───────────────────────────────
+// The tail used to be an unconditional -3.5h, so the last tip of a night held
+// its whole league on the 4-minute STRIKE cadence until ~3.5h later — roughly
+// 136 fetches a night on the tail alone, almost all of them after every
+// consumer had stopped looking. It is now two windows, and the shape is what
+// is pinned here: the full -3.5h for a sport in `liveSports`, -POSTTIP_MIN
+// (45) for everything else. A rewrite that restores one unconditional window
+// fails this (D102).
+const oddsCode = codeOnly(oddsSrc);
+ok('the post-tip tail is two windows, not one',
+  /const FULL_TAIL_MIN = 3\.5 \* 60;/.test(oddsCode)
+  && /\(oddsApi\.liveSports \?\? \[\]\)\.includes\(sport\) \? FULL_TAIL_MS : postTipTailMin\(\) \* 60_000/.test(oddsCode)
+  && !/>= -3\.5 \* 3600_000/.test(oddsCode),
+  'a single unconditional -3.5h window is the thing this replaced; `?? []` is load-bearing because the odds tests mock the whole config object');
+ok('the tail length is read with intEnv, where 0 survives and blank does not',
+  /const POSTTIP_ASKED_MIN = intEnv\(env\.ODDS_POSTTIP_MIN, null\);/.test(cfgSrc)
+  && /postTipMin: ODDS_POSTTIP_MIN,/.test(cfgSrc)
+  && !/process\.env\.ODDS_POSTTIP_MIN/.test(oddsCode),
+  "hdrNum rejects '' but does not clean, so ODDS_POSTTIP_MIN='  ' coerced to a finite 0 and closed the post-tip window silently — and 0 is also a legitimate setting, which is why no Number()-family reader can read this knob (D107)");
+ok('and it is clamped to the full tail, which is where the bound lives',
+  /if \(asked <= FULL_TAIL_MIN\) return asked;/.test(oddsCode)
+  && /return FULL_TAIL_MIN;/.test(oddsCode),
+  'ODDS_POSTTIP_MIN=600 would give a NON-live sport a 10-hour fast tail — longer than the 3.5h this change removed — and `tier > fullTier` cannot report a tail wider than the full tail, so the demotion segment would read 0 while the spend went up');
+ok('ODDS_LIVE_SPORTS is normalised and validated like ODDS_SKIP_SPORTS',
+  /\.map\(\(s\) => s\.toUpperCase\(\)\);/.test(cfgSrc)
+  && /const ODDS_LIVE_SPORTS = ODDS_LIVE_SPORTS_ASKED\.filter\(\(s\) => !!SPORTS\[s\]\);/.test(cfgSrc),
+  "it is compared against g.sport, which is upper-case, so `ODDS_LIVE_SPORTS=nfl` bought nothing while reading as configured — and an unknown name bought nothing with no way to notice");
+ok('the demotion is reported in both units, with the tier it landed at',
+  /\$\{postTipTail\.size\} sports post-tip tail/.test(oddsCode)
+  && /postTipTail: \[\.\.\.postTipTail\.keys\(\)\]/.test(oddsCode)
+  && /postTipTailTier: Object\.fromEntries\(postTipTail\)/.test(oddsCode)
+  && /sportIntervalMin\(sport, mult, postTipTail\)/.test(oddsCode)
+  && /if \(lowered && tier > fullTier\) lowered\.set\(sport, tierLabel\(tier, mult\)\);/.test(oddsCode),
+  'a cadence that halved itself silently is indistinguishable from one nobody changed; the comparison against the OLD tier is what makes the report mean "this rule did it" rather than "this sport is idle", and the tier label is what makes "how slow" readable without multiplying four knobs by an unseen governor');
+ok('the NEAR band carries no post-tip test, because it cannot have one',
+  !/dt <= 90 \* 60_000\) \{\s*\n\s*if \(dt >= -tail/.test(oddsCode)
+  && /\} else if \(dt <= 90 \* 60_000\) \{\s*\n\s*tier = Math\.min\(tier, 1\); fullTier = Math\.min\(fullTier, 1\);/.test(oddsCode),
+  'the three dt bands are mutually exclusive, so dt is positive in this one — the two tail guards it carried were vacuously true and read as if NEAR had a post-tip window of its own');
+ok('sharp reports post-tip blindness as its own verdict, never as 0 steam',
+  /function postTipBlindness\(rows, eligible, slate, now\)/.test(sharpSrc)
+  && /started game\$\{postTip\.games === 1 \? '' : 's'\} beyond steam bound/.test(sharpSrc)
+  && /postTipBeyondBound: postTip\.rows, postTipBlindGames: postTip\.games,/.test(sharpSrc)
+  && /postTipBeyondBound: 0, postTipBlindGames: 0,/.test(sharpSrc),
+  'past the tail every row a started non-live game produces is beyond STEAM_MAX_GAP_MIN, so three co-directional books an hour after tip printed `0 steam · 3 rows / 0 gap-eligible` — the sentence a QUIET market prints (D107)');
+// The predicate mirror. config decides whether NFL keeps the full tail; the
+// nfl.live agent decides whether anything reads it. bool() accepts 1/yes/on
+// and the agent does not, so bool() here buys the tail for a disabled consumer.
+const nflLiveSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/nfl.live/nfl-live-index.js'), 'utf8');
+const NFL_LIVE_PREDICATE = /String\((?:process\.)?env\.NFL_LIVE \|\| ''\)\.toLowerCase\(\) === 'true'/;
+ok('config mirrors the nfl.live enable predicate exactly',
+  NFL_LIVE_PREDICATE.test(codeOnly(nflLiveSrc)) && NFL_LIVE_PREDICATE.test(codeOnly(cfgSrc))
+  && !/NFL_LIVE_ON = bool\(/.test(cfgSrc)
+  && /list\(env\.ODDS_LIVE_SPORTS, NFL_LIVE_ON \? \['NFL'\] : \[\]\)/.test(cfgSrc),
+  'NFL_LIVE=1 must leave BOTH off — bool() would enable 3h/night of polling for a consumer that stays disabled');
+ok('both tail knobs are documented for the operator',
+  /ODDS_LIVE_SPORTS/.test(envExample) && /ODDS_POSTTIP_MIN/.test(envExample),
+  'the live config wins over the repo (D92), so an undocumented knob is an unusable one');
+
+// ── 18. The owed `alter column` statements for the median price (D104/D108) ──
+// `price` holds a consensus MEDIAN, which lands on a half whenever the book
+// count is even, and both columns were declared `integer`. PostgREST applies a
+// batch insert as ONE statement, so a single half-point consensus discarded
+// every row in the run — nine times on 2026-11-07, each reported as a success.
+// Changing the `create` / `add column` declarations fixes a database created
+// from scratch; a database that already applied the old file keeps the integer
+// column, and NOTHING in this repo applies schema.sql (D69/D70). So the two
+// `alter column` lines ARE the fix for production, and deleting one leaves a
+// database broken with no trace in the repo at all. Asserted on the raw file,
+// not codeOnly(): a commented-out ALTER is not a statement anyone can run.
+for (const t of ['pred_market_edges', 'monitor_scores']) {
+  ok(`schema.sql carries the hand-run alter column for ${t}.price`,
+    new RegExp(`^\\s*alter table ${t}\\s+alter column price type numeric\\s*;`, 'm').test(schema),
+    'the median is not an integer and nothing applies this file — without this line the live column stays `integer` and keeps rejecting whole batches');
+}
+ok('schema.sql says the two alter column lines are run by hand',
+  /RUN THESE TWO LINES BY HAND/.test(schema),
+  'an ALTER with no instruction attached is indistinguishable from one already applied');
+// Both other writers of that median report what LANDED, not what they built,
+// and a run that landed nothing opts into the blocked channel (D80/D108).
+const sigSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/signal-engine/index.js'), 'utf8');
+const fadeSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-fade/index.js'), 'utf8');
+const predSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/pred-market/index.js'), 'utf8');
+for (const [name, src] of [['signal-engine', sigSrc], ['public-fade', fadeSrc], ['pred-market', predSrc]]) {
+  const code = codeOnly(src);
+  ok(`${name} counts what landed and reports a total loss as blocked`,
+    /written = 0, lost = 0;/.test(code)
+    && /logger\.error\(/.test(code)
+    && /blocked: written === 0 && lost > 0 \? BLOCKED_WRITE : undefined/.test(code)
+    && /const BLOCKED_WRITE = '[^0-9']+';/.test(code),
+    'a `catch { warn }` under a summary reporting the count BUILT is how nine lost runs read as nine successes; and the blocked reason must be a constant literal with no counts, or the orchestrator reads every run as a new fault (D80)');
+}
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);

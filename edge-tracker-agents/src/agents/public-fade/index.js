@@ -18,6 +18,10 @@ import { computeMarkets } from '../../games/lines.js';
 const PUBLIC_PCT = Number(process.env.FADE_PUBLIC_PCT) || 65;  // "heavy public" threshold
 const HANDLE_GAP = Number(process.env.FADE_HANDLE_GAP) || 8;   // bets% − handle% gap that signals money on the fade side
 const fadePersisted = new Set(); // game|market|fade already written to monitor_scores
+// Constant literal, no counts: the orchestrator treats a changed `blocked`
+// reason as a new fault and resets the streak (D80), so an interpolated count
+// would read `blockedRuns: 1` forever and churn reportDegraded every run.
+const BLOCKED_WRITE = 'monitor_scores rejects the batch — run the alter column in scripts/schema.sql';
 
 // The side to bet (opposite the public side), when we can name it.
 function fadeOf(game, market, side) {
@@ -115,9 +119,28 @@ async function run() {
       status: 'pending', scored_at: now,
     });
   }
-  if (gradeable.length) { try { await db.insert('monitor_scores', gradeable); } catch (e) { logger.warn('public-fade', `persist: ${e.message}`); } }
+  // `gradeable.length` is what was BUILT; `written` is what LANDED. PostgREST
+  // applies the batch as one statement, so one rejected row loses the whole
+  // run — and `catch { warn }` under a summary that still read "N new →
+  // grading" is why the half-point `price` median went unnoticed for nine runs
+  // on the sibling table (D104, the D99 idiom). "Nothing happened" and "I
+  // could not write it" must never look the same.
+  let written = 0, lost = 0;
+  if (gradeable.length) {
+    try { await db.insert('monitor_scores', gradeable); written = gradeable.length; }
+    catch (e) {
+      lost = gradeable.length;
+      logger.error('public-fade', `persist: ${lost}/${gradeable.length} rows lost — ${e.message}`);
+    }
+  }
 
-  return { summary: `${rows.length} fade spots (${gradeable.length} new → grading) · public ≥${PUBLIC_PCT}% + market tell`, data: { count: rows.length, graded: gradeable.length } };
+  return {
+    summary: `${rows.length} fade spots (${gradeable.length} new → grading: ${written} written${lost ? `, ${lost} lost` : ''}) · public ≥${PUBLIC_PCT}% + market tell`,
+    // A run that built fades and landed none of them succeeded while unable to
+    // do its job — D80's definition, so it goes down the blocked channel.
+    blocked: written === 0 && lost > 0 ? BLOCKED_WRITE : undefined,
+    data: { count: rows.length, graded: gradeable.length, written, lost },
+  };
 }
 
 export default { name: 'public-fade', run };

@@ -43,6 +43,10 @@ const STACK_DECAY = 0.6;   // correlated (same-id) signals decay: 1st full, then
 
 // Plays we've already alerted on this process lifetime.
 const alerted = new Set();
+// Constant literal, no counts: the orchestrator treats a changed `blocked`
+// reason as a new fault and resets the streak (D80), so an interpolated count
+// would read `blockedRuns: 1` forever and churn reportDegraded every run.
+const BLOCKED_WRITE = 'monitor_scores rejects the batch — run the alter column in scripts/schema.sql';
 
 const isPitcher = (pos) => /\b(P|SP|RP|LHP|RHP)\b/i.test(String(pos || ''));
 const sideEq = (a, b) => { const x = String(a || '').toLowerCase(), y = String(b || '').toLowerCase(); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
@@ -289,6 +293,13 @@ async function run() {
   // in-memory `alerted` set resets on restart, so ALSO dedupe against pending
   // rows already in the DB (prevents the duplicate-play inflation that broke the
   // CLV-record-vs-graded-play count).
+  // `newAlerts.length` is what was BUILT; `written` is what LANDED. PostgREST
+  // applies the batch as one statement, so one rejected row loses the whole
+  // run — and `catch { warn }` under a summary that still read "N new" is why
+  // the half-point `price` median went unnoticed for nine runs on the sibling
+  // table (D104, the D99 idiom). "Nothing happened" and "I could not write it"
+  // must never look the same.
+  let written = 0, lost = 0;
   if (newAlerts.length) {
     let pendingKeys = new Set();
     try {
@@ -299,7 +310,13 @@ async function run() {
     const dbRows = newAlerts
       .filter((p) => !pendingKeys.has(`${p.game_id}|${p.market}|${p.side}`))
       .map(({ commence_time, ...r }) => r);
-    if (dbRows.length) { try { await db.insert('monitor_scores', dbRows); } catch (e) { logger.warn('signal', e.message); } }
+    if (dbRows.length) {
+      try { await db.insert('monitor_scores', dbRows); written = dbRows.length; }
+      catch (e) {
+        lost = dbRows.length;
+        logger.error('signal', `play write: ${lost}/${dbRows.length} rows lost — ${e.message}`);
+      }
+    }
   }
   setPlays(plays);
 
@@ -317,9 +334,14 @@ async function run() {
   }
 
   return {
-    summary: `${plays.length} qualifying plays (${newAlerts.length} new) from ${games.length} games`,
+    summary: `${plays.length} qualifying plays (${newAlerts.length} new, ${written} written${lost ? `, ${lost} lost` : ''}) from ${games.length} games`,
     gamesMonitored: games.length,
-    data: { qualifying: plays.length, newAlerts: newAlerts.length, scored: rows.length },
+    // A run that built plays and landed none of them succeeded while unable to
+    // do its job — D80's definition, so it goes down the blocked channel. The
+    // reason is a CONSTANT literal: the orchestrator reads a changed reason as
+    // a new fault and restarts the streak, so counts stay in the summary.
+    blocked: written === 0 && lost > 0 ? BLOCKED_WRITE : undefined,
+    data: { qualifying: plays.length, newAlerts: newAlerts.length, scored: rows.length, written, lost },
   };
 }
 

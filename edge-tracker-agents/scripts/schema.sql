@@ -297,7 +297,14 @@ alter table monitor_scores add column if not exists observational boolean defaul
 alter table monitor_scores add column if not exists prop_signal_type text;
 -- Consensus price of the played side (mainly ML) so win P&L reflects the real
 -- payout instead of a hardcoded -110 (favorites were over-credited).
-alter table monitor_scores add column if not exists price integer;
+-- `numeric`, not `integer`: the value is the consensus MEDIAN across the books
+-- (src/games/lines.js), and a median averages the two middle prices when the
+-- book count is even — +120 / +131 is 125.5. See the owed `alter … type`
+-- near the end of this file; a database that applied the old `integer` form
+-- still has it and rejects the whole batch on a half-point consensus. The
+-- live "222.5" that caught this was an underdog ML median (+220/+225), not a
+-- totals line — the number alone cannot tell the two apart.
+alter table monitor_scores add column if not exists price numeric;
 -- Whether the play was issued in-game (live) vs pre-game.
 alter table monitor_scores add column if not exists live boolean default false;
 
@@ -773,7 +780,7 @@ create table if not exists pred_market_edges (
   matchup     text,
   market      text default 'ml',
   side        text,
-  price       integer,
+  price       numeric,                    -- consensus median ML; .5 on an even book count
   exch_prob   numeric,
   book_prob   numeric,
   edge_pct    numeric,
@@ -944,3 +951,34 @@ alter table line_movements add column if not exists baseline_source text;
 -- just because it hasn't fired yet.
 alter table api_usage alter column used type numeric;
 alter table api_usage alter column budget type numeric;
+-- ── Consensus price columns are numeric, not integer (D104) ──────────
+-- RUN THESE TWO LINES BY HAND in the Supabase SQL editor. Nothing applies this
+-- file, and a database created from the earlier version of it has both columns
+-- as `integer`. Until they run, the writes below keep failing.
+--
+-- Both columns receive `computeMarkets(g).ml.consensus*` — the MEDIAN moneyline
+-- across the books — and `median()` averages the two middle values when the
+-- book count is even (src/games/lines.js), so an even slate of +120 / +131
+-- yields 125.5. Postgres rejects that with `invalid input syntax for type
+-- integer: "125.5"`, and PostgREST applies a batch insert as ONE statement, so
+-- a single half-point consensus anywhere in the batch discards every row in the
+-- run. Observed live 2026-11-07 as `write|pred_market_edges` ×9.
+--
+-- The fix is the column type, not a round in the agent, and the reason is
+-- FIDELITY: a median across books is not a price any book quoted, and rounding
+-- it would store a quote that never existed. (The original rationale — "the row
+-- could no longer reproduce its own book_prob" — does not survive scrutiny:
+-- `book_prob` is devigged from BOTH sides' prices, so a row carrying only the
+-- played side's `price` cannot reproduce it either way.) Downstream consumers
+-- that need an integer quote should round at their own edge; `grading/index.js`
+-- pays ML win P&L at this notional median, which is strictly better than the
+-- row never persisting at all.
+--
+-- Writers: src/agents/pred-market/index.js (pred_market_edges),
+-- src/agents/signal-engine/index.js and src/agents/public-fade/index.js
+-- (monitor_scores) — the same median through all three. Also
+-- src/agents/nfl.live/nfl-live-index.js:132, which writes monitor_scores with
+-- `price: best?.price ?? e.price` — the fallback is the exchange edge's own
+-- `price`, i.e. that same median arriving second-hand via pred_market_edges.
+alter table pred_market_edges alter column price type numeric;
+alter table monitor_scores    alter column price type numeric;
