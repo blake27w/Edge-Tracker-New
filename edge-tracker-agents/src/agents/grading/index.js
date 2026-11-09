@@ -740,6 +740,8 @@ async function run() {
 }
 
 // Reused by the opportunity grader.
-export { ESPN_PATH, profitPerUnit, ymd, norm, fetchFinals, gradePlay };
+// pickFinal is exported for opp-grading, which flattens finals across its own
+// date window and had the identical wrong-game defect (D110). Both are pure.
+export { ESPN_PATH, profitPerUnit, ymd, norm, fetchFinals, gradePlay, pickFinal };
 
 export default { name: 'grading', run };
