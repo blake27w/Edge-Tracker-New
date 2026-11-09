@@ -26,8 +26,12 @@ create table if not exists api_usage (
   id          uuid primary key default gen_random_uuid(),
   provider    text not null default 'odds',
   month       text not null,                          -- YYYY-MM
-  used        integer not null default 0,
-  budget      integer not null default 0,
+  -- `used`/`budget` must be numeric, not integer: the odds/odds-season rows
+  -- write whole credits, but the `provider: 'claude'` row writes a dollar
+  -- cost rounded to 4 decimal places (e.g. 1.5845) — any nonzero Claude spend
+  -- made the whole upsert fail with "invalid input syntax for type integer".
+  used        numeric not null default 0,
+  budget      numeric not null default 0,
   by_sport    jsonb not null default '{}'::jsonb,
   updated_at  timestamptz not null default now(),
   unique (provider, month)
@@ -936,6 +940,17 @@ alter table clv_records add column if not exists close_source text;
 alter table line_movements add column if not exists gap_min         numeric;
 alter table line_movements add column if not exists baseline_source text;
 
+-- ── api_usage.used/budget: Claude's cost is a dollar figure, not a credit count ──
+-- RUN THESE TWO LINES BY HAND in the Supabase SQL editor (idempotent). Until
+-- they run, every nonzero Claude call fails its upsert with "invalid input
+-- syntax for type integer" (`used` was declared `integer` but recordClaudeUsage
+-- writes a cost rounded to 4 decimal places, e.g. 1.5845) — so Claude's cost
+-- has never persisted. `budget` is changed alongside it: the claude row always
+-- writes it `null` today, but the same fractional-dollar shape is coming for it
+-- too, and there is no reason to leave a second column with the identical bug
+-- just because it hasn't fired yet.
+alter table api_usage alter column used type numeric;
+alter table api_usage alter column budget type numeric;
 -- ── Consensus price columns are numeric, not integer (D104) ──────────
 -- RUN THESE TWO LINES BY HAND in the Supabase SQL editor. Nothing applies this
 -- file, and a database created from the earlier version of it has both columns
