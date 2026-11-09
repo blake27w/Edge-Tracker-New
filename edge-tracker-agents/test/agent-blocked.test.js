@@ -752,6 +752,14 @@ const OPTED_IN = ['public-splits', 'combat-weighin'];
 // nfl-line-move (D95) reports `blocked` when opening_lines is unreadable or the
 // hand-run DDL is missing. Driven in test/nfl-line-move.test.js, counted here.
 const OPTED_IN_ELSEWHERE = ['nfl-line-move'];
+// Opted in by D108, for a third kind of condition: a run whose entire write
+// batch was REJECTED. Each of these three builds rows and then loses all of
+// them to a single statement — PostgREST applies a batch as one — and reported
+// the count BUILT, which is how nine lost `pred_market_edges` runs read as nine
+// successes. `written === 0 && lost > 0` is "succeeded while unable to do its
+// job", D80's definition. Driven for real in test/pred-market-write-honesty.js
+// and test/monitor-scores-write-honesty.test.js, counted here.
+const OPTED_IN_ON_WRITE_LOSS = ['pred-market', 'signal-engine', 'public-fade'];
 
 test('with no key, both opted-in agents produce the blocked condition end to end', async () => {
   // The production incident, reproduced: hasClaude() false is exactly what an
@@ -857,6 +865,6 @@ test('no OTHER agent opts in by accident, so the alert surface is exactly the op
   // gap_min — are conditions a human must act on, routed through this same
   // channel rather than a bespoke one. It is not Claude-gated, so it is not in
   // OPTED_IN above. OPTED_IN_ELSEWHERE carries nfl-line-move (D95) the same way.
-  assert.deepEqual(optedIn.sort(), [...OPTED_IN, ...OPTED_IN_ELSEWHERE, 'sharp'].sort(),
+  assert.deepEqual(optedIn.sort(), [...OPTED_IN, ...OPTED_IN_ELSEWHERE, ...OPTED_IN_ON_WRITE_LOSS, 'sharp'].sort(),
     'exactly the agents the specs opted in — one more would be a new alert source');
 });

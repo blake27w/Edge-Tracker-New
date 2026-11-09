@@ -6423,7 +6423,13 @@ function renderAgentsContent(){
     } else {
       h+='<div class="card" style="padding:10px 13px;margin-bottom:8px;border-left:3px solid var(--wine)">';
       h+='<div style="font-size:11px;color:var(--wine);font-weight:600;margin-bottom:4px">🛡️ '+iss.length+' issue'+(iss.length>1?'s':'')+' detected</div>';
-      iss.slice(0,8).forEach(function(i){h+='<div style="font-size:10px;color:var(--cream);margin-top:2px">• <b>'+esc(i.label||i.agent)+'</b>: '+esc(i.detail||i.type)+'</div>';});
+      // Schema issues go first, then the cap applies. The 8-row cap drops in
+      // list order, and the watchdog pushes schema after agent/cost/gap issues,
+      // so a day with eight stale-agent lines hid the one line a human has to
+      // act on — unapplied DDL, which nothing else in the app reports (D106).
+      // Stable sort, so everything else keeps the order the watchdog chose.
+      var ordered=iss.slice().sort(function(a,b){return ((b&&b.type)==='schema'?1:0)-((a&&a.type)==='schema'?1:0);});
+      ordered.slice(0,8).forEach(function(i){h+='<div style="font-size:10px;color:var(--cream);margin-top:2px">• <b>'+esc(i.label||i.agent)+'</b>: '+esc(i.detail||i.type)+'</div>';});
       h+='</div>';
     }
   }
