@@ -293,27 +293,184 @@ ok('migrate.js knows about book_move_log', /book_move_log/.test(migrate));
 // The watchdog's schema probes are the ONE runtime tell for a table whose DDL
 // nobody ran (D69/D70) — and book_move_log, hand-run 2026-10-28, was not in
 // them. The list is hand-maintained, so this pins it structurally: every table
-// schema.sql declares must be probed, except the ones that pre-date the probe
-// (frozen below — do not add to it; add the probe instead).
+// either hand-run SQL file declares must be probed, except the ones that
+// pre-date the probe (frozen below — do not add to it; add the probe instead).
 const watchdogSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/watchdog/index.js'), 'utf8');
-ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+'\]/.test(watchdogSrc));
+// schema.sql is not the only file a human pastes into the Supabase editor.
+// migrate-research.sql carries 11 more `alter table … add column` statements
+// and the only declaration of the two closing-line tables, and reading only
+// schema.sql left every one of them outside this guard (D106).
+const migrateResearch = await readFile(join(root, 'edge-tracker-agents/scripts/migrate-research.sql'), 'utf8');
+const SQL_FILES = [['scripts/schema.sql', schema], ['scripts/migrate-research.sql', migrateResearch]];
+
+// One pass over the `alter table` statements of a file, in source order, so a
+// column that was added and later DROPPED or RENAMED AWAY leaves the required
+// set. Without that, a future `drop column` would demand a probe for a column
+// that no longer exists, forever — and the only way out would be deleting the
+// assertion. Forms accepted: a quoted or bare table name, `add column` with or
+// without `if not exists`. `alter column` is excluded on purpose: it changes a
+// column that already exists and creates nothing to probe.
+const DDL_COL_RE = /alter\s+table\s+(?:if\s+exists\s+)?"?(\w+)"?\s+(add|drop|rename)\s+column\s+(?:if\s+not\s+exists\s+|if\s+exists\s+)?"?(\w+)"?(?:\s+to\s+"?(\w+)"?)?/gi;
+const requiredColumns = (sql) => {
+  const req = new Set();
+  for (const [, table, verb, col, to] of sql.matchAll(DDL_COL_RE)) {
+    const key = `${table}.${col}`;
+    const v = verb.toLowerCase();
+    if (v === 'add') req.add(key);
+    else if (v === 'drop') req.delete(key);
+    else if (v === 'rename' && req.delete(key) && to) req.add(`${table}.${to}`);
+  }
+  return req;
+};
+const declaredTables = (sql) => [...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?"?(\w+)"?/gi)].map((m) => m[1]);
+
+// ── the parser's forms, on fixtures rather than on the live schema ──
+// Pinning these against the real files would make the assertions tautological
+// (they pass because today's schema happens not to use the form) and would
+// need a `drop column` added to production DDL to test retirement at all.
 {
-  const declared = [...schema.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
-  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
-  const probed = new Set([...probeBlock.matchAll(/\['(\w+)',/g)].map((m) => m[1]));
-  const PRE_PROBE = new Set([
-    'scan_runs', 'api_usage', 'opening_lines', 'line_movements', 'injury_updates', 'game_weather',
-    'sharp_signals', 'power_ratings', 'public_splits', 'schedule_spots', 'mlb_context', 'player_usage',
-    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
-    'tennis_matchups', 'subscribers', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
-    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
-    'nfl_inactives', 'nfl_line_moves', 'nfl_derivatives', 'nfl_pace',
-  ]);
-  const unprobed = declared.filter((t) => !probed.has(t) && !PRE_PROBE.has(t));
-  ok('every table schema.sql declares is probed by the watchdog', unprobed.length === 0,
-    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
-  ok('the probe parser saw the list', probed.size >= 14, `parsed ${probed.size} probed tables`);
+  const FIXTURE = `
+    alter table "public_splits" add column freeze boolean;
+    alter table public_splits add column if not exists pileon boolean;
+    alter table public_splits alter column pileon drop not null;
+    alter table public_splits add column "net_move" numeric;
+    alter table public_splits add column doomed text;
+    alter table public_splits drop column if exists doomed;
+    alter table public_splits add column old_name text;
+    alter table public_splits rename column old_name to new_name;
+  `;
+  const req = requiredColumns(FIXTURE);
+  ok('the DDL parser accepts a quoted table name', req.has('public_splits.freeze'),
+    '"public_splits" is valid SQL and reads as a different table to a bare-\\w+ regex');
+  ok('the DDL parser accepts add column without if not exists', req.has('public_splits.freeze')
+    && req.has('public_splits.net_move'), 'the shorter form is the one a human types by hand');
+  ok('the DDL parser accepts a quoted column name', req.has('public_splits.net_move'));
+  ok('the DDL parser still ignores alter column', ![...req].some((c) => /phone|not_null/.test(c))
+    && req.size === 4, `alter column creates nothing to probe — got ${[...req].join(', ')}`);
+  ok('a dropped column leaves the required set', !req.has('public_splits.doomed'),
+    'otherwise a future drop column demands a probe for a column that is gone, forever');
+  ok('a renamed column follows its new name', !req.has('public_splits.old_name')
+    && req.has('public_splits.new_name'));
+  const declared = declaredTables('create table if not exists "quoted_tbl" (id uuid);\ncreate table bare_tbl (id uuid);');
+  ok('the table parser accepts quoted and if-not-exists-less create table',
+    declared.includes('quoted_tbl') && declared.includes('bare_tbl'), declared.join(', '));
 }
+
+ok('the watchdog probes book_move_log', /\['book_move_log',\s*'\w+',\s*'table'\]/.test(watchdogSrc));
+{
+  const probeBlock = (watchdogSrc.match(/const probes = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const probedTables = new Set([...probeBlock.matchAll(/\['(\w+)',\s*'\w+',\s*'table'\]/g)].map((m) => m[1]));
+  const probedCols = new Set([...probeBlock.matchAll(/\['(\w+)',\s*'(\w+)',\s*'column'\]/g)].map((m) => `${m[1]}.${m[2]}`));
+  const PRE_PROBE = new Set([
+    'scan_runs', 'api_usage', 'opening_lines', 'injury_updates',
+    'sharp_signals', 'power_ratings', 'schedule_spots', 'mlb_context', 'player_usage',
+    'prop_snapshots', 'combat_markets', 'combat_news', 'alert_log', 'tennis_markets', 'tennis_fatigue',
+    'tennis_matchups', 'nfl_power_ratings', 'nfl_win_totals', 'nfl_schedule_spots',
+    'nfl_prop_baselines', 'public_fades', 'combat_derivatives', 'nfl_scoring', 'book_edge_log',
+    'nfl_inactives', 'nfl_derivatives', 'nfl_pace',
+  ]);
+  const allDeclared = SQL_FILES.flatMap(([, sql]) => declaredTables(sql));
+  const unprobed = allDeclared.filter((t) => !probedTables.has(t) && !PRE_PROBE.has(t));
+  ok('every table the hand-run SQL declares is probed by the watchdog', unprobed.length === 0,
+    `add a probe for: ${unprobed.join(', ')} — hand-run DDL is how this repo ships a table nobody created`);
+  ok('the closing-line tables are probed', probedTables.has('nfl_closing_lines')
+    && probedTables.has('ncaaf_closing_lines'), 'declared only in migrate-research.sql, which this check once did not read');
+  // The allowlist is the 2026-11-07 set minus the five tables that have since
+  // been probed. It is shrink-only on purpose: the subset assertion below
+  // forbids a phantom entry, and the ceiling forbids using it as an escape
+  // hatch for the assertion above. (No exact pin — legitimate consolidation
+  // shrinks it, and an exact pin would then fail for a non-defect.)
+  ok('the pre-probe allowlist holds nothing already probed',
+    ![...PRE_PROBE].some((t) => probedTables.has(t)),
+    'once a table is probed its allowlist entry is dead weight — remove it');
+  ok('the pre-probe allowlist names only declared tables',
+    [...PRE_PROBE].every((t) => allDeclared.includes(t)),
+    'a phantom entry silences a probe assertion for a table that does not exist');
+  ok('the pre-probe allowlist has not grown', PRE_PROBE.size <= 27,
+    `${PRE_PROBE.size} entries — do not grow it; add the probe to the watchdog instead`);
+
+  // Rule 1, and the regression that prompted it: retagging a table's existing
+  // entry `'column'` retires its table probe in silence. `monitor_scores`,
+  // `clv_records` and `line_snapshots` each lost theirs that way, so a dropped
+  // table would have been reported as five to seven missing columns and the
+  // create-table repair would never have been printed.
+  const colTables = new Set([...probedCols].map((c) => c.split('.')[0]));
+  const tablelessColProbes = [...colTables].filter((t) => !probedTables.has(t));
+  ok('every table with column probes also has a table probe', tablelessColProbes.length === 0,
+    `${tablelessColProbes.join(', ')} — without it a missing table reads as N missing columns`);
+  const dupTableProbes = [...probeBlock.matchAll(/\['(\w+)',\s*'\w+',\s*'table'\]/g)]
+    .map((m) => m[1]).filter((t, i, a) => a.indexOf(t) !== i);
+  ok('no table carries two table probes', dupTableProbes.length === 0, dupTableProbes.join(', '));
+
+  // The same pin one level down, and the one that was missing on 2026-11-07:
+  // every `alter table … add column` in either file is hand-run DDL, so every
+  // one of them can be skipped in Supabase and leave the code reading a column
+  // that is not there. `line_movements.gap_min` was skipped for 229 steam runs
+  // (D103). There is no allowlist here on purpose — the next forgotten column
+  // fails the build.
+  // Which files get parsed is itself the thing that failed on 2026-11-07: the
+  // cross-check read schema.sql only, so dropping a file from SQL_FILES makes
+  // every assertion below pass vacuously. This names the file by one of its
+  // columns, so the omission fails rather than going quiet.
+  const allRequired = new Set(SQL_FILES.flatMap(([, sql]) => [...requiredColumns(sql)]));
+  for (const c of ['research_notes.signals', 'nfl_closing_lines.over_odds', 'ncaaf_closing_lines.under_odds',
+    'line_movements.gap_min']) {
+    ok(`the cross-check requires ${c}`, allRequired.has(c),
+      'hand-run DDL lives in schema.sql AND migrate-research.sql — both must be parsed (D106)');
+  }
+
+  for (const [name, sql] of SQL_FILES) {
+    const req = requiredColumns(sql);
+    // Structural, not a count: if a file's `alter table` statements stop
+    // parsing, the subset assertion below passes vacuously and the whole
+    // guard goes quiet. This is what catches that.
+    ok(`the DDL parser found alter-table columns in ${name}`, req.size > 0,
+      'a vacuous subset check is indistinguishable from coverage');
+    const unprobedCols = [...req].filter((c) => !probedCols.has(c));
+    ok(`every hand-run column in ${name} is probed by the watchdog`, unprobedCols.length === 0,
+      `add a probe for: ${unprobedCols.join(', ')} — an unapplied alter table is invisible until a reader selects the column`);
+  }
+  ok('the line_movements columns from #136 are probed', probedCols.has('line_movements.gap_min')
+    && probedCols.has('line_movements.baseline_source'), 'the 229-blind-run column (D103)');
+  ok('the research_notes columns are probed', ['signals', 'player', 'stat']
+    .every((c) => probedCols.has(`research_notes.${c}`)),
+    'backtest selects signals inside a swallowing catch — blind forever if it is absent (D106)');
+}
+
+// The repair text has to be runnable. Pasting the whole of schema.sql into the
+// Supabase SQL editor cannot work: it runs a paste as one transaction and the
+// file carries a placeholder timestamp that deliberately does not cast
+// (schema.sql:728), so the paste aborts there and rolls everything back.
+ok('schema.sql still carries the uncastable placeholder',
+  /'YYYY-MM-DDTHH:MM:SSZ'/.test(schema), 'the reason the repair text says one block at a time');
+ok('the schema issue does not tell a human to run scripts/schema.sql',
+  !/run scripts\/schema\.sql/.test(codeOnly(watchdogSrc)),
+  'that paste aborts on the placeholder and rolls back every statement with it');
+ok('the schema issue names the create table block as the repair',
+  /create table block individually/.test(watchdogSrc));
+ok('the column issue names the one alter table line as the repair',
+  /alter table line individually/.test(watchdogSrc));
+
+// A missing table fails every column probe on it too, and the repair for all of
+// them is the one create table — so the table verdict must suppress its own
+// columns, or one absent table publishes N lines pointing at the wrong fix.
+ok('a missing table suppresses its own column probes',
+  /deadTables/.test(watchdogSrc) && /deadTables\.has\(p\[0\]\)/.test(watchdogSrc),
+  'opp_results absent used to publish three lines, ev_opportunities four');
+
+// Schema issues are the only watchdog lines whose repair is hand-run DDL, and
+// nothing else in the app reports them — so they must not be what the 8-row
+// cap on the dashboard banner drops first.
+{
+  const banner = (html.match(/Watchdog status banner[\s\S]{0,1600}/) || [''])[0];
+  ok('the watchdog banner sorts schema issues ahead of the cap',
+    /sort\(/.test(banner) && /'schema'/.test(banner) && /ordered\.slice\(0,8\)/.test(banner),
+    'eight stale-agent lines used to hide the one line a human has to act on');
+  ok('the watchdog banner still caps the list', /slice\(0,8\)/.test(banner));
+  ok('the watchdog banner still counts every issue, not the capped list',
+    /iss\.length\+'\s*issue'/.test(banner), 'the count is the honest total');
+}
+
 ok('data-health watches book_move_log by detected_at', /\['book_move_log',\s*'detected_at'\]/.test(dataHealth));
 ok('line_movements was NOT added to data-health', !/\['line_movements'/.test(server),
   'an unbounded count on that table is what already times out the page');
@@ -692,8 +849,9 @@ ok('both opted-in agents are driven on BOTH sides of their gate',
 ok('the opt-in set is asserted against the wired fleet, not just the opted-in files',
   /exactly the agents the specs opted in/.test(blockedTestSrc)
   && /OPTED_IN_ELSEWHERE = \['nfl-line-move'\]/.test(blockedTestSrc)
-  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
-  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95) and sharp (D94).');
+  && /OPTED_IN_ON_WRITE_LOSS = \['pred-market', 'signal-engine', 'public-fade'\]/.test(blockedTestSrc)
+  && /\[\.\.\.OPTED_IN, \.\.\.OPTED_IN_ELSEWHERE, \.\.\.OPTED_IN_ON_WRITE_LOSS, 'sharp'\]\.sort\(\)/.test(blockedTestSrc),
+  '~60 of the ~70 skip sites are benign and must stay silent; an unlisted opt-in is a policy change and notifyAll reaching zero recipients means false positives are the one cost this design cannot absorb. The set is the two Claude-gated agents, nfl-line-move (D95), sharp (D94), and the three median-price writers whose whole batch can be rejected at once (D108) — each named in its own list so adding one is a visible edit here.');
 
 // Pins the explicit decision, not an oversight: `public_splits: {today: 0}` is
 // equally true on an offseason morning and during a budget pause, so a
@@ -732,6 +890,7 @@ if (!hasSignal) {
     'JetBrains Mono rides the existing fonts link', 'the Signal view paints under one root',
     'HUD atmosphere and chamfers are scoped to the Signal root', 'every HUD rule is under the Signal root',
     'prefers-reduced-motion guards the sweep', 'chip sub-status falls back to a dash',
+    'render() stops the poll before the home dispatch (signal)', 'renderSignalView restarts the poll',
   ], SIGNAL_SPEC);
 } else {
 
@@ -746,6 +905,17 @@ ok('loadAgentsData onView includes signal', /onView\s*=[\s\S]{0,300}?homeTab===[
   'without it the live refresh never repaints the dashboard, so it shows the cached bag forever');
 ok('loadAgentsData rerender includes signal', /rerender\s*=[\s\S]{0,400}?homeTab===['"]signal['"]\s*\)\s*renderSignalContent\(\)/.test(html),
   "and it must come FIRST in the chain: 'signal' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
+// The unlisted eighth anchor: render() stops the agents poll unless homeTab is
+// agents|plays|rec, and the signal/splits view functions restart it AFTER that
+// stop. A reorder of render() that dispatched the tab before the stop would
+// kill the poll one line later, silently — the tab just stops being live.
+const renderFn = (html.match(/\nfunction render\(\)\{[\s\S]*?\n\}/) || [''])[0];
+const pollStopIdx = renderFn.search(/\)\s*stopAgentsPoll\(\);/), homeDispatchIdx = renderFn.indexOf('renderHomeScreen();');
+ok('render() stops the poll before the home dispatch (signal)', pollStopIdx >= 0 && homeDispatchIdx > pollStopIdx,
+  'stopAgentsPoll() must run BEFORE renderHomeScreen() in render(), or the view function\'s startAgentsPoll() is undone a line later');
+const sigViewFn = (html.match(/function renderSignalView\(\)\{[\s\S]*?\n\}/) || [''])[0];
+ok('renderSignalView restarts the poll', /startAgentsPoll\(\);/.test(sigViewFn),
+  'signal is not in render()\'s keep-list (agents|plays|rec), so renderSignalView must call startAgentsPoll() itself');
 
 const sigBlock = html.slice(html.indexOf('function renderSignalContent'), html.indexOf('function agentPlayKey'));
 
@@ -1121,6 +1291,270 @@ ok('clv-tracker reads `live` from monitor_scores and keeps in-play bets out of t
   && /const noClose = unmeasurable - noCloseCapture - noCommence;/.test(clvSrc)
   && /if \(noClose >= ALARM_MIN && !records\.length\)/.test(clvSrc),
   'an in-game play is rejected by capture() as unmeasurable (entry >= close) and, counted into the alarm population, blames snapshot coverage for a bet that could never have had a close (D98)');
+
+// ── 17. The post-tip polling tail ───────────────────────────────
+// The tail used to be an unconditional -3.5h, so the last tip of a night held
+// its whole league on the 4-minute STRIKE cadence until ~3.5h later — roughly
+// 136 fetches a night on the tail alone, almost all of them after every
+// consumer had stopped looking. It is now two windows, and the shape is what
+// is pinned here: the full -3.5h for a sport in `liveSports`, -POSTTIP_MIN
+// (45) for everything else. A rewrite that restores one unconditional window
+// fails this (D102).
+const oddsCode = codeOnly(oddsSrc);
+ok('the post-tip tail is two windows, not one',
+  /const FULL_TAIL_MIN = 3\.5 \* 60;/.test(oddsCode)
+  && /\(oddsApi\.liveSports \?\? \[\]\)\.includes\(sport\) \? FULL_TAIL_MS : postTipTailMin\(\) \* 60_000/.test(oddsCode)
+  && !/>= -3\.5 \* 3600_000/.test(oddsCode),
+  'a single unconditional -3.5h window is the thing this replaced; `?? []` is load-bearing because the odds tests mock the whole config object');
+ok('the tail length is read with intEnv, where 0 survives and blank does not',
+  /const POSTTIP_ASKED_MIN = intEnv\(env\.ODDS_POSTTIP_MIN, null\);/.test(cfgSrc)
+  && /postTipMin: ODDS_POSTTIP_MIN,/.test(cfgSrc)
+  && !/process\.env\.ODDS_POSTTIP_MIN/.test(oddsCode),
+  "hdrNum rejects '' but does not clean, so ODDS_POSTTIP_MIN='  ' coerced to a finite 0 and closed the post-tip window silently — and 0 is also a legitimate setting, which is why no Number()-family reader can read this knob (D107)");
+ok('and it is clamped to the full tail, which is where the bound lives',
+  /if \(asked <= FULL_TAIL_MIN\) return asked;/.test(oddsCode)
+  && /return FULL_TAIL_MIN;/.test(oddsCode),
+  'ODDS_POSTTIP_MIN=600 would give a NON-live sport a 10-hour fast tail — longer than the 3.5h this change removed — and `tier > fullTier` cannot report a tail wider than the full tail, so the demotion segment would read 0 while the spend went up');
+ok('ODDS_LIVE_SPORTS is normalised and validated like ODDS_SKIP_SPORTS',
+  /\.map\(\(s\) => s\.toUpperCase\(\)\);/.test(cfgSrc)
+  && /const ODDS_LIVE_SPORTS = ODDS_LIVE_SPORTS_ASKED\.filter\(\(s\) => !!SPORTS\[s\]\);/.test(cfgSrc),
+  "it is compared against g.sport, which is upper-case, so `ODDS_LIVE_SPORTS=nfl` bought nothing while reading as configured — and an unknown name bought nothing with no way to notice");
+ok('the demotion is reported in both units, with the tier it landed at',
+  /\$\{postTipTail\.size\} sports post-tip tail/.test(oddsCode)
+  && /postTipTail: \[\.\.\.postTipTail\.keys\(\)\]/.test(oddsCode)
+  && /postTipTailTier: Object\.fromEntries\(postTipTail\)/.test(oddsCode)
+  && /sportIntervalMin\(sport, mult, postTipTail\)/.test(oddsCode)
+  && /if \(lowered && tier > fullTier\) lowered\.set\(sport, tierLabel\(tier, mult\)\);/.test(oddsCode),
+  'a cadence that halved itself silently is indistinguishable from one nobody changed; the comparison against the OLD tier is what makes the report mean "this rule did it" rather than "this sport is idle", and the tier label is what makes "how slow" readable without multiplying four knobs by an unseen governor');
+ok('the NEAR band carries no post-tip test, because it cannot have one',
+  !/dt <= 90 \* 60_000\) \{\s*\n\s*if \(dt >= -tail/.test(oddsCode)
+  && /\} else if \(dt <= 90 \* 60_000\) \{\s*\n\s*tier = Math\.min\(tier, 1\); fullTier = Math\.min\(fullTier, 1\);/.test(oddsCode),
+  'the three dt bands are mutually exclusive, so dt is positive in this one — the two tail guards it carried were vacuously true and read as if NEAR had a post-tip window of its own');
+ok('sharp reports post-tip blindness as its own verdict, never as 0 steam',
+  /function postTipBlindness\(rows, eligible, slate, now\)/.test(sharpSrc)
+  && /started game\$\{postTip\.games === 1 \? '' : 's'\} beyond steam bound/.test(sharpSrc)
+  && /postTipBeyondBound: postTip\.rows, postTipBlindGames: postTip\.games,/.test(sharpSrc)
+  && /postTipBeyondBound: 0, postTipBlindGames: 0,/.test(sharpSrc),
+  'past the tail every row a started non-live game produces is beyond STEAM_MAX_GAP_MIN, so three co-directional books an hour after tip printed `0 steam · 3 rows / 0 gap-eligible` — the sentence a QUIET market prints (D107)');
+// The predicate mirror. config decides whether NFL keeps the full tail; the
+// nfl.live agent decides whether anything reads it. bool() accepts 1/yes/on
+// and the agent does not, so bool() here buys the tail for a disabled consumer.
+const nflLiveSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/nfl.live/nfl-live-index.js'), 'utf8');
+const NFL_LIVE_PREDICATE = /String\((?:process\.)?env\.NFL_LIVE \|\| ''\)\.toLowerCase\(\) === 'true'/;
+ok('config mirrors the nfl.live enable predicate exactly',
+  NFL_LIVE_PREDICATE.test(codeOnly(nflLiveSrc)) && NFL_LIVE_PREDICATE.test(codeOnly(cfgSrc))
+  && !/NFL_LIVE_ON = bool\(/.test(cfgSrc)
+  && /list\(env\.ODDS_LIVE_SPORTS, NFL_LIVE_ON \? \['NFL'\] : \[\]\)/.test(cfgSrc),
+  'NFL_LIVE=1 must leave BOTH off — bool() would enable 3h/night of polling for a consumer that stays disabled');
+ok('both tail knobs are documented for the operator',
+  /ODDS_LIVE_SPORTS/.test(envExample) && /ODDS_POSTTIP_MIN/.test(envExample),
+  'the live config wins over the repo (D92), so an undocumented knob is an unusable one');
+
+// ── 18. The owed `alter column` statements for the median price (D104/D108) ──
+// `price` holds a consensus MEDIAN, which lands on a half whenever the book
+// count is even, and both columns were declared `integer`. PostgREST applies a
+// batch insert as ONE statement, so a single half-point consensus discarded
+// every row in the run — nine times on 2026-11-07, each reported as a success.
+// Changing the `create` / `add column` declarations fixes a database created
+// from scratch; a database that already applied the old file keeps the integer
+// column, and NOTHING in this repo applies schema.sql (D69/D70). So the two
+// `alter column` lines ARE the fix for production, and deleting one leaves a
+// database broken with no trace in the repo at all. Asserted on the raw file,
+// not codeOnly(): a commented-out ALTER is not a statement anyone can run.
+for (const t of ['pred_market_edges', 'monitor_scores']) {
+  ok(`schema.sql carries the hand-run alter column for ${t}.price`,
+    new RegExp(`^\\s*alter table ${t}\\s+alter column price type numeric\\s*;`, 'm').test(schema),
+    'the median is not an integer and nothing applies this file — without this line the live column stays `integer` and keeps rejecting whole batches');
+}
+ok('schema.sql says the two alter column lines are run by hand',
+  /RUN THESE TWO LINES BY HAND/.test(schema),
+  'an ALTER with no instruction attached is indistinguishable from one already applied');
+// Both other writers of that median report what LANDED, not what they built,
+// and a run that landed nothing opts into the blocked channel (D80/D108).
+const sigSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/signal-engine/index.js'), 'utf8');
+const fadeSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/public-fade/index.js'), 'utf8');
+const predSrc = await readFile(join(root, 'edge-tracker-agents/src/agents/pred-market/index.js'), 'utf8');
+for (const [name, src] of [['signal-engine', sigSrc], ['public-fade', fadeSrc], ['pred-market', predSrc]]) {
+  const code = codeOnly(src);
+  ok(`${name} counts what landed and reports a total loss as blocked`,
+    /written = 0, lost = 0;/.test(code)
+    && /logger\.error\(/.test(code)
+    && /blocked: written === 0 && lost > 0 \? BLOCKED_WRITE : undefined/.test(code)
+    && /const BLOCKED_WRITE = '[^0-9']+';/.test(code),
+    'a `catch { warn }` under a summary reporting the count BUILT is how nine lost runs read as nine successes; and the blocked reason must be a constant literal with no counts, or the orchestrator reads every run as a new fault (D80)');
+}
+
+// ── 19. Splits tab (📊 Splits home tab) ──────────────────────────
+// A ninth home tab registered at the SAME seven anchors as Signal (§14): a
+// missed anchor is a tile that renders nothing, or a tab that stops being
+// live. The join is server-side (games/splits.js); the PWA reads the bag it
+// already has — zero fetches. Percentages are market-wide and NEVER keyed by
+// book: the switcher changes lines and movement chips only, and says so.
+const SPLITS_SPEC = 'awaiting the splits tab (docs/specs/splits-tab.md)';
+const hasSplitsTab = /function\s+renderSplitsContent\s*\(/.test(html);
+if (!hasSplitsTab) {
+  skipAll([
+    'HOME_TABS has a splits tile', 'renderHomeScreen dispatches splits', 'renderSplitsView is defined',
+    'pagedots _ord includes splits', 'swipe order includes splits', 'loadAgentsData onView includes splits',
+    'loadAgentsData rerender includes splits', 'splits block found', 'no fetch in the splits block',
+    'the splits board is not duplicated', 'off is read from the agent, not inferred', 'the off copy names the agent',
+    'the stale bound follows the 4-hour cadence', 'a null percentage is never 0',
+    'the complement is only derived from a reading', 'backward compatible field access (splits)',
+    'per-book table scrolls in its own box', 'no sideways page scroll', 'percentages are not keyed by book',
+    'the market-wide label is tied to a book selection', 'a per-book opener never falls back to consensus',
+    'book selection is stored without cloud sync', 'the book row scrolls in its own box',
+    'buildSplits lives in games/splits.js', 'the splits DB fallback is one bounded select', '/splits books carry a key',
+    'line-move publishes openers', 'book-move per-book openers are bounded', 'the route is covered by a test',
+    'render() stops the poll before the home dispatch (splits)', 'renderSplitsView restarts the poll',
+    'a failed DB fallback read is a FAILED state, not nodata', 'the strip says which path produced the rows',
+    'open details and the chip scroll survive the poll repaint', 'a card says when its own batch is older than the board',
+    'the off banner quotes blockedReason verbatim, escaped once', 'the market-wide label is escaped once',
+    'a departed book falls back to consensus for the paint', 'the book selection initialiser is guarded',
+    'the renderer and the day are covered by tests',
+  ], SPLITS_SPEC);
+} else {
+  // The seven anchors (§14's regexes with the id swapped).
+  ok('HOME_TABS has a splits tile', /HOME_TABS[\s\S]{0,1000}?id:\s*'splits'/.test(html));
+  ok('renderHomeScreen dispatches splits', /homeTab===['"]splits['"]\s*\)\s*renderSplitsView\(\)/.test(html));
+  ok('renderSplitsView is defined', /function\s+renderSplitsView\s*\(/.test(html));
+  ok('pagedots _ord includes splits', /_ord\s*=\s*\[[^\]]*'splits'/.test(html));
+  ok('swipe order includes splits', /\border\s*=\s*\[[^\]]*'splits'/.test(html));
+  ok('loadAgentsData onView includes splits', /onView\s*=[\s\S]{0,300}?homeTab===['"]splits['"]/.test(html),
+    'without it the live refresh never repaints the tab, so it shows the cached bag forever');
+  ok('loadAgentsData rerender includes splits',
+    /rerender\s*=[\s\S]{0,200}?homeTab===['"]signal['"]\s*\)\s*renderSignalContent\(\);else if\(state\.homeTab===['"]splits['"]\s*\)\s*renderSplitsContent\(\);else if\(state\.homeTab===['"]rec['"]/.test(html),
+    "the splits branch must sit AFTER signal and BEFORE rec: 'splits' is not 'rec', so the else-arm would repaint the Agents tab into #sport-selector instead");
+
+  // The eighth anchor (see §14): the poll-start site.
+  const spRenderFn = (html.match(/\nfunction render\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  const spStopIdx = spRenderFn.search(/\)\s*stopAgentsPoll\(\);/), spDispatchIdx = spRenderFn.indexOf('renderHomeScreen();');
+  ok('render() stops the poll before the home dispatch (splits)', spStopIdx >= 0 && spDispatchIdx > spStopIdx,
+    'stopAgentsPoll() must run BEFORE renderHomeScreen() in render(), or renderSplitsView\'s startAgentsPoll() is undone a line later');
+  const spViewFn = (html.match(/function renderSplitsView\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  ok('renderSplitsView restarts the poll', /startAgentsPoll\(\);/.test(spViewFn),
+    'splits is not in render()\'s keep-list (agents|plays|rec), so the view function must call startAgentsPoll() itself');
+
+  const spBlock = html.slice(html.indexOf('function renderSplitsView'), html.indexOf('function renderSplitsBoard'));
+  const spCode = codeOnly(spBlock);
+  ok('splits block found', spBlock.length > 2000, `${spBlock.length} chars`);
+  // House rule 2: the route publishing source:null + db_error is "I could not
+  // read it", and must never paint as "Feed answered. 0 rows".
+  // Run the real splitsFacts() (plus the sigState it calls) against a stubbed
+  // state rather than grep its text: a regex cannot tell `if(dbFail)` from
+  // `if(false&&dbFail)`, and this is the house rule the finding was about.
+  const factsFn = (spCode.match(/function splitsFacts\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  const sigStateFn = (codeOnly(html).match(/function sigState\([^)]*\)\{[\s\S]*?\n\}/) || [''])[0];
+  const runFacts = (meta, ok_ = true) => {
+    const state = {
+      agentsSplitsBoard: { games: [{ game_id: 'g1', sport: 'NBA', splits: [], books: [{ key: 'draftkings', book: 'DraftKings' }] }], splits_meta: meta },
+      sigSrc: { splits: { ok: ok_, at: Date.now(), okAt: Date.now() } }, agentsHealth: [], agentsSystem: null, splitsSport: 'all', splitsBook: 'consensus',
+    };
+    try {
+      return new Function('state', `var SPLITS_BOUND=28800000,SPLITS_CONSENSUS='consensus';${sigStateFn}\n${factsFn}\nreturn splitsFacts();`)(state);
+    } catch (e) { return { st: `threw: ${e.message}` }; }
+  };
+  const dbFailSt = runFacts({ source: null, at: null, rows: 0, offslate: 0, db_error: true }).st;
+  const dbOkSt = runFacts({ source: 'db', at: null, rows: 0, offslate: 0, db_error: false }).st;
+  const routeFailSt = runFacts({ source: null, at: null, rows: 0, offslate: 0, db_error: true }, false).st;
+  ok('a failed DB fallback read is a FAILED state, not nodata',
+    factsFn.length > 0 && sigStateFn.length > 0 && dbFailSt === 'failed' && dbOkSt === 'nodata' && routeFailSt === 'failed'
+    && /public_splits fallback read failed/.test(spCode),
+    `source:null + db_error → ${dbFailSt} (want failed); source:db + 0 rows → ${dbOkSt} (want nodata); banner names the DB read over whatever is cached`);
+  ok('the strip says which path produced the rows', /source <b[^>]*>'\+srcWord\+'<\/b>/.test(spCode) && /meta\.source==='memory'\|\|meta\.source==='db'/.test(spCode),
+    'memory / db / none — the spec promised it on the phone, not only in the JSON');
+  ok('open details and the chip scroll survive the poll repaint',
+    /data-game="'\+esc\(g\.game_id/.test(spCode) && /splitsDomSave\(host\);\s*host\.innerHTML=h;\s*splitsDomRestore\(host\);/.test(spCode)
+    && /\.open\b/.test(spCode) && /scrollLeft/.test(spCode),
+    'rerender() replaces innerHTML every 30 s: open <details> per game_id and .sp-books scrollLeft are read before the paint and put back after');
+  ok('a card says when its own batch is older than the board', /g\.splits_at&&boardAt/.test(spCode) && /AGENT_STALE_MS\['public-splits'\]/.test(spCode),
+    'the DB fallback keeps each game\'s newest batch across ~5 batches; a per-card age shows when it trails the board\'s `at` by more than one cadence');
+  ok('no fetch in the splits block', !/fetch\(/.test(spBlock),
+    'the tab reads state.agentsSplitsBoard / agentsBookMoves / agentsHealth from the bag loadAgentsData already fills');
+  ok('the splits board is not duplicated', /function renderSplitsBoard\(\)\{return '<div class="sighud">'\+renderSplitsBody\(\)/.test(html),
+    'the Plays → 📊 Splits chip delegates to the one renderer (sigEpisodeCard pattern, D83)');
+  ok('off is read from the agent, not inferred', /blockedReason/.test(spBlock) && /public-splits\|blocked/.test(spBlock),
+    'the durable /health field (D80) or the degraded key — never an empty array');
+  ok('the off copy names the agent', /NOT FIRING — public-splits is blocked/.test(spBlock));
+  ok('the stale bound follows the 4-hour cadence', /'public-splits':14400000/.test(html) && /8h \(2× the 4-hour/.test(spBlock),
+    'the banner copy must say the bound it uses');
+  ok('a null percentage is never 0',
+    !/(bets_pct|handle_pct)\s*\|\|\s*0/.test(spCode) && !/Number\((s|r|g)\.(bets_pct|handle_pct)/.test(spCode),
+    'a missing percentage renders — (D96/D97), never 0%');
+  const hundreds = spCode.match(/100-/g) || [];
+  ok('the complement is only derived from a reading', hundreds.length > 0 && /pct!=null\?100-/.test(spCode)
+    && (spCode.match(/!=null\?100-/g) || []).length === hundreds.length,
+    'the second side is 100 − the reported side, computed only when the reported side is non-null');
+  ok('backward compatible field access (splits)', !/state\.agents\w+\.(length|forEach|map|slice)\b/.test(spBlock),
+    'every state.agents* read must go through (x||[]) — an old cached bag has none of these fields');
+  ok('per-book table scrolls in its own box', /sigtbl-wrap/.test(spBlock) && /<details/.test(spBlock));
+  const spCss = (html.match(/\/\* 📊 Splits cards[\s\S]*?\.sighud \.sp-foot\{[^}]*\}/) || [''])[0];
+  const spOverflow = [...spCss.matchAll(/\.sighud ([^{]+)\{[^}]*overflow-x/g)].map((m) => m[1].trim());
+  ok('no sideways page scroll', spCss.length > 0 && spOverflow.length > 0 && spOverflow.every((sel) => /\.sp-books$|\.sigtbl-wrap$/.test(sel)),
+    `overflow-x only inside .sp-books / .sigtbl-wrap rules; found on: ${spOverflow.join(', ') || 'none'}`);
+
+  // The switcher: lines and movement switch by book; percentages never do.
+  const fnBody = (name) => (spCode.match(new RegExp(`function ${name}\\([^)]*\\)\\{[\\s\\S]*?\\n\\}`)) || [''])[0];
+  const linesFn = fnBody('splitsLines'), movesFn = fnBody('splitsMoves');
+  ok('percentages are not keyed by book',
+    /splitsPair\(/.test(spCode) && !/splitsPair\([^)]*,[^)]*,/.test(spCode)
+    && linesFn.length > 0 && movesFn.length > 0 && !/bets_pct|handle_pct/.test(linesFn) && !/bets_pct|handle_pct/.test(movesFn),
+    'splitsPair takes no book; splitsLines/splitsMoves never touch a percentage (D53/D22)');
+  ok('the market-wide label is tied to a book selection', /book!==SPLITS_CONSENSUS[^;]*splits are market-wide/.test(spCode),
+    "the label renders if and only if a book is selected: \"splits are market-wide — <Label>'s own counts are not captured\"");
+  const openIdx = linesFn.search(/book===SPLITS_CONSENSUS\?[^:]*g\.open/);
+  ok('a per-book opener never falls back to consensus',
+    openIdx >= 0 && !/g\.open/.test(linesFn.slice(openIdx + linesFn.slice(openIdx).indexOf('g.open') + 6)),
+    'inside splitsLines, g.open appears only in the consensus branch — a missing per-book opener is —, never the consensus value');
+  const bookStore = (spCode.match(/function splitsSetBook[\s\S]*?\n\}/) || [''])[0];
+  ok('book selection is stored without cloud sync',
+    /try\{localStorage\.setItem\('et_splitsBook'/.test(bookStore) && !/\bsave\(/.test(bookStore),
+    'raw localStorage in a try/catch — save() also queues a cloud sync');
+  ok('the book row scrolls in its own box', /\.sighud \.sp-books\{[^}]*overflow-x:auto/.test(html));
+
+  // Backend: the join lives in a testable module; the DB fallback is one bounded select.
+  const splitsRouteSrc = await readFile(join(root, 'edge-tracker-agents/src/games/splits.js'), 'utf8').catch(() => '');
+  const splitsRouteCode = codeOnly(splitsRouteSrc);
+  ok('buildSplits lives in games/splits.js', /import \{ buildSplits \} from '\.\/games\/splits\.js'/.test(server) && !/function buildSplits/.test(server),
+    'src/index.js runs main() on import, so the join must live where node:test can import it');
+  ok('the splits DB fallback is one bounded select',
+    (splitsRouteCode.match(/db\w*\.select\(/g) || []).length === 1 && /limit: SPLITS_DB_LIMIT/.test(splitsRouteCode)
+    && /ascending: false/.test(splitsRouteCode) && /SPLITS_DB_TTL_MS/.test(splitsRouteCode) && !/fetch\(/.test(splitsRouteCode),
+    'newest 300 by fetched_at desc behind a 10-min cache, used only when memory is empty; polled every 30 s');
+  ok('/splits books carry a key', /key:\s*bk/.test(splitsRouteCode), 'the PWA joins per-book lines to bookMoves by key; `book` stays the label');
+  ok('line-move publishes openers', /const openers = Object\.fromEntries\(games\.map/.test(lmCode) && /history_capped: historyCapped, openers,/.test(lmCode),
+    'the consensus opener comes from the line-move slot, never a per-request opening_lines read');
+  const openersFn = (codeOnly(bmSrc).match(/async function openersFor[\s\S]*?\n\}/) || [''])[0];
+  ok('book-move per-book openers are bounded',
+    /OPEN_BOOK_LIMIT = 60/.test(bmSrc) && openersFn.length > 0 && /ascending:\s*true/.test(openersFn)
+    && !/\bin:\s*\{/.test(openersFn) && !/\bgte:/.test(openersFn) && /openerMemo/.test(openersFn)
+    && !/fetched_at === rows\[0\]\.fetched_at/.test(openersFn) && /Object\.keys\(books\)\.length/.test(openersFn),
+    'one asc select per game × market on the index prefix, limit 60 (a chunk-split first run, D99), each book\'s OWN oldest row — never keyed on stamp equality — and only a non-empty result memoised; `book-move spends nothing` (§10) still holds');
+  // Escaping happens ONCE, inside sigBanner (esc(txt)) — the off text is built
+  // from the raw reason; an esc() in the block would double it, none would
+  // leave it raw if sigBanner ever stopped escaping.
+  const sigBannerFn = (codeOnly(html).match(/function sigBanner\([^)]*\)\{[\s\S]*?\n\}/) || [''])[0];
+  ok('the off banner quotes blockedReason verbatim, escaped once',
+    /sigBanner\('off',\{text:'NOT FIRING — public-splits is blocked: "'\+r\.reason\+'"/.test(spCode) && !/esc\(r\.reason\)/.test(spCode)
+    && /return '<div class="sh-banner '\+kind\+'">'\+esc\(txt\)\+'<\/div>'/.test(sigBannerFn),
+    'the reason is passed raw into sigBanner, which escapes the whole text once');
+  ok('the market-wide label is escaped once', /splits are market-wide — '\+esc\(bookLabel\)\+'/.test(spCode) && !/esc\(esc\(/.test(spCode));
+  ok('a departed book falls back to consensus for the paint', /var book=seen\[state\.splitsBook\]\?state\.splitsBook:SPLITS_CONSENSUS/.test(spCode),
+    'a selected book missing from the (sport-filtered) slate paints as Consensus; the stored preference is left alone');
+  ok('the book selection initialiser is guarded',
+    /splitsBook:\(function\(\)\{try\{return JSON\.parse\(localStorage\.getItem\('et_splitsBook'\)\)\|\|'consensus'\}catch\(e\)\{return 'consensus'\}\}\)\(\)/.test(html),
+    'private mode throws on getItem; a raw or empty value parses to consensus');
+  const renderTest = await readFile(join(root, 'edge-tracker-agents/test/splits-render.test.js'), 'utf8').catch(() => '');
+  const dayTest = await readFile(join(root, 'edge-tracker-agents/test/splits-day.test.js'), 'utf8').catch(() => '');
+  ok('the renderer and the day are covered by tests',
+    /byte-identical/.test(renderTest) && /escaped once/.test(renderTest) && /splitsDomSave\(null\)/.test(renderTest)
+    && /source, 'db'\)/.test(dayTest) && /snapshotsLost/.test(dayTest) && /mock\.timers\.enable/.test(dayTest),
+    'the honesty invariant runs through the real index.html functions in a vm; the day runs through the real agents and route on a pinned clock');
+  const routeTest = await readFile(join(root, 'edge-tracker-agents/test/splits-route.test.js'), 'utf8').catch(() => '');
+  const openersTest = await readFile(join(root, 'edge-tracker-agents/test/book-move-openers.test.js'), 'utf8').catch(() => '');
+  ok('the route is covered by a test',
+    /source==='db'/.test(routeTest) && /never 0/.test(routeTest) && /ascending===true/.test(openersTest) && /never 0/.test(openersTest),
+    'the DB path, the null-is-never-0 rule and the asc query shape each have a test');
+}
 
 const tail = skips.length ? `, ${skips.length} skipped` : '';
 console.log(`\n${fails.length ? '✗' : '✓'} smoke: ${pass} passed, ${fails.length} failed${tail}`);

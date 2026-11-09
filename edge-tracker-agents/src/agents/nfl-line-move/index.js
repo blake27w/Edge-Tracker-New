@@ -268,9 +268,18 @@ async function run() {
   const bySport = Object.entries(histBySport).map(([sport, rows]) => ({ sport, ...agg(rows) })).sort((a, b) => b.n - a.n);
 
   const sports = [...new Set(games.map((g) => g.sport))];
+  // Consensus openers for EVERY slate game, started or not (`live` drops the
+  // started ones): the /splits route joins these to the public percentages so
+  // it never has to read opening_lines per request. A missing opener is null,
+  // never 0.
+  const openers = Object.fromEntries(games.map((g) => [g.game_id, {
+    total: r1(openMap.get(`${g.game_id}|total`) ?? null),
+    spread: r1(openMap.get(`${g.game_id}|spread`) ?? null),
+    ml: openMap.get(`${g.game_id}|ml`) ?? null,
+  }]));
   setNflLineMove({
     updated: new Date().toISOString(), live: capPerSport(live, LIVE_PER_SPORT), agg: overall, bySport,
-    history_from: overall.from, history_days: overall.days, history_capped: historyCapped,
+    history_from: overall.from, history_days: overall.days, history_capped: historyCapped, openers,
   });
   const out = {
     summary: `${live.length} games · ${sports.length} sports (${fresh.length - dropped.length} new closes${dropped.length ? `, ${dropped.length} dropped — schema` : ''}) · ${overall.n} in history`,

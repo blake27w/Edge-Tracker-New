@@ -77,6 +77,33 @@ const FOOTBALL = new Set(['NFL', 'NCAAF']);
 const FIXED_RUNLINE = new Set(['MLB', 'NHL']);
 const MARKETS = ['spreads', 'totals'];
 
+// ── Per-book openers (for the Splits tab's book switcher) ────────
+// A book's opener is THAT BOOK'S OWN oldest line_snapshots row on file for
+// that game × market — independent of batch. `fetched_at` is `default now()`
+// per INSERT statement, and the odds agent writes a run in SNAPSHOT_CHUNK
+// chunks (D99), each with its own stamp (retried chunks later still): a game's
+// rows are contiguous, so a chunk boundary routinely splits one game × market
+// across two stamps. Keying "the first batch" on stamp equality would then
+// drop every book after the boundary — and memoise it absent until kickoff.
+// One select per pair, `match {game_id, market}` on the applied
+// line_snapshots_game_idx prefix, fetched_at ASC (a backward scan of the desc
+// index; no gte, no in:), limit OPEN_BOOK_LIMIT: one run is ≤ 22 rows per
+// market (11 books × 2 sides), so 60 holds the whole first run even when it is
+// chunk-split, plus most of a second run for a book that posts late. h2h is
+// included because the ML row needs an opener even though MARKETS excludes it
+// from scoring. Memoised per game for the process lifetime (an opener never
+// changes — the D75 property), evicted at kickoff + OPEN_KEEP_MS, so the
+// steady-state cost is new games only — but ONLY a non-empty result is
+// memoised: a lost chunk (the D68/D99 timeout path) leaves 0 rows at this
+// run, and a twice-failed chunk does not land later (D99) — it is the NEXT odds run's rows that arrive, so an empty read is retried rather than memoised. Known residual: a partially landed first run IS memoised per game, so books in a lost tail chunk read `—` until kickoff+6h; per-book re-reads are a follow-up. A book absent from the whole
+// window is ABSENT from the object — never 0, never the consensus opener.
+const OPEN_BOOK_LIMIT = 60;
+const OPEN_MARKETS = ['spreads', 'totals', 'h2h'];
+const OPEN_KEEP_MS = 6 * 3600_000;
+const OPEN_FIELD = { spreads: 'spread', totals: 'total', h2h: 'ml' };
+const openerMemo = new Map(); // game_id → { at: commence_ms, books: { [book]: {spread?, total?, ml?} } }
+export function __resetOpeners() { openerMemo.clear(); }
+
 const r1 = (n) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 10) / 10);
 const pct = (num, den) => (den ? Math.round((num / den) * 1000) / 10 : null);
 const sur = (t) => String(t || '').toLowerCase().split(' ').pop();
@@ -181,6 +208,70 @@ function canonicalSide(g, market, sides) {
     return !!home && (x === home || x.includes(home) || (!!hs && x === hs));
   }) || sorted[0];
 }
+
+// A number, or a non-blank numeric string (Postgres numerics arrive as
+// strings), else null — type-check before coercing (house rule, D79).
+function numOrNull(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// h2h has no "canonical side with a fallback": the ML opener is the HOME
+// price or nothing. canonicalSide's `|| sorted[0]` would publish the away
+// price as the home opener when the feed label does not match.
+function homeSide(g, sides) {
+  const home = String(g.home || '').toLowerCase();
+  const hs = sur(g.home);
+  return sides.find((s) => { const x = String(s).toLowerCase(); return !!home && (x === home || x.includes(home) || (!!hs && x === hs)); }) || null;
+}
+
+// First-on-file line per book for one game, over OPEN_MARKETS. Returns
+// { books, selects, failed }: a read failure writes NO memo for the game this
+// run (it is retried next run) and is counted by the caller; an EMPTY result
+// writes no memo either (the rows may still be landing — D99).
+async function openersFor(g) {
+  const hit = openerMemo.get(g.game_id);
+  if (hit) return { books: hit.books, selects: 0, failed: false };
+  const books = {};
+  let selects = 0;
+  for (const market of OPEN_MARKETS) {
+    let rows;
+    try {
+      selects++;
+      rows = await db.select('line_snapshots', 'book,market,side,line,price,fetched_at', {
+        match: { game_id: g.game_id, market },
+        order: { column: 'fetched_at', ascending: true },
+        limit: OPEN_BOOK_LIMIT,
+      });
+    } catch (e) {
+      logger.warn('book-move', `opener read failed for ${g.game_id}/${market}: ${e.message}`);
+      return { books: null, selects, failed: true };
+    }
+    if (!rows.length) continue;
+    const sides = [...new Set(rows.map((r) => r && r.side).filter(Boolean))];
+    const side = market === 'h2h' ? homeSide(g, sides) : canonicalSide(g, market, sides);
+    if (!side) continue;
+    // Rows are oldest-first: the first usable row PER BOOK is that book's
+    // opener, whatever stamp it carries (a chunk-split run has two).
+    const field = OPEN_FIELD[market];
+    for (const r of rows) {
+      if (!r || r.side !== side || !r.book) continue;
+      if (books[r.book] && field in books[r.book]) continue; // already have this book's oldest
+      const n = numOrNull(market === 'h2h' ? r.price : r.line);
+      if (n == null) continue; // a blank line is no opener, not a 0 opener
+      (books[r.book] ||= {})[field] = n;
+    }
+  }
+  // Memoise only a non-empty result: 0 rows now is not 0 rows forever.
+  if (Object.keys(books).length) {
+    const t = g.commence_time ? Date.parse(g.commence_time) : NaN;
+    openerMemo.set(g.game_id, { at: Number.isFinite(t) ? t : Date.now(), books });
+  }
+  return { books, selects, failed: false };
+}
+export { openersFor };
 
 // `last_update` is the Odds API's MARKET-level stamp: it is bumped by a
 // price-only change and is SHARED by both outcomes of that book's market, so it
@@ -431,6 +522,17 @@ async function run() {
     }
   }
 
+  // Per-book openers: memo hits cost nothing; new games cost ≤ 3 selects each.
+  let openSelects = 0, openFailures = 0;
+  for (const g of slate) {
+    const o = await openersFor(g);
+    openSelects += o.selects;
+    if (o.failed) openFailures++;
+  }
+  for (const [id, m] of openerMemo) if (m.at + OPEN_KEEP_MS < now) openerMemo.delete(id);
+  const openers = {};
+  for (const [id, m] of openerMemo) openers[id] = m.books;
+
   // One row per (game, market, side, book, line_to, moved_at) — the same key the
   // table is unique on, so a re-scan of the window never duplicates an episode.
   const seen = new Set();
@@ -468,6 +570,8 @@ async function run() {
     window_h: r1(obsMin), window_h_max: r1(obsMax), window_h_requested: WINDOW_H,
     truncated_queries: truncated, max_games: MAX_GAMES,
     min_score: MIN_SCORE, games: slate.length, live, byBook,
+    openers,
+    openers_meta: { games: Object.keys(openers).length, selects: openSelects, failures: openFailures, limit: OPEN_BOOK_LIMIT },
     note: 'public % is MARKET-WIDE (no per-book splits exist); US retail books only — this measures who moves first, not who sharps bet.',
   });
 
