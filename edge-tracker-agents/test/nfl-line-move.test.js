@@ -346,3 +346,14 @@ test('games without a sport or a start time are not on the slate', async () => {
   const r = await mod.default.run();
   assert.equal(r.summary, 'dormant — empty slate');
 });
+
+// ── Openers published for the /splits join ──────────────────────
+test('the slot carries openers for every slate game including the started one; a missing market is null, never 0', async () => {
+  slate = [game('NBA', 'up', { total: 220.5, spread: -4.5, ml: -180 }), game('NBA', 'go', { total: 221, ml: -150, kick: -20 })];
+  db.setRows('opening_lines', [opener('up', 'total', 218), opener('up', 'spread', -3), opener('up', 'ml', -160), opener('go', 'total', 219.5)]);
+  await mod.default.run();
+  assert.deepEqual(Object.keys(published.openers).sort(), ['go', 'up']);
+  assert.deepEqual(published.openers.up, { total: 218, spread: -3, ml: -160 });
+  assert.deepEqual(published.openers.go, { total: 219.5, spread: null, ml: null }, 'started game is covered (live[] drops it); missing markets are null');
+  assert.equal(published.live.find((x) => x.game_id === 'go'), undefined, 'live[] still excludes the started game');
+});
