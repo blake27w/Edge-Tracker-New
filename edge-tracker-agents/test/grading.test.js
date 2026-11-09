@@ -16,18 +16,23 @@ const D = (daysAgo) => new Date(Date.now() - daysAgo * 86400_000).toISOString();
 // ESPN returns a final for the Falcons @ Ravens game only.
 const RAVENS = { id: '1', homeNick: 'ravens', awayNick: 'falcons', home_score: 24, away_score: 17, total: 41, overtime: false };
 
-let db, degraded, lines, finals, grading;
+// `slate` stands in for the in-memory odds slate: grading reads it to learn
+// a play's own game date when the matchup repeats inside the fetch window.
+let db, degraded, lines, finals, slate, grading;
 
 before(async () => {
   db = fakeDb({ monitor_scores: [], research_notes: [] });
-  degraded = []; finals = [];
+  degraded = []; finals = []; slate = [];
   const fl = fakeLogger(); lines = fl.lines;
   mock.module(import.meta.resolve('../src/db/index.js'), { defaultExport: db, namedExports: { isConnected: db.isConnected, isMissingRelation: db.isMissingRelation } });
   mock.module(import.meta.resolve('../src/utils/index.js'), { namedExports: { logger: fl.logger } });
-  mock.module(import.meta.resolve('../src/store/index.js'), { namedExports: { reportDegraded: (k, d) => degraded.push({ k, d }) } });
+  mock.module(import.meta.resolve('../src/store/index.js'), { namedExports: { reportDegraded: (k, d) => degraded.push({ k, d }), getGames: () => slate } });
   mock.module(import.meta.resolve('../src/config/index.js'), { defaultExport: { rules: { unitDollars: 100 } } });
   mock.module(import.meta.resolve('../src/agents/shared/espn.js'), {
-    namedExports: { getFinals: async () => finals, getBox: async () => null, getUfcResults: async () => [] },
+    namedExports: {
+      getFinals: async () => finals, getSchedule: async () => [],
+      getBox: async () => null, getUfcResults: async () => [],
+    },
   });
   grading = (await import('../src/agents/grading/index.js')).default;
 });
@@ -36,6 +41,7 @@ after(() => mock.reset());
 beforeEach(() => {
   degraded.length = 0; lines.error.length = 0; lines.warn.length = 0;
   db.calls.select.length = 0; db.calls.update.length = 0;
+  slate = [];
 });
 
 const playRow = (over = {}) => ({
@@ -98,9 +104,14 @@ test('the summary carries per-stage counters even when nothing grades', async ()
 });
 
 // ── Alarm precision: the thing that decides whether this is useful ──
+// D(3), not D(1): the alarm population is no longer "the sport returned some
+// finals" (true every day — that fired daily as a false positive) but "this
+// play's own game is certainly over". The odds slate reaches 36h ahead
+// (odds/index.js:1098), so a play logged 24h ago may still be 12h PRE-kickoff
+// and cannot be evidence of anything. Past the 48h settle window it can.
 test('alarms when ESPN had finals and nothing matched — a real matching bug', async () => {
   db.setRows('monitor_scores', Array.from({ length: 6 }, (_, i) => playRow({
-    id: `p${i}`, game_id: `g${i}`, matchup: 'Mistyped Away @ Mistyped Home',
+    id: `p${i}`, game_id: `g${i}`, matchup: 'Mistyped Away @ Mistyped Home', scored_at: D(3),
   })));
   finals = [RAVENS];
   await grading.run();
@@ -118,11 +129,49 @@ test('stays quiet when ESPN has no finals yet — the normal afternoon run', asy
   assert.equal(degraded.length, 0, 'games simply have not finished — not a defect');
 });
 
-test('stays quiet below the sample floor', async () => {
-  db.setRows('monitor_scores', [playRow({ matchup: 'Mistyped Away @ Mistyped Home' })]);
+// The floor has to bind on the SIZE of the population, not on the population
+// being empty. This test used to pass with plays at D(1), i.e. still inside the
+// 48h settle window — suspect was 0, so ZERO_ALARM_MIN was never consulted and
+// the assertion held no matter what the constant was set to. Ageing the fixture
+// past SETTLED_HOURS puts the plays genuinely in the alarm population, and the
+// two halves straddle the floor so the constant is what decides the outcome.
+test('the sample floor binds: 4 unmatched plays stay quiet, 5 alarm', async () => {
+  // Distinct game_ids, or dedupe would collapse them before the floor is reached.
+  const unmatched = (n) => Array.from({ length: n }, (_, i) => playRow({
+    id: `f${i}`, game_id: `gf${i}`, matchup: 'Mistyped Away @ Mistyped Home', scored_at: D(3),
+  }));
+
+  db.setRows('monitor_scores', unmatched(4));
   finals = [RAVENS];
-  await grading.run();
-  assert.equal(degraded.length, 0, 'one unmatched play is not evidence of a bug');
+  let r = await grading.run();
+  assert.equal(r.data.noFinalSettled, 4, 'all four really are in the alarm population');
+  assert.equal(degraded.length, 0, 'four is below ZERO_ALARM_MIN — quiet, but not vacuously');
+
+  degraded.length = 0; lines.error.length = 0;
+  db.setRows('monitor_scores', unmatched(5));
+  r = await grading.run();
+  assert.equal(r.data.noFinalSettled, 5);
+  assert.ok(degraded.some((d) => d.k === 'grading|zero'), 'the fifth crosses the floor');
+});
+
+// ── Postponed games must leave the alarm population ─────────────
+// A play whose game is absent from every fetched date is noFinalSettled on
+// every run from 48h until the 30-day write-off. For a postponed or cancelled
+// game the final never arrives, so that is the same daily false alarm the
+// settle window was introduced to remove, just 25 days long instead.
+test('a play with no final anywhere stops being an alarm once it is clearly postponed', async () => {
+  db.setRows('monitor_scores', Array.from({ length: 6 }, (_, i) => playRow({
+    id: `ppd${i}`, game_id: `gp${i}`, matchup: 'Postponed Away @ Postponed Home', scored_at: D(7),
+  })));
+  finals = [RAVENS];
+  const r = await grading.run();
+
+  assert.equal(r.data.unresolvable, 6, 'past the bound, a permanently missing final is not evidence');
+  assert.equal(r.data.noFinalSettled, 0);
+  assert.deepEqual(degraded, [], 'six postponed games must not re-alarm every run for 25 days');
+  assert.match(r.summary, /6 unresolvable/, 'and they stay visible rather than vanishing');
+  assert.equal(db.rows('monitor_scores').find((x) => x.id === 'ppd0').status, 'pending',
+    'honestly pending — not written off');
 });
 
 test('an empty queue is reported as empty, not as a failure', async () => {

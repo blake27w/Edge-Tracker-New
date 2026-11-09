@@ -286,6 +286,43 @@ textarea.inp{resize:none;font-family:var(--B);font-size:13px}
 .sighud .sh-spark{display:block;width:100%;height:84px;margin-top:4px}
 /* episode cards — the SAME sigEpisodeCard markup the Agents tab paints; only the skin differs */
 .sighud .sh-eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px;margin-top:8px}
+/* 📊 Splits cards — one per game; the per-book table inside <details> (in .sigtbl-wrap) and the
+   .sp-books chip row are the only sideways scrollers, each inside its own box; the page never is */
+.sighud .sp-cards{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+@media(min-width:700px){.sighud .sp-cards{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}}
+.sighud .sh-nav.sp-sports{grid-template-columns:repeat(5,1fr)}
+.sighud .sp-books{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 0;margin:0 0 10px}
+.sighud .sp-books button{flex:0 0 auto;padding:6px 10px;border:1px solid var(--hud-line);background:var(--hud-p2);color:var(--dim);font-family:var(--H);font-size:10px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border-radius:0;text-align:center}
+.sighud .sp-books button small{display:block;font-family:var(--HM);font-size:8px;text-transform:none;letter-spacing:0;color:var(--muted);margin-top:2px}
+.sighud .sp-books button.on{color:var(--hud-ink);background:var(--hud);border-color:var(--hud);box-shadow:var(--glow-hud)}
+.sighud .sp-books button.on small{color:rgba(4,7,12,.7)}
+.sighud .sp-tip{font-family:var(--HM);font-size:11px;color:var(--brass)}
+.sighud .sp-tip.live{color:var(--wine);text-shadow:0 0 6px rgba(255,82,82,.5)}
+.sighud .sp-mw{font-size:10px;color:var(--dim);font-family:var(--HM);margin-top:6px}
+.sighud .sp-row{display:grid;grid-template-columns:52px 1fr 1fr;gap:6px;align-items:start;font-family:var(--HM);font-size:11px;padding:4px 0;border-bottom:1px dashed rgba(24,35,56,.9);color:var(--ink)}
+.sighud .sp-row.sp-hd{font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--hud-line);margin-top:6px}
+.sighud .sp-row .sp-mk{color:var(--muted);letter-spacing:.1em;font-size:9px;padding-top:1px}
+.sighud .sp-row .sp-ln i{font-style:normal;color:var(--muted)}
+.sighud .sp-row .sp-pct{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline}
+.sighud .sp-row .sp-side{white-space:nowrap;color:var(--dim)}
+.sighud .sp-row .sp-side b{font-weight:400;color:var(--muted);font-size:9px}
+.sighud .sp-row .sp-sep{color:var(--muted)}
+.sighud .sp-row .hot{color:var(--hud);text-shadow:var(--glow-hud)}
+.sighud .sp-row .hot b{color:var(--hud)}
+.sighud .sp-flags{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}
+.sighud .sp-chip{display:inline-block;font-family:var(--H);font-size:8px;letter-spacing:.1em;text-transform:uppercase;padding:1px 5px;border:1px solid var(--hud-line);color:var(--dim);font-style:normal;line-height:1.5}
+.sighud .sp-chip.rlm{color:var(--wine);border-color:rgba(255,82,82,.5)}
+.sighud .sp-chip.freeze{color:var(--brass);border-color:rgba(242,194,48,.5)}
+.sighud .sp-chip.pile{color:var(--dim)}
+.sighud .sp-chip.move{color:var(--hud);border-color:rgba(46,230,168,.4);text-transform:none;letter-spacing:.02em;font-family:var(--HM)}
+.sighud .sp-chip.dim{color:var(--muted)}
+.sighud details.sh-books{margin-top:8px}
+.sighud details.sh-books summary{cursor:pointer;font-family:var(--H);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);list-style:none}
+.sighud details.sh-books summary::-webkit-details-marker{display:none}
+.sighud details.sh-books summary::before{content:'▸ ';color:var(--muted)}
+.sighud details.sh-books[open] summary::before{content:'▾ '}
+.sighud details.sh-books tr.on td{color:var(--hud)}
+.sighud .sp-foot{margin-top:14px;border-top:1px solid var(--hud-line);padding-top:8px}
 .sighud .sigep{display:block;padding:10px 12px;margin:0;border:1px solid var(--hud-line);background:var(--hud-p2);border-radius:0;box-shadow:none;
   clip-path:polygon(var(--notch-s) 0,100% 0,100% calc(100% - var(--notch-s)),calc(100% - var(--notch-s)) 100%,0 100%,0 var(--notch-s))}
 .sighud .sigep-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
@@ -622,7 +659,11 @@ var state = {
   // ── 📡 Signal dashboard (home section 'signal') — in-memory only, never persisted ──
   sigView:'health',      // active panel: health | budget | books | steam
   sigSrc:{},             // per-source outcome of the LAST refresh — see loadAgentsData
-  agentsSharp:[]         // steam signals from /plays.sharp
+  agentsSharp:[],        // steam signals from /plays.sharp
+  // ── 📊 Splits (home section 'splits') ──
+  splitsSport:'all',     // sport chip: all | NBA | NFL | NHL | MLB
+  // Book chip. Read raw (not via save(): a chip selection is a per-device convenience, never cloud-synced).
+  splitsBook:(function(){try{return JSON.parse(localStorage.getItem('et_splitsBook'))||'consensus'}catch(e){return 'consensus'}})()
 };
 
 function ls(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
@@ -3413,7 +3454,7 @@ function render(){
   // Page dots: show position among the 6 home sections (hidden on launcher/sport views).
   var _pd=$('pagedots');
   if(_pd){
-    var _ord=['dash','plays','rec','stats','log','agents','games','signal'];
+    var _ord=['dash','plays','rec','stats','log','agents','games','signal','splits'];
     var _i=state.homeScreen?_ord.indexOf(state.homeTab):-1;
     if(_i>=0){ _pd.innerHTML=_ord.map(function(_,k){return '<span class="pd'+(k===_i?' on':'')+'"></span>'}).join(''); _pd.style.display='flex'; }
     else _pd.style.display='none';
@@ -3512,7 +3553,7 @@ function renderMyBetsList(){
   return h;
 }
 
-// The 8 home destinations (rendered as a launcher grid, not a bottom bar).
+// The 9 home destinations (rendered as a launcher grid, not a bottom bar).
 var HOME_TABS=[
   {id:'dash',icon:'🏟️',label:'Sports'},
   {id:'plays',icon:'🎯',label:'Plays'},
@@ -3521,7 +3562,8 @@ var HOME_TABS=[
   {id:'log',icon:'➕',label:'Log'},
   {id:'agents',icon:'🤖',label:'Agents'},
   {id:'games',icon:'📅',label:'Games'},
-  {id:'signal',icon:'📡',label:'Signal'}
+  {id:'signal',icon:'📡',label:'Signal'},
+  {id:'splits',icon:'📊',label:'Splits'}
 ];
 function goMenu(){ state.homeTab='menu'; if(!state.homeScreen){ goHome(); return; } render(); }
 window.goMenu=goMenu;
@@ -3551,6 +3593,7 @@ function renderHomeScreen(){
   else if(state.homeTab==='stats')renderHomeStats();
   else if(state.homeTab==='games')renderHomeGames();
   else if(state.homeTab==='signal')renderSignalView();
+  else if(state.homeTab==='splits')renderSplitsView();
   else renderLauncher();
 }
 
@@ -6087,7 +6130,8 @@ function applyAgentsBag(bag){
     // Health: prefer backend live statuses; else derive from scan_runs latest-per-agent
     var health;
     if(bag.beHealth&&bag.beHealth.agents){
-      health=bag.beHealth.agents.map(function(a){return {name:a.name,status:a.status==='idle'?'ok':a.status,result:a.lastResult,error:a.error,finished_at:a.lastRunAt,duration_ms:a.lastDurationMs}});
+      // blockedRuns/blockedReason/blockedSince are the DURABLE blocked view (D80); an old payload has none → null.
+      health=bag.beHealth.agents.map(function(a){return {name:a.name,status:a.status==='idle'?'ok':a.status,result:a.lastResult,error:a.error,finished_at:a.lastRunAt,duration_ms:a.lastDurationMs,blockedRuns:a.blockedRuns!=null?a.blockedRuns:null,blockedReason:a.blockedReason!=null?a.blockedReason:null,blockedSince:a.blockedSince||null}});
       state.agentsSystem=bag.beHealth.system||null;
     } else if(bag.scan){
       var latest={};
@@ -6153,11 +6197,11 @@ function hydrateAgentsCache(){
   return false;
 }
 function loadAgentsData(){
-  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec'||state.homeTab==='signal')};
+  var onView=function(){return state.homeScreen&&(state.homeTab==='agents'||state.homeTab==='plays'||state.homeTab==='rec'||state.homeTab==='signal'||state.homeTab==='splits')};
   // The signal branch comes FIRST: 'signal' is not 'rec', so without it the
   // else-arm would repaint the Agents tab into #sport-selector and the
   // dashboard would silently lose every live refresh.
-  var rerender=function(){if(state.homeTab==='signal')renderSignalContent();else if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
+  var rerender=function(){if(state.homeTab==='signal')renderSignalContent();else if(state.homeTab==='splits')renderSplitsContent();else if(state.homeTab==='rec')renderResultsContent();else renderAgentsContent();};
   var tasks=[];
   // Supabase reads
   if(SB.url&&SB.key){
@@ -6379,7 +6423,13 @@ function renderAgentsContent(){
     } else {
       h+='<div class="card" style="padding:10px 13px;margin-bottom:8px;border-left:3px solid var(--wine)">';
       h+='<div style="font-size:11px;color:var(--wine);font-weight:600;margin-bottom:4px">🛡️ '+iss.length+' issue'+(iss.length>1?'s':'')+' detected</div>';
-      iss.slice(0,8).forEach(function(i){h+='<div style="font-size:10px;color:var(--cream);margin-top:2px">• <b>'+esc(i.label||i.agent)+'</b>: '+esc(i.detail||i.type)+'</div>';});
+      // Schema issues go first, then the cap applies. The 8-row cap drops in
+      // list order, and the watchdog pushes schema after agent/cost/gap issues,
+      // so a day with eight stale-agent lines hid the one line a human has to
+      // act on — unapplied DDL, which nothing else in the app reports (D106).
+      // Stable sort, so everything else keeps the order the watchdog chose.
+      var ordered=iss.slice().sort(function(a,b){return ((b&&b.type)==='schema'?1:0)-((a&&a.type)==='schema'?1:0);});
+      ordered.slice(0,8).forEach(function(i){h+='<div style="font-size:10px;color:var(--cream);margin-top:2px">• <b>'+esc(i.label||i.agent)+'</b>: '+esc(i.detail||i.type)+'</div>';});
       h+='</div>';
     }
   }
@@ -7031,7 +7081,9 @@ function sigBanner(kind,o){
     // naming the category.
     txt=o.text||('NOT FIRING — '+(o.reason||'the mechanism is not producing')+'. Blank because the signal isn\'t being produced, not because there is nothing to see.');
   } else if(kind==='failed'){
-    txt='Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.');
+    // o.text, as for `off`: a panel that knows WHICH read failed (the route
+    // answered but its own DB read did not) names that, not the route.
+    txt=o.text||('Read failed — '+(o.src||'the source')+' did not answer on the last refresh ('+(o.ago||'—')+'). '+(o.cached?('Showing the last good copy from '+o.cached+'.'):'…and nothing is cached.'));
   } else return '';
   // The kind is the class: wine for off/failed, brass for stale, mint-framed
   // for the two quiet states. Colour never carries the distinction alone.
@@ -8162,54 +8214,299 @@ function renderMarketValidation(bt){
   h+='</div>';
   return h;
 }
-// Live betting splits (public %) + per-book line board, per game.
-function renderSplitsBoard(){
-  var b=state.agentsSplitsBoard;
-  var fa=function(v){return v==null?'—':(v>0?'+'+v:''+v)};
-  var h='<div style="background:rgba(230,187,70,.07);border:1px solid var(--leather);border-radius:8px;padding:8px 11px;margin-bottom:10px"><div style="font-family:var(--H);font-size:11px;letter-spacing:1px;color:var(--brass);font-weight:600">📊 SPLITS & PER-BOOK LINES</div><div style="font-size:8px;color:var(--muted);margin-top:1px">Public betting % (tickets vs money, market-wide — per-book splits aren\'t public) and every book\'s live number side by side. Green = best price.</div></div>';
-  if(!b||!b.games||!b.games.length){ return h+'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px">No slate loaded. Lines appear here once games are in the next-36h window.</div>'; }
-  b.games.slice(0,40).forEach(function(g){
-    var live=g.live;
-    h+='<div class="card" style="padding:10px 12px;margin:0 0 9px'+(live?';border-left:3px solid var(--wine)':'')+'">';
-    h+='<div style="font-family:var(--H);font-size:12px;font-weight:600;color:var(--txt)">'+esc(g.matchup||'')+(live?liveTag():'')+'</div>';
-    var gt=g.commence_time&&!live?(function(){try{return new Date(g.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}catch(e){return ''}})():'';
-    if(gt)h+='<div style="font-size:8px;color:var(--brass);margin-top:1px">🕒 '+esc(gt)+'</div>';
-    // Public splits
-    if(g.splits&&g.splits.length){
-      h+='<div style="margin-top:6px">';
-      g.splits.forEach(function(s){
-        var div=s.divergence;var sharp=(div!=null&&div<=-5)?' · <span style="color:#34d399">sharp OFF this side</span>':(div!=null&&div>=5)?' · <span style="color:#34d399">money agrees</span>':'';
-        h+='<div style="font-size:9px;color:var(--cream);margin-top:2px"><span style="color:var(--leather);text-transform:uppercase">'+esc(s.market||'')+'</span> '+esc(s.side||'')+' · <span style="font-family:var(--M)">'+(s.bets_pct!=null?s.bets_pct+'% bets':'')+(s.handle_pct!=null?' / '+s.handle_pct+'% money':'')+'</span>'+(s.rlm?' <span style="color:var(--wine);font-weight:700">RLM</span>':'')+(s.freeze?' <span style="color:var(--brass);font-weight:700">FREEZE</span>':'')+(s.pileon?' <span style="color:var(--dim);font-weight:700">PILE-ON</span>':'')+sharp+'</div>';
-      });
-      h+='</div>';
-    } else { h+='<div style="font-size:8px;color:var(--muted);font-style:italic;margin-top:5px">No public-split data for this game yet.</div>'; }
-    // Per-book line board
-    var bk=g.books||[];
-    if(bk.length){
-      var maxA=Math.max.apply(null,bk.map(function(x){return x.ml_away!=null?x.ml_away:-1e9}));
-      var maxH=Math.max.apply(null,bk.map(function(x){return x.ml_home!=null?x.ml_home:-1e9}));
-      var maxO=Math.max.apply(null,bk.map(function(x){return x.over_price!=null?x.over_price:-1e9}));
-      var maxU=Math.max.apply(null,bk.map(function(x){return x.under_price!=null?x.under_price:-1e9}));
-      var g1='#34d399';
-      h+='<div style="overflow-x:auto;margin-top:7px"><table style="width:100%;border-collapse:collapse;font-family:var(--M);font-size:8.5px">';
-      h+='<tr style="color:var(--leather);text-align:right"><th style="text-align:left;font-weight:600">Book</th><th>'+esc(g.away||'A')+'</th><th>'+esc(g.home||'H')+'</th><th>Spread</th><th>O</th><th>U</th></tr>';
-      bk.forEach(function(x){
-        h+='<tr style="color:var(--cream);text-align:right;border-top:1px solid rgba(255,255,255,.04)">';
-        h+='<td style="text-align:left;color:var(--dim)">'+esc(x.book||'')+'</td>';
-        h+='<td'+(x.ml_away===maxA&&x.ml_away!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_away)+'</td>';
-        h+='<td'+(x.ml_home===maxH&&x.ml_home!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_home)+'</td>';
-        h+='<td>'+(x.spread_line!=null?(x.spread_line>0?'+'+x.spread_line:x.spread_line)+' '+fa(x.spread_price):'—')+'</td>';
-        h+='<td'+(x.over_price===maxO&&x.over_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+(x.total_line!=null?x.total_line+' ':'')+fa(x.over_price)+'</td>';
-        h+='<td'+(x.under_price===maxU&&x.under_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.under_price)+'</td>';
-        h+='</tr>';
-      });
-      h+='</table></div>';
-    }
-    h+='</div>';
+// ══════════════════════════════════════
+// 📊 SPLITS — the ninth home tab. One card per game: SPREAD / TOTAL / ML,
+// open → now, bets% · handle% on BOTH sides (the second side is 100 − the
+// reported side, derived only from a reading), the three flags as chips.
+// Reads ONLY the bag loadAgentsData already fills (state.agentsSplitsBoard,
+// state.agentsBookMoves, state.agentsHealth, sigSrc.splits) — zero fetches.
+// Every field access is defaulted: an etBagCache replay from before this
+// tab has no open/current/splits_meta/books[].key/bookMoves.openers.
+// The book switcher changes LINES and MOVEMENT CHIPS only. The percentages
+// are market-wide (public_splits has no book column, D53/D22) and never vary
+// by book — the card says so in words whenever a book is selected.
+// A null percentage is never 0 (D96/D97): sigNum/sigSgn paint — for null.
+// ══════════════════════════════════════
+var SPLIT_SPORTS=['NBA','NFL','NHL','MLB'];
+var SPLITS_BOUND=(AGENT_STALE_MS['public-splits']||14400000)*2;  // 8h — 2× the 4-hour cadence
+var SPLITS_DIV_MIN=5;            // handle − bets at or above this lights the side in mint
+var SPLITS_CONSENSUS='consensus';
+function renderSplitsView(){
+  startAgentsPoll();
+  hydrateAgentsCache(); // paint the last-known data instantly; live fetch replaces it
+  // First entry: kick a load if we have nothing yet.
+  if(!state.agentsLastLoad&&!state.agentsLoading){state.agentsLoading=true;Promise.resolve(loadAgentsData()).then(function(){state.agentsLoading=false})}
+  renderSplitsContent();
+}
+// The same body also paints under Plays → 📊 Splits (renderSplitsBoard delegates
+// here), so a chip tap repaints whichever host is showing it.
+function splitsRepaint(){if(state.homeTab==='splits')renderSplitsContent();else renderAgentsContent();}
+function splitsSetSport(s){state.splitsSport=s;splitsRepaint();}
+window.splitsSetSport=splitsSetSport;
+// Stored raw, NOT via save(): save() also queues a cloud sync and a chip
+// selection is a per-device convenience, not data.
+function splitsSetBook(k){state.splitsBook=k;try{localStorage.setItem('et_splitsBook',JSON.stringify(k))}catch(e){} splitsRepaint();}
+window.splitsSetBook=splitsSetBook;
+
+// State resolution, in order: failed → loading → off → stale → nodata → ok.
+// `off` is READ from the agent (blockedReason on /health, the durable field,
+// D80; or the 90-min degraded key) — never inferred from an empty array.
+// The book selection does not enter: the five states are about the
+// percentages, which do not vary by book.
+function splitsFacts(){
+  var b=state.agentsSplitsBoard||null;
+  var src=state.sigSrc.splits||{};
+  var meta=(b&&b.splits_meta)||{};
+  var sport=state.splitsSport||'all';
+  var all=(b&&b.games)||[];
+  var games=all.filter(function(g){return !!g&&(sport==='all'||g.sport===sport)});
+  var nRows=0;games.forEach(function(g){nRows+=(g.splits||[]).length});
+  var run=null;(state.agentsHealth||[]).forEach(function(r){if(r&&r.name==='public-splits'&&!run)run=r;});
+  var deg=null;((state.agentsSystem||{}).degraded||[]).forEach(function(d){if(d&&d.key==='public-splits|blocked'&&!deg)deg=d;});
+  var blocked=null;
+  if(run&&run.blockedReason!=null)blocked={reason:String(run.blockedReason),runs:run.blockedRuns!=null?run.blockedRuns:null,since:run.blockedSince||null};
+  else if(deg)blocked={reason:String(deg.detail||'reported blocked on the degraded channel'),runs:null,since:deg.at||null};
+  // Books on the filtered slate, by key (the join to bookMoves is by key; `book` is the label).
+  var seen={},books=[];
+  games.forEach(function(g){(g.books||[]).forEach(function(x){if(x&&x.key&&!seen[x.key]){seen[x.key]=1;books.push({key:x.key,label:x.book||x.key});}})});
+  books.sort(function(a,b){return a.label.localeCompare(b.label)});
+  var book=seen[state.splitsBook]?state.splitsBook:SPLITS_CONSENSUS;
+  var st=sigState(src,b,nRows,SPLITS_BOUND,meta.at||null);
+  // The route answered but its own public_splits fallback read failed
+  // (source null + db_error): that is a FAILED read, not "0 rows" — house
+  // rule 2, "nothing happened" and "I cannot see it" must never look the same.
+  var dbFail=!!(b&&meta.source===null&&meta.db_error);
+  if(st!=='failed'&&st!=='loading'&&dbFail)st='failed';
+  if(st!=='failed'&&st!=='loading'&&blocked)st='off';
+  return {st:st,b:b,games:games,all:all,meta:meta,blocked:blocked,dbFail:dbFail,at:meta.at||null,books:books,book:book,run:run,src:src,nRows:nRows};
+}
+// Both sides of one reported split. The row stores ONE side (the public
+// side); the other is 100 − pct, computed only when the pct is non-null.
+// `a` is away/over, `b` is home/under; when the public side could not be
+// resolved the reported side is `a` under its own label and the complement is
+// `other`. `hot` is the side whose handle − bets ≥ SPLITS_DIV_MIN (never
+// both; null when either pct is null). Takes NO book argument: percentages
+// are not keyed by book.
+function splitsPair(s,market){
+  var pct=s.bets_pct!=null?s.bets_pct:null, hd=s.handle_pct!=null?s.handle_pct:null;
+  var cp=pct!=null?100-pct:null, ch=hd!=null?100-hd:null;
+  var ps=s.public_side||null;
+  var pub={pct:pct,handle:hd,pub:true}, oth={pct:cp,handle:ch,pub:false};
+  var a,b;
+  if(market==='total'){
+    if(ps==='under'){a=oth;b=pub;a.key='over';b.key='under';}
+    else if(ps==='over'){a=pub;b=oth;a.key='over';b.key='under';}
+    else {a=pub;b=oth;a.key='side';b.key='other';}
+  } else {
+    if(ps==='home'){a=oth;b=pub;a.key='away';b.key='home';}
+    else if(ps==='away'){a=pub;b=oth;a.key='away';b.key='home';}
+    else {a=pub;b=oth;a.key='side';b.key='other';}
+  }
+  var hot=null;
+  if(pct!=null&&hd!=null){
+    var da=a.handle-a.pct, db=b.handle-b.pct;
+    if(da>=SPLITS_DIV_MIN)hot='a';else if(db>=SPLITS_DIV_MIN)hot='b';
+  }
+  return {a:a,b:b,hot:hot};
+}
+// Lines for the three rows. Consensus: g.open → g.current. A book: `now` from
+// that book's row in g.books[], `open` from the book-move slot's per-book
+// openers — and NO fallback to g.open: a consensus opener next to a per-book
+// current would read as a per-book move nobody observed.
+function splitsLines(g,book){
+  var bk=book===SPLITS_CONSENSUS?null:((g.books||[]).filter(function(x){return x&&x.key===book})[0]||null);
+  var o=book===SPLITS_CONSENSUS?(g.open||{}):((((state.agentsBookMoves||{}).openers||{})[g.game_id]||{})[book]||{});
+  var c=book===SPLITS_CONSENSUS?(g.current||{}):{spread:bk?bk.spread_line:null,total:bk?bk.total_line:null,ml:bk?bk.ml_home:null};
+  var v=function(x){return x!=null?x:null};
+  return {spread:{open:v(o.spread),now:v(c.spread)},total:{open:v(o.total),now:v(c.total)},ml:{open:v(o.ml),now:v(c.ml)},src:book===SPLITS_CONSENSUS?'consensus':'book'};
+}
+// Movement chips for the selected book: its episodes from bookMoves.live[]
+// (per-book by nature, so consensus shows none). book-move scores no h2h, so
+// the ML row never has any.
+function splitsMoves(g,book){
+  var out={spread:[],total:[]};
+  if(book===SPLITS_CONSENSUS)return out;
+  ((state.agentsBookMoves||{}).live||[]).forEach(function(e){
+    if(!e||e.game_id!==g.game_id||e.book!==book)return;
+    var k=e.market==='spreads'?'spread':e.market==='totals'?'total':null;
+    if(!k)return;
+    var rs=(e.reasons&&e.reasons.length)?e.reasons:(e.moved!=null?[(e.moved>0?'+':'')+e.moved+' move']:[]);
+    rs.forEach(function(r){out[k].push(String(r))});
   });
-  h+='<div style="height:8px"></div>';
+  return out;
+}
+function splitsTeam(t){return String(t||'').split(' ').pop()||'—';}
+function splitsRow(name,ln,s,market,g,chips,fmt){
+  var h='<div class="sp-row"><span class="sp-mk">'+name+'</span>';
+  h+='<span class="sp-ln">'+fmt(ln.open)+' <i>→</i> '+fmt(ln.now);
+  (chips||[]).forEach(function(c){h+=' <i class="sp-chip move">'+esc(c)+'</i>'});
+  h+='</span>';
+  if(s){
+    var P=splitsPair(s,market);
+    var lbl=function(x){return x.key==='away'?splitsTeam(g.away):x.key==='home'?splitsTeam(g.home):x.key==='over'?'O':x.key==='under'?'U':x.key==='side'?String(s.side||'side'):'other'};
+    var side=function(x,k){return '<span class="sp-side'+(P.hot===k?' hot':'')+'"><b>'+esc(lbl(x))+'</b> '+sigNum(x.pct,'%')+' · '+sigNum(x.handle,'%')+'</span>'};
+    h+='<span class="sp-pct">'+side(P.a,'a')+'<span class="sp-sep">/</span>'+side(P.b,'b');
+    var fl='';
+    if(s.rlm)fl+='<i class="sp-chip rlm">RLM</i>';
+    if(s.freeze)fl+='<i class="sp-chip freeze">FREEZE</i>';
+    if(s.pileon)fl+='<i class="sp-chip pile">PILE-ON</i>';
+    var lop=s.bets_pct!=null&&s.bets_pct>=70;
+    if(market!=='ml'){
+      if(lop&&s.rlm===null&&s.freeze===null)fl+='<i class="sp-chip dim">no line data</i>';
+      else fl+='<i class="sp-chip dim">net '+sigSgn(s.net_move)+'</i>';
+    }
+    if(fl)h+='<span class="sp-flags">'+fl+'</span>';
+    h+='</span>';
+  } else h+='<span class="sp-pct"><span class="sp-side">— · —</span></span>';
+  h+='</div>';
   return h;
 }
+function renderSplitsCard(g,book,bookLabel,boardAt){
+  var L=splitsLines(g,book),M=splitsMoves(g,book);
+  var by={};(g.splits||[]).forEach(function(s){if(s&&s.market&&!by[s.market])by[s.market]=s;});
+  var live=!!g.live;
+  var tip='';if(!live&&g.commence_time){try{tip=new Date(g.commence_time).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}catch(e){tip=''}}
+  var h='<div class="sigep sp-card">';
+  h+='<div class="sigep-top"><div class="sigep-who"><div class="sigep-book">'+esc(g.away||'')+'</div><div class="sigep-book">'+esc(g.home||'')+'</div></div>';
+  h+='<div class="sigep-sc"><div class="sigep-scl">'+esc(g.sport||'')+'</div><div class="sp-tip'+(live?' live':'')+'">'+(live?'LIVE':esc(tip||'—'))+'</div></div></div>';
+  if(book!==SPLITS_CONSENSUS)h+='<div class="sp-mw">splits are market-wide — '+esc(bookLabel)+'\'s own counts are not captured</div>';
+  h+='<div class="sp-row sp-hd"><span>mkt</span><span>'+(book!==SPLITS_CONSENSUS?'open (first seen) → now':'open → now')+'</span><span>bets · handle</span></div>';
+  h+=splitsRow('SPREAD',L.spread,by.spread||null,'spread',g,M.spread,sigSgn);
+  h+=splitsRow('TOTAL',L.total,by.total||null,'total',g,M.total,sigNum);
+  h+=splitsRow('ML',L.ml,by.ml||null,'ml',g,[],sigSgn);
+  if(!(g.splits||[]).length)h+='<div class="sh-cap">no split for this game</div>';
+  // The DB fallback keeps each game's NEWEST batch across ~5 batches, so this
+  // card's percentages can be a batch or more older than the board's `at`
+  // (which the stale banner keys off). Say so when the gap exceeds one cadence.
+  else if(g.splits_at&&boardAt){
+    var _gap=Date.parse(boardAt)-Date.parse(g.splits_at);
+    if(_gap===_gap&&_gap>(AGENT_STALE_MS['public-splits']||14400000))h+='<div class="sh-cap sp-age">this game\'s batch is '+esc(agentAgo(g.splits_at))+' — older than the board\'s</div>';
+  }
+  // Per-book line board — the only thing that scrolls sideways, inside its own box.
+  var bk=g.books||[];
+  if(bk.length){
+    var fa=function(v){return v==null?'—':(v>0?'+'+v:''+v)};
+    var maxA=Math.max.apply(null,bk.map(function(x){return x.ml_away!=null?x.ml_away:-1e9}));
+    var maxH=Math.max.apply(null,bk.map(function(x){return x.ml_home!=null?x.ml_home:-1e9}));
+    var maxO=Math.max.apply(null,bk.map(function(x){return x.over_price!=null?x.over_price:-1e9}));
+    var maxU=Math.max.apply(null,bk.map(function(x){return x.under_price!=null?x.under_price:-1e9}));
+    var g1='#34d399';
+    h+='<details class="sh-books" data-game="'+esc(g.game_id||'')+'"><summary>per-book lines · '+bk.length+'</summary><div class="sigtbl-wrap"><table class="sigtbl">';
+    h+='<tr><th class="l">Book</th><th>'+esc(g.away||'A')+'</th><th>'+esc(g.home||'H')+'</th><th>Spread</th><th>O</th><th>U</th></tr>';
+    bk.forEach(function(x){
+      h+='<tr'+(x.key&&x.key===book?' class="on"':'')+'>';
+      h+='<td class="l" style="color:var(--dim)">'+esc(x.book||'')+'</td>';
+      h+='<td'+(x.ml_away===maxA&&x.ml_away!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_away)+'</td>';
+      h+='<td'+(x.ml_home===maxH&&x.ml_home!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.ml_home)+'</td>';
+      h+='<td>'+(x.spread_line!=null?(x.spread_line>0?'+'+x.spread_line:x.spread_line)+' '+fa(x.spread_price):'—')+'</td>';
+      h+='<td'+(x.over_price===maxO&&x.over_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+(x.total_line!=null?x.total_line+' ':'')+fa(x.over_price)+'</td>';
+      h+='<td'+(x.under_price===maxU&&x.under_price!=null?' style="color:'+g1+';font-weight:700"':'')+'>'+fa(x.under_price)+'</td>';
+      h+='</tr>';
+    });
+    h+='</table></div></details>';
+  }
+  h+='</div>';
+  return h;
+}
+// Returns HTML; no DOM write — both hosts (the tab and the Plays chip) call it.
+function renderSplitsBody(){
+  var F=splitsFacts(),st=F.st,games=F.games,meta=F.meta,src=F.src;
+  var h='';
+  // Sport chips
+  var cnt=function(sp){return F.all.filter(function(g){return !!g&&(sp==='all'||g.sport===sp)}).length};
+  var cur=state.splitsSport||'all';
+  h+='<div class="sh-nav sp-sports">';
+  [['all','All']].concat(SPLIT_SPORTS.map(function(s){return [s,s]})).forEach(function(p){
+    h+='<button class="'+(p[0]===cur?'on':'')+'" onclick="splitsSetSport(\''+p[0]+'\')">'+p[1]+'<small>'+cnt(p[0])+'</small></button>';
+  });
+  h+='</div>';
+  // Book chips — lines and movement only. <small> = games with a per-book opener.
+  var op=(state.agentsBookMoves||{}).openers||{};
+  var nOpen=function(k){var n=0;games.forEach(function(g){if(g&&op[g.game_id]&&op[g.game_id][k])n++});return n};
+  h+='<div class="sp-books">';
+  h+='<button class="'+(F.book===SPLITS_CONSENSUS?'on':'')+'" onclick="splitsSetBook(\'consensus\')">Consensus<small>'+games.length+' games</small></button>';
+  F.books.forEach(function(b){h+='<button class="'+(F.book===b.key?'on':'')+'" onclick="splitsSetBook(\''+esc(b.key)+'\')">'+esc(b.label)+'<small>'+nOpen(b.key)+' open</small></button>'});
+  h+='</div>';
+  var bookLabel=F.book===SPLITS_CONSENSUS?'Consensus':((F.books.filter(function(b){return b.key===F.book})[0]||{}).label||F.book);
+  // Banners
+  if(st==='failed'){
+    if(F.dbFail&&src.ok!==false)h+=sigBanner('failed',{text:'Read failed — the backend answered, but its public_splits fallback read failed (memory is empty after a restart and Postgres did not answer; retried every 10 min). Percentages are missing because the read failed, not because the public is quiet. Lines below still update.'});
+    else h+=sigBanner('failed',sigFailOpts('/splits',src));
+  }
+  if(st==='loading')return h+sigBanner('loading',{});
+  if(st==='off'){
+    var r=F.blocked;
+    h+=sigBanner('off',{text:'NOT FIRING — public-splits is blocked: "'+r.reason+'" ('+(r.runs!=null?r.runs:'—')+' runs since '+(r.since?agentAgo(r.since):'—')+'). Percentages are blank because the agent cannot run, not because the public is quiet. Lines below still update.'});
+    if(/no model was detected/.test(r.reason))h+='<div class="sh-cap">A set key with no model detected at boot is what an account with no credits looks like from here: add credits, then redeploy once — the model probe runs only at boot (D81).</div>';
+  }
+  if(st==='stale')h+=sigBanner('stale',{ago:meta.at?sigDur(meta.at):'—',bound:'8h (2× the 4-hour public-splits cadence)'});
+  if(st==='nodata'){
+    h+=sigBanner('nodata',{things:'public-split rows for this slate',at:sigAt((F.run&&(F.run.finished_at||F.run.lastRunAt))||state.agentsLastLoad)});
+    if(meta.at)h+='<div class="sh-cap">last batch '+esc(agentAgo(meta.at))+', none for the current slate</div>';
+  }
+  // Cards
+  if(games.length){
+    h+='<div class="sp-cards">';
+    games.forEach(function(g){h+=renderSplitsCard(g,F.book,bookLabel,F.at)});
+    h+='</div>';
+  } else if(!F.all.length){
+    h+='<div class="sh-cap">No slate loaded — lines appear once games are in the next-36h window.</div>';
+  } else {
+    h+='<div class="sh-cap">No '+esc(cur==='all'?'':cur)+' games on the slate right now.</div>';
+  }
+  // Fixed footer: what the tab says about itself.
+  h+='<div class="sh-cap sp-foot">Source: public-splits agent — Claude web search over sportsbettingdime / DK Network / Covers / VSiN. Market-wide consensus; no per-book splits exist (D53/D22). The second side of each pair is 100 − the reported side. Per-book openers are the first line on file for that book (book-move, nearest 24 games). Divergence is a reading, not a pick.</div>';
+  return h;
+}
+function renderSplitsContent(){
+  var h='<div class="sighud">';
+  // Status strip — the same strip as Signal: the backend word is the LAST
+  // refresh's /health outcome, not the presence of a URL.
+  var hsrc=state.sigSrc.health||{};
+  var link=hsrc.ok===true?'LINKED':hsrc.ok===false?'FAILED':'—';
+  var dot=hsrc.ok===true?' on pulse':hsrc.ok===false?' off':'';
+  var meta=((state.agentsSplitsBoard||{}).splits_meta)||{};
+  h+='<div class="sh-strip">';
+  h+='<span class="sh-brand">📊 Splits</span>';
+  h+='<span><i class="sh-dot'+dot+'"></i><span class="sh-lnk" onclick="agentSetApiUrl()">backend</span> <b'+(hsrc.ok===false?' class="off"':'')+'>'+link+'</b></span>';
+  h+='<span>'+(state.agentsLastLoad?('updated <b>'+esc(agentAgo(state.agentsLastLoad))+'</b>'):(state.agentsCachedAt?'refreshing…':'loading…'))+'</span>';
+  // 4 hours is the design, not an alarm: inside the bound the strip just says the batch age.
+  // Which path produced the rows: memory (the agent ran in this process), db
+  // (restored after a restart), none (no rows anywhere, or the read failed).
+  var srcWord=meta.source==='memory'||meta.source==='db'?meta.source:(meta.source===null?'none':'—');
+  h+='<span>'+(meta.at?('batch <b>'+esc(sigDur(meta.at))+'</b> · every 4h'):'batch <b>—</b> · every 4h')+' · source <b'+(meta.db_error?' class="off"':'')+'>'+srcWord+'</b>'+(meta.source==='db'?' · restored from Postgres after a restart':'')+(meta.truncated?' · DB read capped at 300 rows — games may be missing':'')+'</span>';
+  h+='<span class="right"><span class="sh-lnk" onclick="loadAgentsData()">refresh</span></span>';
+  h+='</div>';
+  h+=renderSplitsBody();
+  h+='</div>';
+  // The 30-s poll lands here and innerHTML replacement would snap every open
+  // <details> shut and reset the book-chip row's scroll — on exactly the
+  // elements the manual check uses. Read the DOM's state before the paint
+  // and put it back after; the poll itself is untouched.
+  var host=$('sport-selector');
+  splitsDomSave(host);
+  host.innerHTML=h;
+  splitsDomRestore(host);
+}
+// Open <details> per game_id and the chip row's scrollLeft, module-level (not
+// state: a per-paint convenience, never saved or synced).
+var _splitsDom={open:{},scroll:0};
+function splitsDomSave(host){
+  if(!host)return;
+  var ds=host.querySelectorAll('details.sh-books[data-game]');
+  for(var i=0;i<ds.length;i++){var id=ds[i].getAttribute('data-game');if(id){if(ds[i].open)_splitsDom.open[id]=1;else delete _splitsDom.open[id];}}
+  var row=host.querySelector('.sp-books');
+  if(row)_splitsDom.scroll=row.scrollLeft||0;
+}
+function splitsDomRestore(host){
+  if(!host)return;
+  var ds=host.querySelectorAll('details.sh-books[data-game]');
+  for(var j=0;j<ds.length;j++){if(_splitsDom.open[ds[j].getAttribute('data-game')])ds[j].open=true;}
+  var row=host.querySelector('.sp-books');
+  if(row&&_splitsDom.scroll)row.scrollLeft=_splitsDom.scroll;
+}
+// Plays → 📊 Splits chip: one renderer. The body is the Splits tab's (sigEpisodeCard pattern, D83).
+function renderSplitsBoard(){return '<div class="sighud">'+renderSplitsBody()+'</div>';}
 // ── NFL team schedules & standings (lazy-loaded from /nfl-board) ──
 function nflBoardToggle(){
   state.nflBoardOpen=!state.nflBoardOpen;
@@ -8658,9 +8955,9 @@ document.addEventListener('visibilitychange',function(){
   }catch(e){}
 })();
 
-// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents→Games→Signal).
+// Swipe left/right to move between home sections (Sports→Plays→Stats→My Stats→Log→Agents→Games→Signal→Splits).
 (function(){
-  var order=['dash','plays','rec','stats','log','agents','games','signal'];
+  var order=['dash','plays','rec','stats','log','agents','games','signal','splits'];
   var sx=0,sy=0,track=false;
   var main=document.getElementById('main');
   if(!main)return;

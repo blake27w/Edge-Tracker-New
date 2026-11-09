@@ -1,6 +1,6 @@
 # Edge Tracker — Session Handoff
 
-Last updated: 2026-11-08 03:45 UTC — **eight PRs open (#146–#153), all reviewed and tested, none merged. `main` is at `5b92d70`.** Credits are on; the loud-failure machinery surfaced five real bugs in one day and all five have PRs. **One action is Blake's and clears four live alarms: the DDL paste below.**
+Last updated: 2026-11-09 06:05 UTC — **all eight PRs (#146–#153) are merged; `main` is at `35b91ee` plus this docs merge.** On merged `main`: `npm test` 483 / 0 failed, `node tools/smoke.mjs` 332 / 0 failed. Railway and GitHub Pages redeploy from `main` automatically. **One action is still Blake's and clears four live alarms: the DDL paste below. It has not been run.**
 
 ## OWED NOW — Blake, Supabase SQL editor, one paste
 
@@ -23,50 +23,43 @@ alter table api_usage alter column used   type numeric;
 alter table api_usage alter column budget type numeric;
 ```
 
-The `update` placeholder does not cast, so an unedited paste fails loudly and rolls the block back. No restart needed: `sharp`'s breaker closes on its next probe, `nfl-line-move` unlatches on its next insert. Includes the two `api_usage` lines from tonight's diagnosis (#153) — **this is the complete paste; no second one is coming.**
+The `update` placeholder does not cast, so an unedited paste fails loudly and rolls the block back. No restart needed: `sharp`'s breaker closes on its next probe, `nfl-line-move` unlatches on its next insert, and #148's watchdog column probes stop firing. **This is the complete paste; no second one is coming.**
 
-## Live state at close (read from /health and /budget)
+## What merged tonight (2026-11-09 05:50–06:02 UTC)
 
-- **Credits worked.** `claude.model = claude-haiku-4-5`; `public-splits` ran (16 splits); its `blocked` alert and `combat-weighin`'s **cleared by themselves** — first live proof of #137's clearing logic. `5002 snapshots (5002 written)` — #144's chunked insert is landing every batch.
-- **Budget.** Day 7: 12,572 / 20,000 used, ceilings sum 18,520. Winter shares are live (D86). Cadence variables `ODDS_STRIKE_MIN=8 / NEAR=15 / MID=45` were set tonight; **measured evening burn 108 credits/hour** (~36 fetches/h, 20-min window at 22:00 ET, 2 sports already ceiling-capped) against ~1,408/day the day before — on track for roughly 700–800/day, near the 667 budget, before #149's post-tip tail lands. NCAAB/NHL/NBA remain the sports that cap first.
-- **Standing alarms and their fix:** `sharp|blocked` and `nfl-line-move|blocked` + `write|nfl_line_moves` → the DDL above. `write|monitor_scores` (`"222.5"` — a **line**, not the price #150 fixes) and `write|api_usage` (`"1.5845"` into an integer column of the **budget persistence table** — if the month row is failing, the credit counter is not persisting across restarts) → **diagnosed (#153):** the `"222.5"` is an *underdog moneyline median* into the same `price` column #150 fixes (not a total; reproduction added to #150); the `"1.5845"` is **Claude's dollar cost** into `api_usage.used integer` — the credit counter was never affected, but Claude cost tracking has never persisted and reset on every restart. A sweep of every integer column found no further member of this family.
+Order: #148, #149, #150, #153, #147, #151, #152 (retargeted from `fix/grading-bug` to `main`), then #146 (this file). Every branch was synced to `main` before merging; conflicts were all appends and were resolved by keeping both sides:
 
-## The PRs
+- `DECISIONS.md` — union merge; D101–D112 all present (not in numeric order, by design — append-only).
+- `tools/smoke.mjs` — three PRs each added a "§17". Final numbering: §17 post-tip tail (#149), §18 price alter columns (#150), §19 Splits tab (#147). One shared closing brace was dropped by the merge and restored by hand (`d628d50`).
+- `edge-tracker-agents/scripts/schema.sql` — both hand-run ALTER blocks kept (#150's price columns, #153's api_usage columns).
 
-| PR | what | tests / smoke | notes |
-|---|---|---|---|
-| [#146](https://github.com/blake27w/Edge-Tracker-New/pull/146) | this HANDOFF | — | docs |
-| [#147](https://github.com/blake27w/Edge-Tracker-New/pull/147) | 📊 Splits tab, lines-only book switcher (D101) | 388 / 287 | per-book splits don't exist (D53); shows `—` + the real blocked reason until data flows |
-| [#148](https://github.com/blake27w/Edge-Tracker-New/pull/148) | watchdog probes every hand-run column, both SQL files (D103, D106) | 351 / 275 | would have caught #136's missing columns on day one |
-| [#149](https://github.com/blake27w/Edge-Tracker-New/pull/149) | 45-min post-tip polling tail for sports with no in-play consumer (D102, D107) | 391 / 254 | `sharp` now reports post-tip blindness as its own state |
-| [#150](https://github.com/blake27w/Edge-Tracker-New/pull/150) | `price` columns → numeric; three writers report written/lost and block on total loss (D104, D108) | 356 / 251 | needs the two ALTERs above |
-| [#151](https://github.com/blake27w/Edge-Tracker-New/pull/151) | grading: game-date-aware final matching, diacritics, stats by ESPN key, truthful zero alarm, doubleheader guard (D105, D109, D111) | 358 / 245 | **NHL SOG props were graded against shootout goals**; suspect rows: `monitor_scores where stat_type='player_shots_on_goal' and graded_at < deploy` |
-| [#152](https://github.com/blake27w/Edge-Tracker-New/pull/152) | opp-grading: same wrong-game fix (D110) | 361 / 245 | **stacked on #151** — merge #151 first |
-| [#153](https://github.com/blake27w/Edge-Tracker-New/pull/153) | `api_usage.used/budget` → numeric; Claude cost persist failure visible on `/budget.claude` (D112) | 349 / 245 | needs the two `api_usage` ALTERs |
+The branches were left in place (`--delete-branch=false`); delete them whenever.
 
-Merge order: #148, #149, #150, #153, #147 (independent); #151 then #152. Each appended to `DECISIONS.md`, so expect append conflicts — resolve by keeping every entry (D101–D111 all present, in order). After the last merge: `npm ci && npm test` and `node tools/smoke.mjs` — zero failures is the only acceptable result (D82).
+## Live state at close (read from /health and /budget, 05:58 UTC — before the new deploy had necessarily landed)
 
-## What the day taught (beyond the PRs)
+- **Credits on.** `model = claude-haiku-4-5`, `anthropicCallsToday = 1`. Odds: `540 snapshots (540 written)` — chunked insert landing every batch.
+- **Budget.** Day 9: 14,290 / 20,000 used, 5,712 remaining. The `projectedMonthly` (47,633) and `paceRatio` (2.38) are the D15/D87 naive extrapolation of the first eight days; the cadence variables (`ODDS_STRIKE_MIN=8 / NEAR=15 / MID=45`) landed on day 8 and measured **108 credits/hour** that evening. With #149's post-tip tail now live, the remaining 5,712 credits must cover 21 days ≈ **272/day**. That is tight: NCAAB, NHL and NBA cap first. **Open levers:** Odds API tier upgrade, or `ODDS_SKIP_SPORTS=NCAAB`. Watch `/budget.used` daily; if the day-over-day delta is above ~270 by day 12, pull one.
+- **Standing alarms:** `sharp` reports `blind — history read failed for 9/9 games` (the `gap_min` column — the DDL above). `nfl-line-move|blocked` and `write|nfl_line_moves` (`close_ml` column — the DDL). `grading` shows `graded 0 · 8 queued` — #151 is the fix and it just deployed; the next few grading runs are the proof. `public-splits` printed `0 splits` at 05:58 — likely the post-merge restart clearing memory mid-cycle (it produced 16 the night before); if it is still 0 after two more 4-hour cycles, read its `blockedReason`.
 
-- **The frontend is GitHub Pages**, `https://blake27w.github.io/Edge-Tracker-New/` (D100). Every "Vercel" claim before 2026-11-06 was wrong.
-- **The `gap_min` columns were never applied**, and I had recorded them as applied. The odds agent's strip-and-retry made the miss invisible until a reader selected the column. #148 exists so this cannot happen silently again.
-- **The alarm population is the thing to check first.** CLV (#142), grading (#151) and the budget "overrun" (D87) were all alarms counting the wrong population; the floors were fine.
-- **`integer` columns receiving medians, lines or ratios** are a family, not incidents: `pred_market_edges.price`, `monitor_scores.price`, and now `monitor_scores.<line col>` and `api_usage.<ratio col>`. The sweep in `fix/integer-columns` should find the rest once.
-- **Two of today's bugs were collisions between this week's own changes** (#144's chunked stamps vs the opener's "first batch"; #151's wider date window vs repeated matchups). Every widening needs a "what else assumed the old shape" pass.
-- **Rate limits killed four agents mid-flight today.** Relaunching from committed state was clean every time; the one time a builder's partial edits were left in the tree I discarded them before relaunching. Commit early.
+## Watch list for the first day on this `main`
+
+1. `/health` after the deploy settles: the four alarms above should be the ONLY degraded keys. Any `write|pred_market_edges`, `write|monitor_scores` or `write|api_usage` recurrence means the ALTERs are still unrun (expected until the paste).
+2. 📊 Splits tab on the phone (GitHub Pages rebuilds in ~2 min): both-side percentages once `public-splits` runs, `—` with the real blocked reason until then; switching books changes lines only.
+3. `grading` after the next slate: `graded N (W-L-P)` non-zero with finals present; the NHL SOG rows graded before this deploy are suspect: `monitor_scores where stat_type='player_shots_on_goal' and graded_at < '2026-11-09T06:00Z'`.
+4. `/budget.claude.persisted` — `false` until the `api_usage` ALTERs run, then `true`.
 
 ## Follow-ups (none blocking)
 
-1. ~~integer-column sweep~~ — done (#153); the family is four columns, all with PRs.
-2. `signal-engine`/`public-fade` add their dedupe key *before* the insert, so a rejected batch's rows are never rebuilt (D108).
-3. `tennis-ingest`/`tennis-close` still write snapshots unchunked (D99).
-4. The DDL regex in smoke misses `add x` without `column`, `schema.t`, `alter table only`, multi-add; three other channels still say "run scripts/schema.sql" (which aborts at the placeholder); `SQL_FILES` is a hardcoded pair (#148 review).
-5. `nfl.live` treats a game live for 4h; the full tail is 3.5h (D107).
-6. The steam breaker's probe is pinned to the soonest game (D94 note).
-7. Per-book *splits* sourcing is a ToS/cost decision, not a build (D101).
-8. **Watchdog alerts still reach zero recipients.** Every loud path built this week ends at `notifyAll`.
-9. Odds API tier / drop NCAAB — still open levers if tonight's burn doesn't hold under #149.
+1. `signal-engine`/`public-fade` add their dedupe key *before* the insert, so a rejected batch's rows are never rebuilt (D108).
+2. `tennis-ingest`/`tennis-close` still write snapshots unchunked (D99).
+3. The DDL regex in smoke misses `add x` without `column`, `schema.t`, `alter table only`, multi-add; three other channels still say "run scripts/schema.sql" (which aborts at the placeholder); `SQL_FILES` is a hardcoded pair (#148 review).
+4. `nfl.live` treats a game live for 4h; the full tail is 3.5h (D107).
+5. The steam breaker's probe is pinned to the soonest game (D94 note).
+6. Per-book *splits* sourcing is a ToS/cost decision, not a build (D101).
+7. **Watchdog alerts still reach zero recipients.** Every loud path built this week ends at `notifyAll`.
+8. Odds API tier / drop NCAAB — see the budget line above; this is now a this-week decision, not a someday one.
+9. `smoke.mjs` has two sections numbered §16 (open→close and CLV alarm population) from an earlier merge; cosmetic.
 
 ## House rules (unchanged, reinforced)
 
-`Number('')`/`Number(null)`/`Number('  ')` are a finite `0` — type-check before coercing. "Nothing happened" and "I cannot see it" must never look the same. A `blocked` reason is a constant literal. Zero expected failures. Read live config from the running service, not the repo. **And new today: when a column is `integer`, prove nothing writes a median, a line, a ratio or an average into it.**
+`Number('')`/`Number(null)`/`Number('  ')` are a finite `0` — type-check before coercing. "Nothing happened" and "I cannot see it" must never look the same. A `blocked` reason is a constant literal (D80). Zero expected failures (D82). Read live config from the running service, not the repo (D92). When a column is `integer`, prove nothing writes a median, a line, a ratio or an average into it. The frontend is GitHub Pages, not Vercel (D100). Append-only `DECISIONS.md` conflicts are resolved by keeping every entry.

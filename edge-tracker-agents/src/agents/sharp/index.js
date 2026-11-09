@@ -21,7 +21,11 @@
 // `blocked` reason and the orchestrator does the rest (D80) — no reportDegraded
 // call of our own. A failed history read is reported as blind but does NOT
 // discard the memory feed: a DB that times out must not publish less than a
-// DB that is absent. Reverse-line-movement vs public money is emitted by the
+// DB that is absent. Post-tip blindness — a started game whose rows are all
+// wider than the per-row bound because the odds agent dropped its sport to
+// MID/IDLE 45 min after the tip (D102) — gets its own segment for the same
+// reason: it is the one blind state that otherwise renders as `0 steam`, the
+// sentence a quiet market prints (D107, postTipBlindness below). Reverse-line-movement vs public money is emitted by the
 // Public Splits agent, which has the bets%/handle% it needs.
 // ══════════════════════════════════════════════════════════════
 import db from '../../db/index.js';
@@ -99,6 +103,7 @@ async function run() {
   const rows = mergeMovements(hist.rows, mem);
   const preFix = rows.filter((r) => r.gap_min === null).length;
   const eligible = steamSafeMovements(rows); // the per-row bound, over the UNION
+  const postTip = postTipBlindness(rows, eligible, slate, now);
   const tail = (hist.failures && !histBlind ? `, ${hist.failures} read failure${hist.failures === 1 ? '' : 's'}` : '')
     + (hist.truncated ? `, ${hist.truncated} truncated` : '');
   // Say what was actually queried: on the run that closes the breaker only
@@ -107,7 +112,14 @@ async function run() {
   const base = {
     games: slate.length, queried: hist.queried, failures: hist.failures, truncated: hist.truncated,
     probe, rows: rows.length, eligible: eligible.length, preFix, source,
+    postTipBeyondBound: postTip.rows, postTipBlindGames: postTip.games,
   };
+  // Its own segment, never folded into the steam count: `0 steam` means the
+  // market was quiet, and this means we could not have seen it move.
+  const postTipBit = postTip.games
+    ? ` · ${postTip.games} started game${postTip.games === 1 ? '' : 's'} beyond steam bound`
+      + ` (${postTip.rows} row${postTip.rows === 1 ? '' : 's'} wider than the bound — post-tip tail or rehydrated baseline)`
+    : '';
 
   if (histBlind) {
     const d = await publish(rows, eligible, now);
@@ -115,7 +127,7 @@ async function run() {
     return {
       summary: `blind — history read failed for ${hist.failures}/${hist.queried} games`
         + (streak ? `, ${histFailRuns} consecutive runs` : '')
-        + ` · memory-only: ${d.signals.length} steam · ${rows.length} rows / ${eligible.length} gap-eligible${tail}`,
+        + ` · memory-only: ${d.signals.length} steam · ${rows.length} rows / ${eligible.length} gap-eligible${tail}${postTipBit}`,
       blocked: streak ? BLOCKED_HIST_READ : undefined,
       data: counters({ ...base, ...d.counts, failRuns: histFailRuns }),
     };
@@ -123,14 +135,14 @@ async function run() {
   if (rows.length && preFix === rows.length) {
     setIntel('sharp', []);
     return {
-      summary: `blind — ${rows.length} rows in the last ${STEAM_LOOKBACK_MIN}m, none carry gap_min (writer is stripping it — see odds log)${tail}`,
+      summary: `blind — ${rows.length} rows in the last ${STEAM_LOOKBACK_MIN}m, none carry gap_min (writer is stripping it — see odds log)${tail}${postTipBit}`,
       blocked: BLOCKED_NO_GAP, data: counters(base),
     };
   }
   if (!rows.length) {
     setIntel('sharp', []);
     return {
-      summary: `0 steam · 0 movement rows in the last ${STEAM_LOOKBACK_MIN}m across ${scope} · ${source}${tail}`,
+      summary: `0 steam · 0 movement rows in the last ${STEAM_LOOKBACK_MIN}m across ${scope} · ${source}${tail}${postTipBit}`,
       data: counters(base),
     };
   }
@@ -139,14 +151,64 @@ async function run() {
   const d = await publish(rows, eligible, now);
   if (!d.clusters.length) {
     return {
-      summary: `0 steam · ${rows.length} rows / ${eligible.length} gap-eligible / 0 simultaneous clusters · ${scope} · ${source}${tail}`,
+      summary: `0 steam · ${rows.length} rows / ${eligible.length} gap-eligible / 0 simultaneous clusters · ${scope} · ${source}${tail}${postTipBit}`,
       data: counters({ ...base, ...d.counts }),
     };
   }
   return {
-    summary: `${d.signals.length} steam · ${rows.length} rows / ${eligible.length} gap-eligible / ${d.counts.markets} markets · ${scope} · ${source} · window ${STEAM_LOOKBACK_MIN}m${tail}`,
+    summary: `${d.signals.length} steam · ${rows.length} rows / ${eligible.length} gap-eligible / ${d.counts.markets} markets · ${scope} · ${source} · window ${STEAM_LOOKBACK_MIN}m${tail}${postTipBit}`,
     data: counters({ ...base, ...d.counts }),
   };
+}
+
+// ── Post-tip blindness: a designed blind spot, reported as one (D107) ──
+// Since D102 the odds agent keeps a sport on the fast cadence for only 45
+// minutes after a tip unless something is reading its in-play rows. Past that
+// a started game sits at MID or IDLE × the governor, so every movement row it
+// produces carries a gap of 45-720 minutes — all beyond STEAM_MAX_GAP_MIN, all
+// rejected by steamSafeMovements. Three books moving the same market the same
+// way post-tip therefore printed `0 steam · 3 rows / 0 gap-eligible`, which is
+// the sentence a QUIET market prints. The rows are not the problem and the
+// bound is not wrong — a 45-minute gap genuinely cannot prove simultaneity —
+// but "the market did not move" and "I cannot see this market move any more"
+// must not render alike.
+//
+// So: for each STARTED slate game, rows contributed, rows the bound rejected
+// for being too WIDE, and whether the game ended up with nothing eligible at
+// all. A game counts as blind only when at least one of its rows was rejected
+// for width: a started game whose rows all carry a null gap is the writer
+// fault the no-gap blind state already owns (D73/D93), and two claims about
+// one row is one too many.
+//
+// "Started" is derived from commence_time < now rather than read from the odds
+// slot's `data.postTipTail`: the slate is already in hand (no cross-agent read,
+// no coupling to another agent's run shape), and a sport-level list cannot say
+// which GAME's rows aged out of the bound.
+function postTipBlindness(rows, eligible, slate, now) {
+  const started = new Set();
+  for (const g of slate) {
+    const t = g && g.commence_time ? Date.parse(g.commence_time) : NaN;
+    if (Number.isFinite(t) && t < now) started.add(g.game_id);
+  }
+  // steamSafeMovements filters, so an eligible row is the same object.
+  const ok = new Set(eligible);
+  const per = new Map();
+  for (const r of rows) {
+    if (!started.has(r.game_id)) continue;
+    const e = per.get(r.game_id) || { rows: 0, eligible: 0, beyond: 0 };
+    e.rows++;
+    if (ok.has(r)) e.eligible++;
+    else if (r.gap_min !== null) e.beyond++;   // rejected for WIDTH, not absence
+    per.set(r.game_id, e);
+  }
+  let games = 0;
+  let beyond = 0;
+  for (const e of per.values()) {
+    if (e.eligible || !e.beyond) continue;
+    games++;
+    beyond += e.beyond;
+  }
+  return { games, rows: beyond };
 }
 
 // Clusters -> signals -> the emitted-set filter -> insert -> setIntel. One
@@ -196,6 +258,9 @@ function counters(o = {}) {
   return {
     signals: 0, clusters: 0, inserted: 0, rows: 0, eligible: 0, preFix: 0, markets: 0,
     games: 0, queried: 0, failures: 0, truncated: 0, probe: false, failRuns: histFailRuns,
+    // Rows on started games the per-row bound rejected for width, and the
+    // started games left with nothing eligible because of it (D107).
+    postTipBeyondBound: 0, postTipBlindGames: 0,
     windowMin: STEAM_LOOKBACK_MIN, source: o.source || null, ...o,
   };
 }
